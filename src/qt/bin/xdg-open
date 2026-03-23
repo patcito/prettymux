@@ -1,0 +1,28 @@
+#!/bin/bash
+# prettymux xdg-open override
+URL="$1"
+echo "[prettymux-open] URL=$URL" >&2
+echo "[prettymux-open] PRETTYMUX_SOCKET=$PRETTYMUX_SOCKET" >&2
+echo "[prettymux-open] PATH=$PATH" >&2
+
+if [ -z "$URL" ]; then exit 1; fi
+
+case "$URL" in
+    http://*|https://*)
+        echo "[prettymux-open] Detected URL, checking socket..." >&2
+        if [ -S "$PRETTYMUX_SOCKET" ]; then
+            echo "[prettymux-open] Socket exists, sending..." >&2
+            RESULT=$(echo "{\"command\":\"browser.open\",\"url\":\"$URL\"}" | socat - UNIX-CONNECT:"$PRETTYMUX_SOCKET" 2>&1)
+            echo "[prettymux-open] socat result: $? output: $RESULT" >&2
+            exit 0
+        else
+            echo "[prettymux-open] Socket NOT found at $PRETTYMUX_SOCKET" >&2
+        fi
+        ;;
+    *)
+        echo "[prettymux-open] Not a URL, falling through" >&2
+        ;;
+esac
+
+echo "[prettymux-open] Falling back to /usr/bin/xdg-open" >&2
+/usr/bin/xdg-open "$URL" 2>/dev/null

@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #1e1e2e; color: #cdd6f4;
+  font-family: -apple-system, system-ui, sans-serif;
+  height: 100vh; display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+}
+.container { text-align: center; max-width: 560px; padding: 40px; }
+h1 { font-size: 42px; font-weight: 700; margin-bottom: 8px; }
+h1 span { color: #cba6f7; }
+.subtitle { color: #6c7086; font-size: 16px; margin-bottom: 48px; }
+.shortcuts { text-align: left; }
+.shortcut {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 0; border-bottom: 1px solid #313244;
+}
+.shortcut:last-child { border-bottom: none; }
+.shortcut .label { color: #a6adc8; font-size: 14px; }
+.shortcut .keys {
+  display: flex; gap: 4px;
+}
+.shortcut .keys kbd {
+  background: #313244; color: #cdd6f4; padding: 4px 10px;
+  border-radius: 4px; font-size: 12px; font-family: monospace;
+  border: 1px solid #45475a;
+}
+.section-title {
+  color: #6c7086; font-size: 11px; text-transform: uppercase;
+  letter-spacing: 1.5px; margin-top: 32px; margin-bottom: 12px;
+}
+.tip {
+  color: #6c7086; font-size: 13px; margin-top: 40px; line-height: 1.6;
+}
+.tip code {
+  background: #313244; padding: 2px 6px; border-radius: 3px;
+  font-family: monospace; color: #a6e3a1;
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>pretty<span>mux</span></h1>
+  <div class="subtitle">GPU-accelerated terminal multiplexer</div>
+
+  <div class="shortcuts">
+    <div class="section-title">Workspaces</div>
+    <div class="shortcut">
+      <span class="label">New workspace</span>
+      <span class="keys"><kbd>Ctrl</kbd><kbd>N</kbd></span>
+    </div>
+    <div class="shortcut">
+      <span class="label">Switch workspace</span>
+      <span class="keys"><kbd>Ctrl</kbd><kbd>1-9</kbd></span>
+    </div>
+
+    <div class="section-title">Panes</div>
+    <div class="shortcut">
+      <span class="label">Split horizontal</span>
+      <span class="keys"><kbd>Ctrl</kbd><kbd>D</kbd></span>
+    </div>
+    <div class="shortcut">
+      <span class="label">Split vertical</span>
+      <span class="keys"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>D</kbd></span>
+    </div>
+
+    <div class="section-title">Browser</div>
+    <div class="shortcut">
+      <span class="label">Toggle browser</span>
+      <span class="keys"><kbd>Ctrl</kbd><kbd>B</kbd></span>
+    </div>
+    <div class="shortcut">
+      <span class="label">New tab</span>
+      <span class="keys"><kbd>Ctrl</kbd><kbd>T</kbd></span>
+    </div>
+    <div class="shortcut">
+      <span class="label">Open URL from terminal</span>
+      <span class="keys"><kbd>open</kbd> <kbd>url</kbd></span>
+    </div>
+  </div>
+
+  <div class="tip">
+    Powered by <code>ghostty</code> + <code>Qt WebEngine</code>
+  </div>
+</div>
+</body>
+</html>

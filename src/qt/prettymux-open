@@ -1,0 +1,13 @@
+#!/bin/bash
+# prettymux-open: intercepts xdg-open/open calls and sends URLs
+# to prettymux's embedded browser via Unix socket.
+URL="$1"
+if [ -z "$URL" ]; then exit 1; fi
+
+# Send to prettymux socket
+if [ -S "$PRETTYMUX_SOCKET" ]; then
+    echo "{\"command\":\"browser.open\",\"url\":\"$URL\"}" | socat - UNIX-CONNECT:"$PRETTYMUX_SOCKET" 2>/dev/null && exit 0
+fi
+
+# Fallback to system browser
+xdg-open "$URL" 2>/dev/null

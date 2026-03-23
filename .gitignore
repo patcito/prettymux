@@ -1,0 +1,16 @@
+build/
+src/qt/build/
+bin/
+dist/
+node_modules/
+.zig-cache/
+zig-out/
+*.o
+*.so
+smithers.db*
+app/
+electrobun.config.ts
+package.json
+bun.lock
+*.log
+/tmp/
