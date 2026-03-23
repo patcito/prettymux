@@ -59,6 +59,7 @@ class PrettyMuxWindow;
 static PrettyMuxWindow* g_window = nullptr;
 
 class PaneWidget; // forward declaration
+class PrettyMuxWindow; // forward declaration
 
 // ── GhosttyWidget — QOpenGLWidget hosting a ghostty surface ──
 
@@ -171,8 +172,7 @@ protected:
 
         // Ctrl+Shift+T: intercept before ghostty (ghostty binds it to new_tab)
         if (event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier) && event->key() == Qt::Key_T) {
-            event->ignore();
-            QApplication::sendEvent(window(), event);
+            QMetaObject::invokeMethod(window(), "addTabInFocusedPane", Qt::QueuedConnection);
             return;
         }
 
@@ -193,27 +193,6 @@ protected:
                 }
                 ghostty_surface_free_text(surface, &text);
             }
-            return;
-        }
-
-        // Ctrl++: increase font size
-        if (event->modifiers() == Qt::ControlModifier && (event->key() == Qt::Key_Plus || event->key() == Qt::Key_Equal)) {
-            ghostty_surface_binding_action(surface, "increase_font_size:1", 21);
-            update();
-            return;
-        }
-
-        // Ctrl+-: decrease font size
-        if (event->modifiers() == Qt::ControlModifier && event->key() == Qt::Key_Minus) {
-            ghostty_surface_binding_action(surface, "decrease_font_size:1", 21);
-            update();
-            return;
-        }
-
-        // Ctrl+0: reset font size
-        if (event->modifiers() == Qt::ControlModifier && event->key() == Qt::Key_0) {
-            ghostty_surface_binding_action(surface, "reset_font_size", 15);
-            update();
             return;
         }
 
@@ -238,9 +217,9 @@ protected:
         ke.mods = translateMods(event->modifiers());
         ke.composing = false;
 
-        // Only set text for plain printable keys, not modifier combos.
-        // For Ctrl+key combos, ghostty handles encoding internally
-        // based on the keycode and mods.
+        // For plain keys, send text. For Ctrl combos, skip text but
+        // always set unshifted_codepoint so ghostty can match bindings
+        // like Ctrl+= -> increase_font_size.
         if (!(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))) {
             QByteArray utf8 = event->text().toUtf8();
             if (!utf8.isEmpty() && utf8[0] >= 0x20) {
@@ -250,7 +229,10 @@ protected:
             }
         }
 
-        ke.unshifted_codepoint = 0;
+        // Always set unshifted_codepoint from the key
+        uint32_t key = event->key();
+        if (key >= 'A' && key <= 'Z') key = key - 'A' + 'a';
+        ke.unshifted_codepoint = key < 0x110000 ? key : 0;
 
         ghostty_surface_key(surface, ke);
         update();
@@ -390,7 +372,7 @@ public:
         tabs->setMovable(true);
         tabs->setStyleSheet(
             "QTabWidget::pane { border: none; background: #1e1e2e; }"
-            "QTabBar::tab { background: #181825; color: #6c7086; padding: 4px 10px; border: none; border-bottom: 2px solid transparent; font-size: 12px; }"
+            "QTabBar::tab { background: #181825; color: #6c7086; padding: 4px 10px; border: none; border-bottom: 2px solid transparent; }"
             "QTabBar::tab:selected { color: #cdd6f4; border-bottom: 2px solid #a6e3a1; background: #1e1e2e; }"
             "QTabBar::tab:hover { color: #cdd6f4; background: #313244; }"
         );
@@ -404,7 +386,7 @@ public:
         auto btn = [](const QString& text) {
             auto* b = new QPushButton(text);
             b->setFixedHeight(20);
-            b->setStyleSheet("background: #313244; color: #6c7086; border: none; border-radius: 3px; padding: 0 6px; font-size: 11px;");
+            b->setStyleSheet("background: #313244; color: #6c7086; border: none; border-radius: 3px; padding: 0 6px;");
             return b;
         };
 
@@ -537,13 +519,13 @@ public:
         headerLayout->setContentsMargins(12, 8, 12, 8);
 
         QLabel* title = new QLabel("prettymux");
-        title->setStyleSheet("color: #cba6f7; font-weight: bold; font-size: 14px;");
+        title->setStyleSheet("color: #cba6f7; font-weight: bold;");
         headerLayout->addWidget(title);
         headerLayout->addStretch();
 
         QPushButton* addBtn = new QPushButton("+");
         addBtn->setFixedSize(24, 24);
-        addBtn->setStyleSheet("background: #313244; color: #cdd6f4; border: none; border-radius: 4px; font-size: 16px;");
+        addBtn->setStyleSheet("background: #313244; color: #cdd6f4; border: none; border-radius: 4px;");
         connect(addBtn, &QPushButton::clicked, this, &PrettyMuxWindow::addWorkspace);
         headerLayout->addWidget(addBtn);
 
@@ -569,7 +551,7 @@ public:
         tabList->setWordWrap(true);
         tabList->setStyleSheet(
             "QListWidget { background: #181825; border: none; outline: none; }"
-            "QListWidget::item { color: #a6adc8; padding: 10px 12px; border-left: 3px solid transparent; font-size: 12px; }"
+            "QListWidget::item { color: #a6adc8; padding: 10px 12px; border-left: 3px solid transparent; }"
             "QListWidget::item:selected { background: #1e3a5f; border-left: 3px solid #89b4fa; color: #cdd6f4; }"
             "QListWidget::item:hover { background: #1e1e2e; }"
         );
@@ -1128,7 +1110,54 @@ static bool action_cb(ghostty_app_t, ghostty_target_s target, ghostty_action_s a
 // ── Main ──
 
 int main(int argc, char* argv[]) {
+    // Force X11/XCB to get native window decorations on GNOME/Wayland
+    if (!qEnvironmentVariableIsSet("QT_QPA_PLATFORM"))
+        qputenv("QT_QPA_PLATFORM", "xcb");
+
+    // Pick up GNOME/GTK text scaling and font settings
+    QApplication::setHighDpiScaleFactorRoundingPolicy(Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
+
+    // Read GNOME text-scaling-factor if QT_SCALE_FACTOR not already set
+    if (!qEnvironmentVariableIsSet("QT_SCALE_FACTOR")) {
+        FILE* fp = popen("gsettings get org.gnome.desktop.interface text-scaling-factor 2>/dev/null", "r");
+        if (fp) {
+            char buf[32];
+            if (fgets(buf, sizeof(buf), fp)) {
+                double scale = atof(buf);
+                if (scale > 0.5 && scale < 4.0) {
+                    char env[32];
+                    snprintf(env, sizeof(env), "%.2f", scale);
+                    qputenv("QT_SCALE_FACTOR", env);
+                }
+            }
+            pclose(fp);
+        }
+    }
+
     QApplication app(argc, argv);
+
+    // Read GNOME system font
+    {
+        FILE* fp = popen("gsettings get org.gnome.desktop.interface font-name 2>/dev/null", "r");
+        if (fp) {
+            char buf[128];
+            if (fgets(buf, sizeof(buf), fp)) {
+                // Format: 'Font Name Size'
+                QString fontStr = QString::fromUtf8(buf).trimmed().remove('\'');
+                // Extract size from end
+                int lastSpace = fontStr.lastIndexOf(' ');
+                if (lastSpace > 0) {
+                    QString family = fontStr.left(lastSpace);
+                    int size = fontStr.mid(lastSpace + 1).toInt();
+                    if (size > 0) {
+                        QFont font(family, size);
+                        QApplication::setFont(font);
+                    }
+                }
+            }
+            pclose(fp);
+        }
+    }
 
     // Dark palette
     QPalette palette;
