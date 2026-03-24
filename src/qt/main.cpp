@@ -29,6 +29,11 @@
 #include <QTabBar>
 #include <QDir>
 #include <QShortcut>
+#include <QMenu>
+#include <QWidgetAction>
+#include <QPainter>
+#include <QCloseEvent>
+#include <QJsonArray>
 #include <QSystemTrayIcon>
 #include <QLocalServer>
 #include <QLocalSocket>
@@ -70,9 +75,14 @@ class GhosttyWidget : public QOpenGLWidget, protected QOpenGLFunctions {
     QTimer* tickTimer = nullptr;
     QByteArray m_textBuf;
     bool m_exitEmitted = false;
+    QByteArray m_startCwd;
 
 public:
-    GhosttyWidget(QWidget* parent = nullptr) : QOpenGLWidget(parent) {
+    QString lastCwd;
+
+    GhosttyWidget(const QString& startDir = "", QWidget* parent = nullptr) : QOpenGLWidget(parent) {
+        if (!startDir.isEmpty())
+            m_startCwd = startDir.toUtf8();
         setFocusPolicy(Qt::StrongFocus);
         setAttribute(Qt::WA_InputMethodEnabled, true);
         setMouseTracking(true);
@@ -115,27 +125,17 @@ protected:
         config.platform_tag = GHOSTTY_PLATFORM_LINUX;
         config.platform.gtk.gtk_widget = (void*)this;
         config.scale_factor = devicePixelRatioF();
-        config.working_directory = getenv("HOME");
+        config.working_directory = m_startCwd.isEmpty() ? getenv("HOME") : m_startCwd.constData();
 
-        // Pass BROWSER and PRETTYMUX env vars so child processes
-        // open URLs in the embedded browser
-        static ghostty_env_var_s env_vars[2];
+        // Pass env vars so child shells get prettymux integration silently
+        static ghostty_env_var_s env_vars[3];
         static QByteArray socket_val = qgetenv("PRETTYMUX_SOCKET");
+        static QByteArray bash_env_val = qgetenv("BASH_ENV");
         env_vars[0] = { "PRETTYMUX_SOCKET", socket_val.constData() };
         env_vars[1] = { "PRETTYMUX", "1" };
+        env_vars[2] = { "BASH_ENV", bash_env_val.constData() };
         config.env_vars = env_vars;
-        config.env_var_count = 2;
-
-        // Inject shell functions that override open/xdg-open
-        static QByteArray initInput;
-        initInput = QByteArray(
-            "xdg-open() { case \"$1\" in http://*|https://*) "
-            "echo '{\"command\":\"browser.open\",\"url\":\"'\"$1\"'\"}' "
-            "| socat - UNIX-CONNECT:\"$PRETTYMUX_SOCKET\" 2>/dev/null && return;; esac; "
-            "/usr/bin/xdg-open \"$@\"; }; "
-            "open() { xdg-open \"$@\"; }; clear\n"
-        );
-        config.initial_input = initInput.constData();
+        config.env_var_count = 3;
 
         surface = ghostty_surface_new(g_app, &config);
         if (surface) {
@@ -264,17 +264,21 @@ protected:
     void mousePressEvent(QMouseEvent* event) override {
         if (!surface) return;
         setFocus();
+        ghostty_surface_mouse_pos(surface,
+            event->position().x(),
+            event->position().y(),
+            translateMods(event->modifiers()));
         ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS,
             translateButton(event->button()), translateMods(event->modifiers()));
-        ghostty_surface_mouse_pos(surface,
-            event->position().x() * devicePixelRatioF(),
-            event->position().y() * devicePixelRatioF(),
-            translateMods(event->modifiers()));
         update();
     }
 
     void mouseReleaseEvent(QMouseEvent* event) override {
         if (!surface) return;
+        ghostty_surface_mouse_pos(surface,
+            event->position().x(),
+            event->position().y(),
+            translateMods(event->modifiers()));
         ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE,
             translateButton(event->button()), translateMods(event->modifiers()));
         update();
@@ -283,8 +287,8 @@ protected:
     void mouseMoveEvent(QMouseEvent* event) override {
         if (!surface) return;
         ghostty_surface_mouse_pos(surface,
-            event->position().x() * devicePixelRatioF(),
-            event->position().y() * devicePixelRatioF(),
+            event->position().x(),
+            event->position().y(),
             translateMods(event->modifiers()));
         update();
     }
@@ -394,7 +398,7 @@ public:
         auto* splitH = btn("⬌");
         auto* splitV = btn("⬍");
 
-        connect(addBtn, &QPushButton::clicked, this, &PaneWidget::addNewTab);
+        connect(addBtn, &QPushButton::clicked, this, [this]() { addNewTab(); });
         connect(splitH, &QPushButton::clicked, this, [this]() { emit splitRequested(this, Qt::Horizontal); });
         connect(splitV, &QPushButton::clicked, this, [this]() { emit splitRequested(this, Qt::Vertical); });
 
@@ -437,8 +441,8 @@ public:
         });
     }
 
-    void addNewTab() {
-        auto* term = new GhosttyWidget();
+    void addNewTab(const QString& startDir = "") {
+        auto* term = new GhosttyWidget(startDir);
         terminals.push_back(term);
         QString name = QString("shell %1").arg(terminals.size());
         tabs->addTab(term, name);
@@ -467,6 +471,7 @@ signals:
 
 struct Workspace {
     QString name;
+    bool userRenamed = false;      // true if user manually renamed this workspace
     QWidget* container;            // top-level widget (either PaneWidget or QSplitter)
     std::vector<PaneWidget*> panes; // all panes (flat list for lookup)
     QString cwd;
@@ -476,6 +481,8 @@ struct Workspace {
 };
 
 // ── MainWindow ──
+
+struct SurfaceLocation { int workspaceIdx; PaneWidget* pane; int tabIdx; GhosttyWidget* term; };
 
 class PrettyMuxWindow : public QMainWindow {
     Q_OBJECT
@@ -489,6 +496,16 @@ private:
     QSplitter* mainSplitter;
     QSystemTrayIcon* trayIcon = nullptr;
     QLocalServer* socketServer = nullptr;
+    struct NotificationEntry {
+        QString title;
+        QString body;
+        int workspaceIdx;
+        PaneWidget* pane;
+        int tabIdx;
+        bool read;
+    };
+    std::vector<NotificationEntry> notifications;
+    QPushButton* bellBtn = nullptr;
     std::vector<Workspace> workspaces;
     int activeWorkspace = -1;
 
@@ -523,6 +540,15 @@ public:
         headerLayout->addWidget(title);
         headerLayout->addStretch();
 
+        // Bell button with notification count badge
+        bellBtn = new QPushButton();
+        bellBtn->setFixedSize(28, 28);
+        bellBtn->setToolTip("Notifications");
+        bellBtn->setIcon(QIcon::fromTheme("notification-symbolic", QIcon::fromTheme("preferences-system-notifications")));
+        bellBtn->setStyleSheet("background: #313244; border: none; border-radius: 4px;");
+        connect(bellBtn, &QPushButton::clicked, this, &PrettyMuxWindow::showNotificationDropdown);
+        headerLayout->addWidget(bellBtn);
+
         QPushButton* addBtn = new QPushButton("+");
         addBtn->setFixedSize(24, 24);
         addBtn->setStyleSheet("background: #313244; color: #cdd6f4; border: none; border-radius: 4px;");
@@ -556,11 +582,40 @@ public:
             "QListWidget::item:hover { background: #1e1e2e; }"
         );
         tabList->setEditTriggers(QAbstractItemView::DoubleClicked);
+        tabList->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(tabList, &QListWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+            auto* item = tabList->itemAt(pos);
+            if (!item) return;
+            int idx = tabList->row(item);
+            QMenu menu;
+            menu.setStyleSheet(
+                "QMenu { background: #1e1e2e; border: 1px solid #313244; }"
+                "QMenu::item { color: #cdd6f4; padding: 6px 16px; }"
+                "QMenu::item:selected { background: #313244; }"
+            );
+            menu.addAction("Rename", [this, idx]() {
+                tabList->editItem(tabList->item(idx));
+            });
+            menu.addAction("Delete", [this, idx]() {
+                if ((int)workspaces.size() <= 1) return; // keep at least one
+                Workspace& ws = workspaces[idx];
+                terminalStack->removeWidget(ws.container);
+                for (auto* p : ws.panes) p->deleteLater();
+                ws.container->deleteLater();
+                workspaces.erase(workspaces.begin() + idx);
+                delete tabList->takeItem(idx);
+                if (activeWorkspace >= (int)workspaces.size())
+                    activeWorkspace = workspaces.size() - 1;
+                tabList->setCurrentRow(activeWorkspace);
+            });
+            menu.exec(tabList->mapToGlobal(pos));
+        });
         connect(tabList, &QListWidget::currentRowChanged, this, &PrettyMuxWindow::switchWorkspace);
         connect(tabList->itemDelegate(), &QAbstractItemDelegate::commitData, this, [this](QWidget*) {
             int row = tabList->currentRow();
             if (row >= 0 && row < (int)workspaces.size()) {
                 workspaces[row].name = tabList->item(row)->text();
+                workspaces[row].userRenamed = true;
             }
         });
         sidebarLayout->addWidget(tabList);
@@ -632,7 +687,7 @@ public:
         setCentralWidget(central);
 
         // Dark theme
-        setStyleSheet("QMainWindow { background: #1e1e2e; }");
+        setStyleSheet("QMainWindow { background: #1e1e2e; } QToolTip { color: #cdd6f4; background: #313244; border: 1px solid #45475a; padding: 4px; }");
 
         // Socket server for prettymux-open
         socketPath = QString("/tmp/prettymux-%1.sock").arg(QCoreApplication::applicationPid());
@@ -661,8 +716,19 @@ public:
         // BASH_ENV auto-sources our shell integration in every bash instance
         qputenv("BASH_ENV", "/home/pe/newnewrepos/w/yo/prettymux/src/qt/prettymux-shell-integration.sh");
 
-        // Create first workspace
-        addWorkspace();
+        // Try to restore previous session, or create fresh workspace
+        QFile sessionFile(sessionPath());
+        if (sessionFile.exists()) {
+            addWorkspace(); // need at least one for restore to work on
+            restoreSession();
+        } else {
+            addWorkspace();
+        }
+
+        // Auto-save session every 30 seconds
+        auto* autoSaveTimer = new QTimer(this);
+        connect(autoSaveTimer, &QTimer::timeout, this, &PrettyMuxWindow::saveSession);
+        autoSaveTimer->start(30000);
     }
 
     void connectPane(PaneWidget* pane) {
@@ -860,16 +926,41 @@ public slots:
 
     // Terminal exit is now handled by PaneWidget internally
 
+    // Update pane tab text for a surface
+    void updatePaneTabText(SurfaceLocation& loc, const QString& text) {
+        if (!loc.pane || loc.tabIdx < 0 || loc.tabIdx >= loc.pane->tabs->count()) return;
+        loc.pane->tabs->setTabText(loc.tabIdx, text.left(30));
+    }
+
     Q_INVOKABLE void updateWorkspaceTitle(quint64 surfacePtr, const QString& title) {
-        int wi = findWorkspaceForSurface((void*)surfacePtr);
-        if (wi < 0 || wi >= (int)workspaces.size()) return;
-        workspaces[wi].title = title; refreshSidebarItem(wi);
+        auto loc = findSurfaceLocation((void*)surfacePtr);
+        if (loc.workspaceIdx < 0) return;
+
+        workspaces[loc.workspaceIdx].title = title;
+        refreshSidebarItem(loc.workspaceIdx);
+
+        // Update the pane tab: if title looks like a path, show only last component
+        QString shortTitle = title;
+        if (shortTitle.contains('/')) {
+            int lastSlash = shortTitle.lastIndexOf('/');
+            if (lastSlash >= 0 && lastSlash < shortTitle.length() - 1)
+                shortTitle = shortTitle.mid(lastSlash + 1);
+            if (shortTitle.isEmpty()) shortTitle = "/";
+            // Full path as tooltip
+            if (loc.pane && loc.tabIdx >= 0 && loc.tabIdx < loc.pane->tabs->count())
+                loc.pane->tabs->setTabToolTip(loc.tabIdx, title);
+        }
+        updatePaneTabText(loc, shortTitle);
     }
 
     Q_INVOKABLE void updateWorkspaceCwd(quint64 surfacePtr, const QString& cwd) {
-        int wi = findWorkspaceForSurface((void*)surfacePtr);
-        if (wi < 0 || wi >= (int)workspaces.size()) return;
-        Workspace& ws = workspaces[wi];
+        auto loc = findSurfaceLocation((void*)surfacePtr);
+        if (loc.workspaceIdx < 0) return;
+        Workspace& ws = workspaces[loc.workspaceIdx];
+        ws.cwd = cwd;
+
+        // Store CWD on the terminal widget for session restore
+        if (loc.term) loc.term->lastCwd = cwd;
 
         // Detect git branch
         QProcess git;
@@ -882,7 +973,19 @@ public slots:
             ws.gitBranch.clear();
         }
 
-        refreshSidebarItem(wi);
+        refreshSidebarItem(loc.workspaceIdx);
+
+        // Update pane tab: short name + full path tooltip
+        QString shortCwd = cwd;
+        int lastSlash = shortCwd.lastIndexOf('/');
+        if (lastSlash >= 0 && lastSlash < shortCwd.length() - 1)
+            shortCwd = shortCwd.mid(lastSlash + 1);
+        if (shortCwd.isEmpty()) shortCwd = "/";
+        updatePaneTabText(loc, shortCwd);
+
+        // Set tooltip to full path
+        if (loc.pane && loc.tabIdx >= 0 && loc.tabIdx < loc.pane->tabs->count())
+            loc.pane->tabs->setTabToolTip(loc.tabIdx, cwd);
     }
 
     void refreshSidebarItem(int idx) {
@@ -891,14 +994,21 @@ public slots:
         Workspace& ws = workspaces[idx];
 
         // Build rich display text
-        QString text = ws.name;
-        if (!ws.title.isEmpty() && ws.title != ws.name) {
-            text = ws.title;
-        }
-
-        // Add metadata lines
+        // First line: user's custom name if renamed, otherwise auto title
         QStringList lines;
-        lines << text;
+        if (ws.userRenamed) {
+            lines << ws.name;
+        } else if (!ws.title.isEmpty()) {
+            // Shorten path-like titles
+            QString t = ws.title;
+            if (t.contains('/')) {
+                int ls = t.lastIndexOf('/');
+                if (ls >= 0 && ls < t.length() - 1) t = t.mid(ls + 1);
+            }
+            lines << t;
+        } else {
+            lines << ws.name;
+        }
         if (!ws.gitBranch.isEmpty()) {
             lines << QString("⎇ %1").arg(ws.gitBranch);
         }
@@ -928,26 +1038,222 @@ public slots:
         return activeWorkspace;
     }
 
+    void updateBellBadge() {
+        int unread = 0;
+        for (auto& n : notifications) if (!n.read) unread++;
+
+        // Draw icon with badge overlay
+        QPixmap pixmap(28, 28);
+        pixmap.fill(Qt::transparent);
+        QPainter painter(&pixmap);
+        painter.setRenderHint(QPainter::Antialiasing);
+
+        // Draw bell from theme icon
+        QIcon bellIcon = QIcon::fromTheme("notification-symbolic",
+                         QIcon::fromTheme("preferences-system-notifications"));
+        bellIcon.paint(&painter, 2, 2, 24, 24);
+
+        if (unread > 0) {
+            // Red badge circle
+            painter.setBrush(QColor("#f38ba8"));
+            painter.setPen(Qt::NoPen);
+            painter.drawEllipse(16, 0, 12, 12);
+            // Count text
+            painter.setPen(QColor("#1e1e2e"));
+            QFont f = painter.font();
+            f.setPixelSize(8);
+            f.setBold(true);
+            painter.setFont(f);
+            painter.drawText(QRect(16, 0, 12, 12), Qt::AlignCenter, QString::number(unread));
+        }
+        painter.end();
+
+        bellBtn->setIcon(QIcon(pixmap));
+        bellBtn->setIconSize(QSize(28, 28));
+    }
+
+    void addNotificationEntry(const QString& title, const QString& body, SurfaceLocation& loc) {
+        notifications.push_back({title, body, loc.workspaceIdx, loc.pane, loc.tabIdx, false});
+        // Cap at 50
+        if (notifications.size() > 50)
+            notifications.erase(notifications.begin());
+        updateBellBadge();
+    }
+
+    void showNotificationDropdown() {
+        QMenu* menu = new QMenu(this);
+        menu->setStyleSheet(
+            "QMenu { background: #1e1e2e; border: 1px solid #313244; padding: 4px; min-width: 300px; }"
+            "QMenu::item { color: #cdd6f4; padding: 8px 12px; }"
+            "QMenu::item:selected { background: #313244; }"
+            "QMenu::item:disabled { color: #45475a; }"
+            "QMenu::separator { background: #313244; height: 1px; margin: 4px 8px; }"
+        );
+
+        if (notifications.empty()) {
+            menu->addAction("No notifications")->setEnabled(false);
+        } else {
+            for (int i = (int)notifications.size() - 1; i >= 0; i--) {
+                auto& n = notifications[i];
+                QString label = n.title.isEmpty()
+                    ? n.body.left(50)
+                    : QString("%1: %2").arg(n.title, n.body).left(50);
+
+                QAction* action = menu->addAction(label);
+                if (n.read) {
+                    action->setEnabled(false);
+                } else {
+                    int idx = i;
+                    connect(action, &QAction::triggered, this, [this, idx]() {
+                        auto& entry = notifications[idx];
+                        entry.read = true;
+                        // Navigate to workspace
+                        if (entry.workspaceIdx >= 0 && entry.workspaceIdx < (int)workspaces.size())
+                            tabList->setCurrentRow(entry.workspaceIdx);
+                        // Navigate to tab
+                        if (entry.pane && entry.tabIdx >= 0 && entry.tabIdx < entry.pane->tabs->count()) {
+                            entry.pane->tabs->setCurrentIndex(entry.tabIdx);
+                            if (entry.tabIdx < (int)entry.pane->terminals.size())
+                                entry.pane->terminals[entry.tabIdx]->setFocus();
+                        }
+                        updateBellBadge();
+                    });
+                }
+            }
+
+            menu->addSeparator();
+            QAction* clearAction = menu->addAction("Clear all");
+            connect(clearAction, &QAction::triggered, this, [this]() {
+                notifications.clear();
+                updateBellBadge();
+            });
+        }
+
+        menu->popup(bellBtn->mapToGlobal(QPoint(0, bellBtn->height())));
+        // Auto-delete when closed
+        connect(menu, &QMenu::aboutToHide, menu, &QMenu::deleteLater);
+    }
+
     Q_INVOKABLE void openUrlInBrowser(const QString& url) {
         addBrowserTab(url);
         browserTabs->setVisible(true);
     }
 
-    Q_INVOKABLE void showNotificationFor(quint64 surfacePtr, const QString& title, const QString& body) {
-        int notifWorkspace = findWorkspaceForSurface((void*)surfacePtr);
+    SurfaceLocation findSurfaceLocation(void* surfacePtr) {
+        SurfaceLocation loc = {-1, nullptr, -1, nullptr};
+        for (int wi = 0; wi < (int)workspaces.size(); wi++) {
+            for (auto* pane : workspaces[wi].panes) {
+                for (int ti = 0; ti < (int)pane->terminals.size(); ti++) {
+                    if (pane->terminals[ti]->getSurface() == surfacePtr) {
+                        loc.workspaceIdx = wi;
+                        loc.pane = pane;
+                        loc.tabIdx = ti;
+                        loc.term = pane->terminals[ti];
+                        return loc;
+                    }
+                }
+            }
+        }
+        return loc;
+    }
 
-        // Store notification and update sidebar
-        if (notifWorkspace >= 0 && notifWorkspace < (int)workspaces.size()) {
-            workspaces[notifWorkspace].notification = body.left(80);
-            refreshSidebarItem(notifWorkspace);
-            tabList->item(notifWorkspace)->setForeground(QColor("#f38ba8"));
+    GhosttyWidget* findTerminalForSurface(void* surfacePtr) {
+        return findSurfaceLocation(surfacePtr).term;
+    }
+
+    // Flash a terminal widget border briefly
+    void flashTerminal(GhosttyWidget* term) {
+        if (!term) return;
+        // Find the PaneWidget that contains this terminal and flash its border
+        for (auto& ws : workspaces) {
+            for (auto* pane : ws.panes) {
+                for (auto* t : pane->allTerminals()) {
+                    if (t == term) {
+                        QString origStyle = pane->styleSheet();
+                        pane->setStyleSheet("border: 3px solid #f38ba8; border-radius: 0px;");
+                        QTimer::singleShot(800, pane, [pane]() {
+                            pane->setStyleSheet("border: 2px solid #313244; border-radius: 0px;");
+                        });
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    // Pulse a tab between two colors until it becomes active
+    void highlightPaneTab(PaneWidget* pane, int tabIdx) {
+        if (!pane || tabIdx < 0 || tabIdx >= pane->tabs->count()) return;
+        auto* bar = pane->tabs->tabBar();
+        auto* timer = new QTimer(pane);
+        int* phase = new int(0);
+        timer->setInterval(600);
+        connect(timer, &QTimer::timeout, pane, [bar, pane, tabIdx, timer, phase]() {
+            // Stop if tab is now active or removed
+            if (pane->tabs->currentIndex() == tabIdx || tabIdx >= pane->tabs->count()) {
+                bar->setTabTextColor(tabIdx, QColor("#6c7086"));
+                timer->stop();
+                timer->deleteLater();
+                delete phase;
+                return;
+            }
+            // Alternate between red and dim
+            (*phase)++;
+            if (*phase % 2 == 0)
+                bar->setTabTextColor(tabIdx, QColor("#f38ba8"));
+            else
+                bar->setTabTextColor(tabIdx, QColor("#45475a"));
+        });
+        bar->setTabTextColor(tabIdx, QColor("#f38ba8"));
+        timer->start();
+
+        // Also stop when tab is clicked
+        connect(pane->tabs, &QTabWidget::currentChanged, timer, [timer, bar, tabIdx, phase](int idx) {
+            if (idx == tabIdx) {
+                bar->setTabTextColor(tabIdx, QColor("#6c7086"));
+                timer->stop();
+                timer->deleteLater();
+                delete phase;
+            }
+        });
+    }
+
+    Q_INVOKABLE void showNotificationFor(quint64 surfacePtr, const QString& title, const QString& body) {
+        auto loc = findSurfaceLocation((void*)surfacePtr);
+        bool isActiveWorkspace = (loc.workspaceIdx == activeWorkspace);
+        bool isActiveTab = false;
+
+        if (loc.pane) {
+            isActiveTab = (loc.tabIdx == loc.pane->tabs->currentIndex());
         }
 
-        // Use gdbus to send notification with action support
-        QString t = title.isEmpty() ? "prettymux" : title;
-        QString actionId = QString("focus-%1").arg(notifWorkspace);
+        // Always flash the pane border
+        flashTerminal(loc.term);
 
-        // Start notify process and use --action to get callback
+        // If watching the exact same tab in the active workspace, just flash, no notification
+        if (isActiveWorkspace && isActiveTab && isActiveWindow()) {
+            return;
+        }
+
+        // Store in notification list
+        addNotificationEntry(title, body, loc);
+
+        // Highlight the specific tab in the pane if it's a background tab
+        if (loc.pane && !isActiveTab) {
+            highlightPaneTab(loc.pane, loc.tabIdx);
+        }
+
+        // Update sidebar for non-active workspaces
+        if (loc.workspaceIdx >= 0 && loc.workspaceIdx < (int)workspaces.size()) {
+            workspaces[loc.workspaceIdx].notification = body.left(80);
+            refreshSidebarItem(loc.workspaceIdx);
+            if (!isActiveWorkspace)
+                tabList->item(loc.workspaceIdx)->setForeground(QColor("#f38ba8"));
+        }
+
+        // Desktop notification for background tabs or inactive workspaces
+        QString t = title.isEmpty() ? "prettymux" : title;
+
         QProcess* proc = new QProcess(this);
         proc->setProgram("notify-send");
         proc->setArguments({
@@ -957,21 +1263,26 @@ public slots:
             "--wait"
         });
 
-        connect(proc, &QProcess::finished, this, [this, proc, notifWorkspace](int exitCode) {
-            // exitCode 0 with --wait means the action was clicked
+        int wsIdx = loc.workspaceIdx;
+        PaneWidget* pane = loc.pane;
+        int tabIdx = loc.tabIdx;
+        int notifIdx = (int)notifications.size() - 1; // last added entry
+
+        connect(proc, &QProcess::finished, this, [this, proc, wsIdx, pane, tabIdx, notifIdx](int exitCode) {
             if (exitCode == 0) {
-                // Raise and focus window
                 raise();
                 activateWindow();
-                // Switch to the workspace that triggered the notification
-                if (notifWorkspace >= 0 && notifWorkspace < (int)workspaces.size()) {
-                    tabList->setCurrentRow(notifWorkspace);
-                    Workspace& w = workspaces[notifWorkspace];
-                    if (!w.panes.empty()) {
-                        auto terms = w.panes[0]->allTerminals();
-                        if (!terms.empty()) terms[0]->setFocus();
-                    }
+                if (wsIdx >= 0 && wsIdx < (int)workspaces.size())
+                    tabList->setCurrentRow(wsIdx);
+                if (pane && tabIdx >= 0 && tabIdx < pane->tabs->count()) {
+                    pane->tabs->setCurrentIndex(tabIdx);
+                    if (tabIdx < (int)pane->terminals.size())
+                        pane->terminals[tabIdx]->setFocus();
                 }
+                // Mark as read in dropdown
+                if (notifIdx >= 0 && notifIdx < (int)notifications.size())
+                    notifications[notifIdx].read = true;
+                updateBellBadge();
             }
             proc->deleteLater();
         });
@@ -980,7 +1291,15 @@ public slots:
     }
 
     Q_INVOKABLE void showBellFor(quint64 surfacePtr) {
-        int bellWs = findWorkspaceForSurface((void*)surfacePtr); if (bellWs >= 0 && bellWs < tabList->count()) {
+        int bellWs = findWorkspaceForSurface((void*)surfacePtr);
+
+        // Always flash the terminal
+        flashTerminal(findTerminalForSurface((void*)surfacePtr));
+
+        // Only notify desktop if not watching that workspace
+        if (bellWs == activeWorkspace && isActiveWindow()) return;
+
+        if (bellWs >= 0 && bellWs < tabList->count()) {
             auto item = tabList->item(bellWs);
             item->setForeground(QColor("#fab387"));
             QTimer::singleShot(1000, this, [this, item]() {
@@ -994,7 +1313,224 @@ public slots:
         browserTabs->setVisible(show);
     }
 
+    // ── Session save/restore ──
+
+    QString sessionPath() {
+        QString dir = QDir::homePath() + "/.prettymux/sessions";
+        QDir().mkpath(dir);
+        return dir + "/last.json";
+    }
+
+    void saveSession() {
+        QJsonObject root;
+        root["version"] = 1;
+        root["windowX"] = x();
+        root["windowY"] = y();
+        root["windowW"] = width();
+        root["windowH"] = height();
+        root["activeWorkspace"] = activeWorkspace;
+        root["browserVisible"] = browserTabs->isVisible();
+
+        // Save browser tabs
+        QJsonArray browserArr;
+        for (int i = 0; i < browserTabs->count(); i++) {
+            QWidget* w = browserTabs->widget(i);
+            auto* view = w->findChild<QWebEngineView*>();
+            if (view) {
+                QJsonObject tab;
+                tab["url"] = view->url().toString();
+                tab["title"] = browserTabs->tabText(i);
+                browserArr.append(tab);
+            }
+        }
+        root["browserTabs"] = browserArr;
+
+        // Save workspaces
+        QJsonArray wsArr;
+        for (auto& ws : workspaces) {
+            QJsonObject wsObj;
+            wsObj["name"] = ws.name;
+            wsObj["userRenamed"] = ws.userRenamed;
+
+            QJsonArray panesArr;
+            for (auto* pane : ws.panes) {
+                QJsonObject paneObj;
+                QJsonArray tabsArr;
+                for (int i = 0; i < (int)pane->terminals.size(); i++) {
+                    QJsonObject tabObj;
+                    tabObj["name"] = pane->tabs->tabText(i);
+                    tabObj["cwd"] = pane->terminals[i]->lastCwd;
+
+                    // Try to dump terminal scrollback
+                    auto* term = pane->terminals[i];
+                    if (term->getSurface()) {
+                        auto* surface = (ghostty_surface_t)term->getSurface();
+                        ghostty_surface_size_s sz = ghostty_surface_size(surface);
+                        // Select all visible text
+                        ghostty_selection_s sel;
+                        memset(&sel, 0, sizeof(sel));
+                        sel.bottom_right.x = sz.columns > 0 ? sz.columns - 1 : 79;
+                        sel.bottom_right.y = sz.rows > 0 ? sz.rows - 1 : 23;
+                        ghostty_text_s text = {};
+                        if (ghostty_surface_read_text(surface, sel, &text)) {
+                            if (text.text && text.text_len > 0) {
+                                // Save last 5000 chars of scrollback
+                                size_t start = text.text_len > 5000 ? text.text_len - 5000 : 0;
+                                tabObj["scrollback"] = QString::fromUtf8(text.text + start, text.text_len - start);
+                            }
+                            ghostty_surface_free_text(surface, &text);
+                        }
+                    }
+
+                    tabsArr.append(tabObj);
+                }
+                paneObj["tabs"] = tabsArr;
+                paneObj["activeTab"] = pane->tabs->currentIndex();
+                panesArr.append(paneObj);
+            }
+            wsObj["panes"] = panesArr;
+            wsArr.append(wsObj);
+        }
+        root["workspaces"] = wsArr;
+
+        QFile f(sessionPath());
+        if (f.open(QIODevice::WriteOnly)) {
+            f.write(QJsonDocument(root).toJson());
+            f.close();
+        }
+    }
+
+    void restoreSession() {
+        QFile f(sessionPath());
+        if (!f.open(QIODevice::ReadOnly)) return;
+        QJsonDocument doc = QJsonDocument::fromJson(f.readAll());
+        f.close();
+        if (!doc.isObject()) return;
+
+        QJsonObject root = doc.object();
+        if (root["version"].toInt() != 1) return;
+
+        // Restore window geometry
+        int wx = root["windowX"].toInt(100);
+        int wy = root["windowY"].toInt(100);
+        int ww = root["windowW"].toInt(1400);
+        int wh = root["windowH"].toInt(900);
+        setGeometry(wx, wy, ww, wh);
+
+        // Restore browser visibility
+        browserTabs->setVisible(root["browserVisible"].toBool(true));
+
+        // Restore browser tabs
+        QJsonArray browserArr = root["browserTabs"].toArray();
+        // Remove default welcome tab first
+        while (browserTabs->count() > 0) {
+            QWidget* w = browserTabs->widget(0);
+            browserTabs->removeTab(0);
+            w->deleteLater();
+        }
+        for (auto val : browserArr) {
+            QJsonObject tab = val.toObject();
+            addBrowserTab(tab["url"].toString());
+        }
+        if (browserTabs->count() == 0)
+            addBrowserTab("file:///home/pe/newnewrepos/w/yo/prettymux/src/qt/welcome.html");
+
+        // Restore workspaces
+        QJsonArray wsArr = root["workspaces"].toArray();
+        if (wsArr.isEmpty()) return;
+
+        // Remove the default workspace created in constructor
+        // (we'll recreate from saved state)
+        while (!workspaces.empty()) {
+            Workspace& ws = workspaces.back();
+            terminalStack->removeWidget(ws.container);
+            for (auto* p : ws.panes) p->deleteLater();
+            ws.container->deleteLater();
+            workspaces.pop_back();
+        }
+        while (tabList->count() > 0)
+            delete tabList->takeItem(0);
+
+        for (auto wsVal : wsArr) {
+            QJsonObject wsObj = wsVal.toObject();
+            addWorkspace();
+            Workspace& ws = workspaces.back();
+            ws.name = wsObj["name"].toString(ws.name);
+            ws.userRenamed = wsObj["userRenamed"].toBool(false);
+            tabList->item(workspaces.size() - 1)->setText(ws.name);
+
+            // Restore panes (first pane already created by addWorkspace)
+            QJsonArray panesArr = wsObj["panes"].toArray();
+            for (int pi = 0; pi < panesArr.size(); pi++) {
+                QJsonObject paneObj = panesArr[pi].toObject();
+                PaneWidget* pane;
+                if (pi == 0) {
+                    pane = ws.panes[0];
+                } else {
+                    // Split to create new pane
+                    pane = new PaneWidget();
+                    connectPane(pane);
+                    ws.panes.push_back(pane);
+                    // Add to splitter
+                    auto* splitter = qobject_cast<QSplitter*>(ws.container);
+                    if (splitter) {
+                        splitter->addWidget(pane);
+                    }
+                }
+
+                // Restore tabs in this pane
+                QJsonArray tabsArr = paneObj["tabs"].toArray();
+                for (int ti = 0; ti < tabsArr.size(); ti++) {
+                    QJsonObject tabObj = tabsArr[ti].toObject();
+                    QString savedCwd = tabObj["cwd"].toString();
+                    if (ti > 0) pane->addNewTab(savedCwd);
+
+                    // Set tab name
+                    QString name = tabObj["name"].toString();
+                    if (!name.isEmpty())
+                        pane->tabs->setTabText(ti, name);
+
+                    // cd to saved directory after terminal starts
+                    if (!savedCwd.isEmpty() && ti < (int)pane->terminals.size()) {
+                        auto* term = pane->terminals[ti];
+                        term->lastCwd = savedCwd;
+                        QTimer::singleShot(500, term, [term, savedCwd]() {
+                            if (term->getSurface()) {
+                                auto* s = (ghostty_surface_t)term->getSurface();
+                                // Type the cd command
+                                QString cmd = QString("cd '%1' && clear").arg(
+                                    QString(savedCwd).replace("'", "'\\''"));
+                                QByteArray utf8 = cmd.toUtf8();
+                                ghostty_surface_text(s, utf8.constData(), utf8.size());
+                                // Send Enter key
+                                ghostty_input_key_s ke = {};
+                                ke.action = GHOSTTY_ACTION_PRESS;
+                                ke.keycode = 36; // XKB keycode for Return
+                                ke.text = "\n";
+                                ghostty_surface_key(s, ke);
+                            }
+                        });
+                    }
+                }
+
+                int activeTab = paneObj["activeTab"].toInt(0);
+                if (activeTab < pane->tabs->count())
+                    pane->tabs->setCurrentIndex(activeTab);
+            }
+        }
+
+        // Restore active workspace
+        int aw = root["activeWorkspace"].toInt(0);
+        if (aw >= 0 && aw < (int)workspaces.size())
+            tabList->setCurrentRow(aw);
+    }
+
 protected:
+    void closeEvent(QCloseEvent* event) override {
+        saveSession();
+        event->accept();
+    }
+
     void keyPressEvent(QKeyEvent* event) override {
         // Global shortcuts
         if (event->modifiers() == Qt::ControlModifier) {

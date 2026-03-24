@@ -13,7 +13,12 @@
       "Bash(sed -i 's/ font-size: 16pt;//g' main.cpp)",
       "Bash(sed -i 's/ font-size: 10pt;//g' main.cpp)",
       "Bash(sed -i 's/ font-size: 9pt;//g' main.cpp)",
-      "Bash(sed -i 's/ font-size: 14pt;//g' main.cpp)"
+      "Bash(sed -i 's/ font-size: 14pt;//g' main.cpp)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(bun init:*)",
+      "Bash(bun add:*)"
     ]
   }
 }
