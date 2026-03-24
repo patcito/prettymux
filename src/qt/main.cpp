@@ -9,6 +9,7 @@
 #include <QWebEngineView>
 #include <QWebEngineProfile>
 #include <QWebEnginePage>
+#include <QWebEngineSettings>
 #include <QTimer>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -32,6 +33,7 @@
 #include <QMenu>
 #include <QWidgetAction>
 #include <QPainter>
+#include <QFrame>
 #include <QCloseEvent>
 #include <QJsonArray>
 #include <QSystemTrayIcon>
@@ -170,10 +172,18 @@ protected:
     void keyPressEvent(QKeyEvent* event) override {
         if (!surface) return;
 
-        // Ctrl+Shift+T: intercept before ghostty (ghostty binds it to new_tab)
-        if (event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier) && event->key() == Qt::Key_T) {
-            QMetaObject::invokeMethod(window(), "addTabInFocusedPane", Qt::QueuedConnection);
-            return;
+        // Intercept Ctrl+Shift shortcuts before ghostty consumes them
+        if (event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier)) {
+            switch (event->key()) {
+                case Qt::Key_T: case Qt::Key_N: case Qt::Key_W:
+                case Qt::Key_B: case Qt::Key_P: case Qt::Key_I: case Qt::Key_J:
+                case Qt::Key_K: case Qt::Key_S:
+                case Qt::Key_BracketLeft: case Qt::Key_BracketRight:
+                    // Forward to main window
+                    QApplication::sendEvent(window(), event);
+                    return;
+                default: break;
+            }
         }
 
         // Ctrl+Tab / Ctrl+Shift+Tab: pass to parent to cycle pane tabs
@@ -889,6 +899,12 @@ public slots:
             addBrowserTab(url.toString());
         }, view);
         view->setPage(page);
+
+        // Enable developer tools and right-click inspect
+        view->settings()->setAttribute(QWebEngineSettings::JavascriptEnabled, true);
+        view->setContextMenuPolicy(Qt::DefaultContextMenu);
+        page->settings()->setAttribute(QWebEngineSettings::JavascriptEnabled, true);
+
         view->setUrl(QUrl(url));
         layout->addWidget(view);
 
@@ -1132,6 +1148,428 @@ public slots:
         menu->popup(bellBtn->mapToGlobal(QPoint(0, bellBtn->height())));
         // Auto-delete when closed
         connect(menu, &QMenu::aboutToHide, menu, &QMenu::deleteLater);
+    }
+
+    void showShortcutOverlay() {
+        // Check if overlay already exists, toggle it
+        auto* existing = findChild<QWidget*>("shortcutOverlay");
+        if (existing) {
+            existing->deleteLater();
+            return;
+        }
+
+        // Overlay background
+        auto* overlay = new QWidget(this);
+        overlay->setObjectName("shortcutOverlay");
+        overlay->setGeometry(rect());
+        overlay->setStyleSheet("background: rgba(17,17,27,0.92);");
+
+        auto* mainLayout = new QVBoxLayout(overlay);
+        mainLayout->setAlignment(Qt::AlignCenter);
+
+        // Content card
+        auto* card = new QWidget();
+        card->setMaximumWidth(720);
+        card->setStyleSheet(
+            "background: rgba(30,30,46,0.95);"
+            "border: 1px solid #313244;"
+            "border-radius: 16px;"
+        );
+
+        auto* cardLayout = new QVBoxLayout(card);
+        cardLayout->setContentsMargins(40, 32, 40, 32);
+        cardLayout->setSpacing(24);
+
+        // Title
+        auto* title = new QLabel("Keyboard Shortcuts");
+        title->setAlignment(Qt::AlignCenter);
+        title->setStyleSheet("color: #cdd6f4; font-size: 20px; font-weight: 600; border: none; background: transparent;");
+        cardLayout->addWidget(title);
+
+        // Columns
+        auto* columns = new QHBoxLayout();
+        columns->setSpacing(32);
+
+        struct ShortcutItem { const char* label; const char* keys; };
+
+        // Left column
+        auto* leftCol = new QVBoxLayout();
+        leftCol->setSpacing(4);
+
+        auto addSection = [](QVBoxLayout* col, const char* name) {
+            auto* lbl = new QLabel(name);
+            lbl->setStyleSheet("color: #6c7086; font-size: 10px; text-transform: uppercase; letter-spacing: 2px; padding-top: 8px; border: none; background: transparent;");
+            col->addWidget(lbl);
+        };
+
+        auto addItem = [](QVBoxLayout* col, const char* label, const char* keys) {
+            auto* row = new QWidget();
+            row->setStyleSheet("border: none; background: transparent;");
+            auto* rl = new QHBoxLayout(row);
+            rl->setContentsMargins(0, 4, 0, 4);
+            auto* lbl = new QLabel(label);
+            lbl->setStyleSheet("color: #a6adc8; font-size: 13px; border: none; background: transparent;");
+            auto* k = new QLabel(keys);
+            k->setAlignment(Qt::AlignRight);
+            k->setStyleSheet("color: #6c7086; font-size: 12px; font-family: monospace; border: none; background: transparent;");
+            rl->addWidget(lbl);
+            rl->addStretch();
+            rl->addWidget(k);
+            col->addWidget(row);
+        };
+
+        addSection(leftCol, "Workspaces");
+        addItem(leftCol, "New workspace", "Ctrl+Shift+N");
+        addItem(leftCol, "Close workspace", "Ctrl+Shift+W");
+        addItem(leftCol, "Next workspace", "Ctrl+Shift+]");
+        addItem(leftCol, "Previous workspace", "Ctrl+Shift+[");
+        addItem(leftCol, "Switch to 1-9", "Ctrl+1-9");
+
+        addSection(leftCol, "Panes & Tabs");
+        addItem(leftCol, "New terminal tab", "Ctrl+Shift+T");
+        addItem(leftCol, "Cycle tabs", "Ctrl+Tab");
+        addItem(leftCol, "Split pane", "⬌ ⬍ buttons");
+        leftCol->addStretch();
+
+        // Right column
+        auto* rightCol = new QVBoxLayout();
+        rightCol->setSpacing(4);
+
+        addSection(rightCol, "Browser");
+        addItem(rightCol, "Toggle browser", "Ctrl+Shift+B");
+        addItem(rightCol, "New browser tab", "Ctrl+Shift+P");
+        addItem(rightCol, "Inspector docked", "Ctrl+Shift+I");
+        addItem(rightCol, "Inspector window", "Ctrl+Shift+J");
+        addItem(rightCol, "Open URL", "open <url>");
+
+        addSection(rightCol, "Terminal");
+        addItem(rightCol, "Copy", "Ctrl+Shift+C");
+        addItem(rightCol, "Paste", "Ctrl+Shift+V");
+        addItem(rightCol, "Font increase", "Ctrl++");
+        addItem(rightCol, "Font decrease", "Ctrl+-");
+        addItem(rightCol, "Font reset", "Ctrl+0");
+
+        addSection(rightCol, "Window");
+        addItem(rightCol, "Fullscreen", "F11");
+        addItem(rightCol, "This overlay", "Ctrl+Shift+K");
+        rightCol->addStretch();
+
+        columns->addLayout(leftCol);
+
+        // Divider
+        auto* divider = new QFrame();
+        divider->setFrameShape(QFrame::VLine);
+        divider->setStyleSheet("color: #313244; border: none; background: #313244; max-width: 1px;");
+        columns->addWidget(divider);
+
+        columns->addLayout(rightCol);
+        cardLayout->addLayout(columns);
+
+        // Dismiss hint
+        auto* hint = new QLabel("Press Ctrl+Shift+K or Escape to close");
+        hint->setAlignment(Qt::AlignCenter);
+        hint->setStyleSheet("color: #45475a; font-size: 12px; padding-top: 8px; border: none; background: transparent;");
+        cardLayout->addWidget(hint);
+
+        mainLayout->addWidget(card);
+
+        // Close on Escape, click, or Ctrl+Shift+K
+        overlay->setFocusPolicy(Qt::StrongFocus);
+        connect(new QShortcut(QKeySequence(Qt::Key_Escape), overlay), &QShortcut::activated,
+            overlay, &QWidget::deleteLater);
+        connect(new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_K), overlay), &QShortcut::activated,
+            overlay, &QWidget::deleteLater);
+        overlay->show();
+        overlay->raise();
+        overlay->setFocus();
+    }
+
+    void showSearchOverlay() {
+        // Remove existing
+        auto* existing = findChild<QWidget*>("searchOverlay");
+        if (existing) { existing->deleteLater(); return; }
+
+        // Overlay
+        auto* overlay = new QWidget(this);
+        overlay->setObjectName("searchOverlay");
+        overlay->setGeometry(rect());
+        overlay->setStyleSheet("background: rgba(17,17,27,0.88);");
+
+        auto* outerLayout = new QVBoxLayout(overlay);
+        outerLayout->setAlignment(Qt::AlignTop | Qt::AlignHCenter);
+        outerLayout->setContentsMargins(0, 80, 0, 0);
+
+        // Search card
+        auto* card = new QWidget();
+        card->setFixedWidth(560);
+        card->setMaximumHeight(500);
+        card->setStyleSheet(
+            "background: #1e1e2e;"
+            "border: 1px solid #45475a;"
+            "border-radius: 12px;"
+        );
+        auto* cardLayout = new QVBoxLayout(card);
+        cardLayout->setContentsMargins(0, 0, 0, 0);
+        cardLayout->setSpacing(0);
+
+        // Search input
+        auto* inputWrapper = new QWidget();
+        inputWrapper->setStyleSheet("background: transparent; border-bottom: 1px solid #313244; border-radius: 0;");
+        auto* inputLayout = new QHBoxLayout(inputWrapper);
+        inputLayout->setContentsMargins(20, 16, 20, 16);
+
+        auto* searchIcon = new QLabel(">");
+        searchIcon->setStyleSheet("color: #cba6f7; font-size: 18px; font-weight: bold; border: none; background: transparent;");
+        inputLayout->addWidget(searchIcon);
+
+        auto* searchInput = new QLineEdit();
+        searchInput->setPlaceholderText("Search workspaces, tabs, browser...");
+        searchInput->setStyleSheet(
+            "background: transparent; border: none; color: #cdd6f4;"
+            "font-size: 16px; padding: 4px 8px; selection-background-color: #585b70;"
+        );
+        inputLayout->addWidget(searchInput);
+        cardLayout->addWidget(inputWrapper);
+
+        // Results list
+        auto* resultsList = new QListWidget();
+        resultsList->setStyleSheet(
+            "QListWidget { background: transparent; border: none; outline: none; padding: 4px 0; }"
+            "QListWidget::item { color: #cdd6f4; padding: 10px 20px; border: none; border-radius: 0; }"
+            "QListWidget::item:selected { background: rgba(203,166,247,0.12); }"
+            "QListWidget::item:hover { background: rgba(203,166,247,0.08); }"
+        );
+        resultsList->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        resultsList->setFocusPolicy(Qt::NoFocus);
+        cardLayout->addWidget(resultsList);
+
+        // Hint bar
+        auto* hintBar = new QWidget();
+        hintBar->setStyleSheet("background: transparent; border-top: 1px solid #313244; border-radius: 0;");
+        auto* hintLayout = new QHBoxLayout(hintBar);
+        hintLayout->setContentsMargins(20, 8, 20, 8);
+        auto* hintText = new QLabel("↑↓ navigate    Enter select    Esc close");
+        hintText->setStyleSheet("color: #45475a; font-size: 11px; border: none; background: transparent;");
+        hintLayout->addWidget(hintText);
+        cardLayout->addWidget(hintBar);
+
+        outerLayout->addWidget(card);
+
+        // Gather all searchable items
+        struct SearchItem {
+            QString name;
+            QString detail;
+            QString icon;
+            QString kind;
+            int workspaceIdx;
+            PaneWidget* pane;
+            int tabIdx;
+            int browserTabIdx;
+        };
+        auto* items = new std::vector<SearchItem>();
+
+        // Workspaces
+        for (int wi = 0; wi < (int)workspaces.size(); wi++) {
+            auto& ws = workspaces[wi];
+            items->push_back({
+                ws.userRenamed ? ws.name : (ws.title.isEmpty() ? ws.name : ws.title),
+                ws.cwd.isEmpty() ? "" : ws.cwd,
+                QString::fromUtf8("\xe2\x96\xa3"), // ▣
+                "workspace",
+                wi, nullptr, -1, -1
+            });
+
+            // Pane tabs
+            for (auto* pane : ws.panes) {
+                for (int ti = 0; ti < pane->tabs->count(); ti++) {
+                    QString tabName = pane->tabs->tabText(ti);
+                    QString tooltip = pane->tabs->tabToolTip(ti);
+                    items->push_back({
+                        tabName,
+                        tooltip.isEmpty() ? ws.name : tooltip,
+                        QString::fromUtf8("\xe2\x96\xb8"), // ▸
+                        "terminal",
+                        wi, pane, ti, -1
+                    });
+                }
+            }
+        }
+
+        // Browser tabs
+        for (int bi = 0; bi < browserTabs->count(); bi++) {
+            QString title = browserTabs->tabText(bi);
+            QWidget* w = browserTabs->widget(bi);
+            auto* view = w ? w->findChild<QWebEngineView*>() : nullptr;
+            QString url = view ? view->url().toString() : "";
+            items->push_back({
+                title,
+                url,
+                QString::fromUtf8("\xe2\x97\x89"), // ◉
+                "browser",
+                -1, nullptr, -1, bi
+            });
+        }
+
+        // Populate results
+        auto populateResults = [resultsList, items](const QString& query) {
+            resultsList->clear();
+            for (auto& item : *items) {
+                if (!query.isEmpty() &&
+                    !item.name.contains(query, Qt::CaseInsensitive) &&
+                    !item.detail.contains(query, Qt::CaseInsensitive) &&
+                    !item.kind.contains(query, Qt::CaseInsensitive))
+                    continue;
+
+                // Format: icon  name                     kind
+                QString text = QString("%1  %2").arg(item.icon, item.name);
+                auto* listItem = new QListWidgetItem(text);
+
+                // Color the kind badge
+                QColor kindColor = item.kind == "workspace" ? QColor("#cba6f7")
+                    : item.kind == "terminal" ? QColor("#a6e3a1")
+                    : QColor("#89b4fa");
+
+                listItem->setData(Qt::UserRole, resultsList->count());
+                listItem->setToolTip(QString("%1\n%2").arg(item.detail, item.kind));
+                resultsList->addItem(listItem);
+            }
+            if (resultsList->count() > 0)
+                resultsList->setCurrentRow(0);
+        };
+
+        populateResults("");
+
+        // Search as you type
+        connect(searchInput, &QLineEdit::textChanged, overlay, [populateResults](const QString& text) {
+            populateResults(text);
+        });
+
+        // Navigate with arrow keys
+        searchInput->installEventFilter(overlay);
+
+        // Handle Enter and arrow keys via event filter on overlay
+        auto* overlayPtr = overlay;
+        auto* itemsPtr = items;
+
+        connect(resultsList, &QListWidget::itemDoubleClicked, overlay,
+            [this, overlayPtr, itemsPtr, resultsList](QListWidgetItem* listItem) {
+                int idx = listItem->data(Qt::UserRole).toInt();
+                if (idx < 0 || idx >= (int)itemsPtr->size()) return;
+                auto& item = (*itemsPtr)[idx];
+
+                if (item.workspaceIdx >= 0)
+                    tabList->setCurrentRow(item.workspaceIdx);
+                if (item.pane && item.tabIdx >= 0) {
+                    item.pane->tabs->setCurrentIndex(item.tabIdx);
+                    if (item.tabIdx < (int)item.pane->terminals.size())
+                        item.pane->terminals[item.tabIdx]->setFocus();
+                }
+                if (item.browserTabIdx >= 0) {
+                    browserTabs->setCurrentIndex(item.browserTabIdx);
+                    browserTabs->setVisible(true);
+                }
+                overlayPtr->deleteLater();
+            });
+
+        // Key handling
+        connect(searchInput, &QLineEdit::returnPressed, overlay,
+            [resultsList]() {
+                auto* item = resultsList->currentItem();
+                if (item) emit resultsList->itemDoubleClicked(item);
+            });
+
+        // Arrow key navigation
+        QObject::connect(new QShortcut(QKeySequence(Qt::Key_Down), searchInput), &QShortcut::activated,
+            overlay, [resultsList]() {
+                int next = resultsList->currentRow() + 1;
+                if (next < resultsList->count()) resultsList->setCurrentRow(next);
+            });
+        QObject::connect(new QShortcut(QKeySequence(Qt::Key_Up), searchInput), &QShortcut::activated,
+            overlay, [resultsList]() {
+                int prev = resultsList->currentRow() - 1;
+                if (prev >= 0) resultsList->setCurrentRow(prev);
+            });
+
+        // Close
+        connect(new QShortcut(QKeySequence(Qt::Key_Escape), overlay), &QShortcut::activated,
+            overlay, [overlayPtr, itemsPtr]() { delete itemsPtr; overlayPtr->deleteLater(); });
+        connect(new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S), overlay), &QShortcut::activated,
+            overlay, [overlayPtr, itemsPtr]() { delete itemsPtr; overlayPtr->deleteLater(); });
+
+        overlay->show();
+        overlay->raise();
+        searchInput->setFocus();
+    }
+
+    void openDevTools(bool inWindow = false) {
+        QWidget* current = browserTabs->currentWidget();
+        if (!current) return;
+        auto* view = current->findChild<QWebEngineView*>();
+        if (!view) return;
+
+        if (inWindow) {
+            // Open in separate window
+            auto* devToolsView = new QWebEngineView();
+            auto* devToolsPage = new QWebEnginePage(devToolsView);
+            devToolsView->setPage(devToolsPage);
+            view->page()->setDevToolsPage(devToolsPage);
+            devToolsView->setWindowTitle("Developer Tools - prettymux");
+            devToolsView->resize(900, 600);
+            devToolsView->show();
+            return;
+        }
+
+        // Docked mode: check if already exists, toggle visibility
+        auto* existingSplitter = current->findChild<QSplitter*>("devToolsSplitter");
+        if (existingSplitter && existingSplitter->count() > 1) {
+            auto* devContainer = existingSplitter->widget(1);
+            if (devContainer) {
+                devContainer->setVisible(!devContainer->isVisible());
+                return;
+            }
+        }
+
+        auto* layout = current->layout();
+        if (!layout) return;
+
+        layout->removeWidget(view);
+
+        auto* splitter = new QSplitter(Qt::Vertical);
+        splitter->setObjectName("devToolsSplitter");
+        splitter->setStyleSheet("QSplitter::handle { background: #313244; height: 3px; }");
+        splitter->addWidget(view);
+
+        // Dev tools container with close bar
+        auto* devContainer = new QWidget();
+        auto* devLayout = new QVBoxLayout(devContainer);
+        devLayout->setContentsMargins(0, 0, 0, 0);
+        devLayout->setSpacing(0);
+
+        // Close bar
+        auto* closeBar = new QWidget();
+        closeBar->setFixedHeight(20);
+        closeBar->setStyleSheet("background: #181825;");
+        auto* closeBarLayout = new QHBoxLayout(closeBar);
+        closeBarLayout->setContentsMargins(4, 0, 4, 0);
+        closeBarLayout->addStretch();
+        auto* closeBtn = new QPushButton("x");
+        closeBtn->setFixedSize(16, 16);
+        closeBtn->setStyleSheet("background: #45475a; color: #cdd6f4; border: none; border-radius: 3px;");
+        connect(closeBtn, &QPushButton::clicked, devContainer, [devContainer]() {
+            devContainer->setVisible(false);
+        });
+        closeBarLayout->addWidget(closeBtn);
+        devLayout->addWidget(closeBar);
+
+        auto* devToolsView = new QWebEngineView();
+        auto* devToolsPage = new QWebEnginePage(devToolsView);
+        devToolsView->setPage(devToolsPage);
+        view->page()->setDevToolsPage(devToolsPage);
+        devLayout->addWidget(devToolsView);
+
+        splitter->addWidget(devContainer);
+        splitter->setSizes({400, 300});
+        layout->addWidget(splitter);
     }
 
     Q_INVOKABLE void openUrlInBrowser(const QString& url) {
@@ -1532,22 +1970,65 @@ protected:
     }
 
     void keyPressEvent(QKeyEvent* event) override {
-        // Global shortcuts
-        if (event->modifiers() == Qt::ControlModifier) {
-            if (event->key() == Qt::Key_N) { addWorkspace(); return; }
-            if (event->key() == Qt::Key_B) {
-                browserTabs->setVisible(!browserTabs->isVisible());
-                return;
-            }
-            if (event->key() == Qt::Key_T) {
-                addBrowserTab("file:///home/pe/newnewrepos/w/yo/prettymux/src/qt/welcome.html");
-                return;
-            }
-        }
+        // All app shortcuts use Ctrl+Shift to avoid conflicting with ghostty
         if (event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier)) {
-            if (event->key() == Qt::Key_T) { addTabInFocusedPane(); return; }
+            switch (event->key()) {
+                // Workspaces
+                case Qt::Key_N: addWorkspace(); return;
+                case Qt::Key_W: {
+                    // Close current workspace
+                    if ((int)workspaces.size() > 1 && activeWorkspace >= 0) {
+                        Workspace& ws = workspaces[activeWorkspace];
+                        terminalStack->removeWidget(ws.container);
+                        for (auto* p : ws.panes) p->deleteLater();
+                        ws.container->deleteLater();
+                        workspaces.erase(workspaces.begin() + activeWorkspace);
+                        delete tabList->takeItem(activeWorkspace);
+                        if (activeWorkspace >= (int)workspaces.size())
+                            activeWorkspace = workspaces.size() - 1;
+                        tabList->setCurrentRow(activeWorkspace);
+                    }
+                    return;
+                }
+                case Qt::Key_BracketRight: {
+                    // Next workspace
+                    if (!workspaces.empty())
+                        tabList->setCurrentRow((activeWorkspace + 1) % workspaces.size());
+                    return;
+                }
+                case Qt::Key_BracketLeft: {
+                    // Previous workspace
+                    if (!workspaces.empty())
+                        tabList->setCurrentRow((activeWorkspace - 1 + workspaces.size()) % workspaces.size());
+                    return;
+                }
+
+                // Panes
+                case Qt::Key_T: addTabInFocusedPane(); return;
+
+                // Browser
+                case Qt::Key_B: browserTabs->setVisible(!browserTabs->isVisible()); return;
+                case Qt::Key_P: addBrowserTab("file:///home/pe/newnewrepos/w/yo/prettymux/src/qt/welcome.html"); return;
+
+                // Dev tools
+                case Qt::Key_I: openDevTools(false); return;
+                case Qt::Key_J: openDevTools(true); return;
+
+                // Shortcut overlay
+                case Qt::Key_K: showShortcutOverlay(); return;
+
+                // Command palette / search
+                case Qt::Key_S: showSearchOverlay(); return;
+
+                // Fullscreen
+                case Qt::Key_F11: {
+                    if (isFullScreen()) showNormal(); else showFullScreen();
+                    return;
+                }
+            }
         }
-        // Ctrl+1-9 switch workspace
+
+        // Ctrl+1-9 switch workspace (keep as Ctrl only, doesn't conflict)
         if (event->modifiers() == Qt::ControlModifier &&
             event->key() >= Qt::Key_1 && event->key() <= Qt::Key_9) {
             int idx = event->key() - Qt::Key_1;
@@ -1555,6 +2036,13 @@ protected:
                 tabList->setCurrentRow(idx);
             return;
         }
+
+        // F11 fullscreen (no modifier needed)
+        if (event->key() == Qt::Key_F11 && event->modifiers() == Qt::NoModifier) {
+            if (isFullScreen()) showNormal(); else showFullScreen();
+            return;
+        }
+
         QMainWindow::keyPressEvent(event);
     }
 };

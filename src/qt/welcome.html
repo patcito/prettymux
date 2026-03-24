@@ -6,40 +6,31 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
   background: #1e1e2e; color: #cdd6f4;
-  font-family: -apple-system, system-ui, sans-serif;
+  font-family: -apple-system, system-ui, 'Segoe UI', sans-serif;
   height: 100vh; display: flex; align-items: center; justify-content: center;
-  overflow: hidden;
 }
-.container { text-align: center; max-width: 560px; padding: 40px; }
-h1 { font-size: 42px; font-weight: 700; margin-bottom: 8px; }
+.container { text-align: center; max-width: 480px; padding: 40px; }
+h1 { font-size: 48px; font-weight: 700; margin-bottom: 6px; letter-spacing: -1px; }
 h1 span { color: #cba6f7; }
-.subtitle { color: #6c7086; font-size: 16px; margin-bottom: 48px; }
+.subtitle { color: #585b70; font-size: 15px; margin-bottom: 48px; letter-spacing: 0.5px; }
 .shortcuts { text-align: left; }
 .shortcut {
   display: flex; justify-content: space-between; align-items: center;
-  padding: 12px 0; border-bottom: 1px solid #313244;
+  padding: 12px 0; border-bottom: 1px solid rgba(49,50,68,0.5);
 }
 .shortcut:last-child { border-bottom: none; }
 .shortcut .label { color: #a6adc8; font-size: 14px; }
-.shortcut .keys {
-  display: flex; gap: 4px;
+.shortcut .keys { display: flex; gap: 4px; }
+kbd {
+  background: #313244; color: #bac2de; padding: 4px 10px;
+  border-radius: 6px; font-size: 11px; font-family: 'SF Mono', monospace;
+  border: 1px solid #45475a; border-bottom: 2px solid #45475a;
 }
-.shortcut .keys kbd {
-  background: #313244; color: #cdd6f4; padding: 4px 10px;
-  border-radius: 4px; font-size: 12px; font-family: monospace;
-  border: 1px solid #45475a;
+.hint {
+  color: #45475a; font-size: 13px; margin-top: 48px;
+  transition: color 0.3s;
 }
-.section-title {
-  color: #6c7086; font-size: 11px; text-transform: uppercase;
-  letter-spacing: 1.5px; margin-top: 32px; margin-bottom: 12px;
-}
-.tip {
-  color: #6c7086; font-size: 13px; margin-top: 40px; line-height: 1.6;
-}
-.tip code {
-  background: #313244; padding: 2px 6px; border-radius: 3px;
-  font-family: monospace; color: #a6e3a1;
-}
+.hint kbd { background: #252536; border-color: #313244; color: #6c7086; }
 </style>
 </head>
 <body>
@@ -48,43 +39,26 @@ h1 span { color: #cba6f7; }
   <div class="subtitle">GPU-accelerated terminal multiplexer</div>
 
   <div class="shortcuts">
-    <div class="section-title">Workspaces</div>
     <div class="shortcut">
       <span class="label">New workspace</span>
-      <span class="keys"><kbd>Ctrl</kbd><kbd>N</kbd></span>
+      <span class="keys"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>N</kbd></span>
     </div>
     <div class="shortcut">
-      <span class="label">Switch workspace</span>
-      <span class="keys"><kbd>Ctrl</kbd><kbd>1-9</kbd></span>
+      <span class="label">New terminal tab</span>
+      <span class="keys"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>T</kbd></span>
     </div>
-
-    <div class="section-title">Panes</div>
-    <div class="shortcut">
-      <span class="label">Split horizontal</span>
-      <span class="keys"><kbd>Ctrl</kbd><kbd>D</kbd></span>
-    </div>
-    <div class="shortcut">
-      <span class="label">Split vertical</span>
-      <span class="keys"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>D</kbd></span>
-    </div>
-
-    <div class="section-title">Browser</div>
     <div class="shortcut">
       <span class="label">Toggle browser</span>
-      <span class="keys"><kbd>Ctrl</kbd><kbd>B</kbd></span>
+      <span class="keys"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>B</kbd></span>
     </div>
     <div class="shortcut">
-      <span class="label">New tab</span>
-      <span class="keys"><kbd>Ctrl</kbd><kbd>T</kbd></span>
-    </div>
-    <div class="shortcut">
-      <span class="label">Open URL from terminal</span>
-      <span class="keys"><kbd>open</kbd> <kbd>url</kbd></span>
+      <span class="label">Copy / Paste</span>
+      <span class="keys"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>C</kbd> / <kbd>V</kbd></span>
     </div>
   </div>
 
-  <div class="tip">
-    Powered by <code>ghostty</code> + <code>Qt WebEngine</code>
+  <div class="hint">
+    <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>K</kbd> for all shortcuts
   </div>
 </div>
 </body>
