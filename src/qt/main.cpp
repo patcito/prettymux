@@ -892,6 +892,7 @@ struct Workspace {
     QStringList listeningPorts;
     QString notes;
     QString notification;
+    int newPort = 0;
     bool broadcast = false;
     bool zoomed = false;
     PaneWidget* zoomedPane = nullptr;
@@ -1190,6 +1191,22 @@ public:
             menu.exec(tabList->mapToGlobal(pos));
         });
         connect(tabList, &QListWidget::currentRowChanged, this, &PrettyMuxWindow::switchWorkspace);
+        connect(tabList, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
+            int idx = tabList->row(item);
+            if (idx >= 0 && idx < (int)workspaces.size() && workspaces[idx].newPort > 0) {
+                // Check if click was on the notification area (bottom part of item)
+                QRect itemRect = tabList->visualItemRect(item);
+                QPoint clickPos = tabList->mapFromGlobal(QCursor::pos());
+                // If click is in bottom third of item, open the port
+                if (clickPos.y() > itemRect.top() + itemRect.height() * 2 / 3) {
+                    addBrowserTab(QString("http://localhost:%1").arg(workspaces[idx].newPort));
+                    browserTabs->setVisible(true);
+                    workspaces[idx].newPort = 0;
+                    workspaces[idx].notification.clear();
+                    refreshSidebarItem(idx);
+                }
+            }
+        });
         connect(tabList->itemDelegate(), &QAbstractItemDelegate::commitData, this, [this](QWidget*) {
             int row = tabList->currentRow();
             if (row >= 0 && row < (int)workspaces.size()) {
@@ -1709,9 +1726,7 @@ public slots:
                 shortCwd = "~" + shortCwd.mid(home.length());
             lines << shortCwd;
         }
-        if (!ws.listeningPorts.isEmpty()) {
-            lines << QString("⚡ ports: %1").arg(ws.listeningPorts.join(", "));
-        }
+        // listeningPorts line removed, "New port:" notification is enough
         if (!ws.notification.isEmpty()) {
             lines << ws.notification;
         }
@@ -1723,6 +1738,10 @@ public slots:
         }
 
         tabList->item(idx)->setText(lines.join("\n"));
+        if (ws.newPort > 0)
+            tabList->item(idx)->setToolTip(QString("Click to open http://localhost:%1 in browser").arg(ws.newPort));
+        else
+            tabList->item(idx)->setToolTip("");
 
         // Color sidebar item based on state
         if (ws.broadcast)
@@ -2755,6 +2774,15 @@ public slots:
                 bool ok;
                 uint port = localAddr.mid(colonPos + 1).toUInt(&ok, 16);
                 if (!ok || port == 0) continue;
+                // Only show dev ports (1024-65535), skip system services
+                if (port < 1024) continue;
+                // Skip common system service ports
+                if (port == 5432 || port == 5433 || port == 5434  // postgres
+                    || port == 6379 || port == 6380               // redis
+                    || port == 11434                               // ollama
+                    || port == 4723 || port == 5037 || port == 5054 // adb/avahi
+                    || port >= 35000)                               // ephemeral ports
+                    continue;
                 QString portStr = QString::number(port);
                 if (!ports.contains(portStr))
                     ports.append(portStr);
@@ -2772,18 +2800,54 @@ public slots:
         }
         lastKnownPorts = ports;
 
-        // Update all workspaces
+        // Only show ports on workspaces that have a running command
+        // (title contains something other than just a path)
         for (int i = 0; i < (int)workspaces.size(); i++) {
-            if (workspaces[i].listeningPorts != ports) {
-                workspaces[i].listeningPorts = ports;
+            auto& ws = workspaces[i];
+            bool hasRunningProcess = false;
+
+            // Check if any terminal in this workspace has a running process
+            // A running process means the title is NOT just a directory path
+            if (!ws.title.isEmpty() && !ws.title.contains('/') && ws.title != "bash" && ws.title != "zsh" && ws.title != "fish" && ws.title != "sh") {
+                hasRunningProcess = true;
+            }
+
+            QStringList wsPorts = hasRunningProcess ? ports : QStringList();
+            if (ws.listeningPorts != wsPorts) {
+                ws.listeningPorts = wsPorts;
                 refreshSidebarItem(i);
             }
         }
 
-        // Notify about new ports
+        // Notify about new ports and offer to open in browser
         if (!newPorts.isEmpty() && activeWorkspace >= 0 && activeWorkspace < (int)workspaces.size()) {
-            workspaces[activeWorkspace].notification = QString("New port: %1").arg(newPorts.join(", "));
-            refreshSidebarItem(activeWorkspace);
+            auto& ws = workspaces[activeWorkspace];
+            if (!ws.title.isEmpty() && !ws.title.contains('/') && ws.title != "bash" && ws.title != "zsh") {
+                QString port = newPorts.first();
+                ws.notification = QString("-> localhost:%1").arg(newPorts.join(", "));
+                ws.newPort = port.toInt();
+                refreshSidebarItem(activeWorkspace);
+
+                // Desktop notification with "Open in Browser" action
+                auto* proc = new QProcess(this);
+                proc->setProgram("notify-send");
+                proc->setArguments({
+                    "prettymux", QString("Port %1 detected").arg(port),
+                    "--app-name=prettymux",
+                    "--action=open=Open in Browser",
+                    "--wait"
+                });
+                connect(proc, &QProcess::finished, this, [this, proc, port](int exitCode) {
+                    if (exitCode == 0) {
+                        addBrowserTab(QString("http://localhost:%1").arg(port));
+                        browserTabs->setVisible(true);
+                        raise();
+                        activateWindow();
+                    }
+                    proc->deleteLater();
+                });
+                proc->start();
+            }
         }
     }
 
@@ -3583,6 +3647,36 @@ protected:
         if (event->key() == Qt::Key_F11 && event->modifiers() == Qt::NoModifier) {
             if (isFullScreen()) showNormal(); else showFullScreen();
             return;
+        }
+
+        // Browser-specific shortcuts (Ctrl without Shift, only when browser focused)
+        if (event->modifiers() == Qt::ControlModifier && browserTabs->isVisible()) {
+            QWidget* focused = QApplication::focusWidget();
+            bool browserFocused = focused && browserTabs->isAncestorOf(focused);
+            if (browserFocused) {
+                if (event->key() == Qt::Key_L) {
+                    // Focus address bar and select all
+                    QWidget* current = browserTabs->currentWidget();
+                    if (current) {
+                        auto* urlBar = current->findChild<QLineEdit*>();
+                        if (urlBar) {
+                            urlBar->setFocus();
+                            urlBar->selectAll();
+                        }
+                    }
+                    return;
+                }
+                if (event->key() == Qt::Key_W) {
+                    // Close current browser tab
+                    int idx = browserTabs->currentIndex();
+                    if (browserTabs->count() > 1) {
+                        QWidget* w = browserTabs->widget(idx);
+                        browserTabs->removeTab(idx);
+                        w->deleteLater();
+                    }
+                    return;
+                }
+            }
         }
 
         QMainWindow::keyPressEvent(event);
