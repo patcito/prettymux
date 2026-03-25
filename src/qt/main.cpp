@@ -41,6 +41,14 @@
 #include <QLocalSocket>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QTextEdit>
+#include <QMap>
+#include <QCompleter>
+#include <QStringListModel>
+#include <QDrag>
+#include <QDropEvent>
+#include <QDragEnterEvent>
+#include <QScrollArea>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -65,8 +73,147 @@ static void write_clipboard_cb(void*, ghostty_clipboard_e, const ghostty_clipboa
 class PrettyMuxWindow;
 static PrettyMuxWindow* g_window = nullptr;
 
+class GhosttyWidget; // forward declaration
 class PaneWidget; // forward declaration
 class PrettyMuxWindow; // forward declaration
+
+// Forward declarations for broadcast (defined after PrettyMuxWindow)
+static bool isBroadcastEnabled(GhosttyWidget* source);
+static void doBroadcastKey(GhosttyWidget* source, ghostty_input_key_s ke);
+static void doBroadcastText(GhosttyWidget* source, const char* text, size_t len);
+
+// ── ShortcutManager — configurable keyboard shortcuts ──
+
+class ShortcutManager {
+public:
+    struct Shortcut {
+        QString action;
+        QKeySequence sequence;
+        QString label;
+    };
+
+    ShortcutManager() {
+        defaults = {
+            {"workspace.new", QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_N), "New workspace"},
+            {"workspace.close", QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_W), "Close workspace"},
+            {"workspace.next", QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_BracketRight), "Next workspace"},
+            {"workspace.prev", QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_BracketLeft), "Previous workspace"},
+            {"pane.tab.new", QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_T), "New terminal tab"},
+            {"browser.toggle", QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_B), "Toggle browser"},
+            {"browser.new", QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_P), "New browser tab"},
+            {"devtools.docked", QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_I), "Inspector docked"},
+            {"devtools.window", QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_J), "Inspector window"},
+            {"shortcuts.show", QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_K), "Shortcuts overlay"},
+            {"search.show", QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S), "Search palette"},
+            {"pane.zoom", QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Z), "Zoom pane"},
+            {"terminal.search", QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F), "Terminal search"},
+            {"broadcast.toggle", QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Return), "Broadcast mode"},
+            {"notes.toggle", QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Q), "Quick notes"},
+            {"theme.cycle", QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Comma), "Cycle theme"},
+            {"history.show", QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_H), "Command history"},
+            {"pip.toggle", QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_M), "Picture in picture"},
+        };
+        for (auto& d : defaults)
+            bindings[d.action] = d.sequence;
+        loadFromFile();
+    }
+
+    QString configPath() {
+        QString dir = QDir::homePath() + "/.config/prettymux";
+        QDir().mkpath(dir);
+        return dir + "/keybindings.json";
+    }
+
+    void loadFromFile() {
+        QFile f(configPath());
+        if (!f.open(QIODevice::ReadOnly)) return;
+        QJsonDocument doc = QJsonDocument::fromJson(f.readAll());
+        f.close();
+        if (!doc.isObject()) return;
+        QJsonObject obj = doc.object();
+        for (auto it = obj.begin(); it != obj.end(); ++it) {
+            QKeySequence seq(it.value().toString());
+            if (!seq.isEmpty())
+                bindings[it.key()] = seq;
+        }
+    }
+
+    void saveToFile() {
+        QJsonObject obj;
+        for (auto it = bindings.begin(); it != bindings.end(); ++it) {
+            QKeySequence defaultSeq;
+            for (auto& d : defaults) {
+                if (d.action == it.key()) { defaultSeq = d.sequence; break; }
+            }
+            if (it.value() != defaultSeq)
+                obj[it.key()] = it.value().toString();
+        }
+        QFile f(configPath());
+        if (f.open(QIODevice::WriteOnly)) {
+            f.write(QJsonDocument(obj).toJson());
+            f.close();
+        }
+    }
+
+    void resetToDefaults() {
+        bindings.clear();
+        for (auto& d : defaults)
+            bindings[d.action] = d.sequence;
+        QFile::remove(configPath());
+    }
+
+    QString matchShortcut(QKeyEvent* event) {
+        QKeyCombination combo(event->modifiers(), static_cast<Qt::Key>(event->key()));
+        QKeySequence pressed(combo);
+        for (auto it = bindings.begin(); it != bindings.end(); ++it) {
+            if (pressed.matches(it.value()) == QKeySequence::ExactMatch)
+                return it.key();
+        }
+        return "";
+    }
+
+    bool shouldIntercept(QKeyEvent* event) {
+        return !matchShortcut(event).isEmpty();
+    }
+
+    QKeySequence getBinding(const QString& action) {
+        auto it = bindings.find(action);
+        return it != bindings.end() ? it.value() : QKeySequence();
+    }
+
+    void setBinding(const QString& action, const QKeySequence& seq) {
+        bindings[action] = seq;
+    }
+
+    const std::vector<Shortcut>& getDefaults() const { return defaults; }
+    const QMap<QString, QKeySequence>& getBindings() const { return bindings; }
+
+private:
+    std::vector<Shortcut> defaults;
+    QMap<QString, QKeySequence> bindings;
+};
+
+static ShortcutManager* g_shortcuts = nullptr;
+
+// ── Theme System ──
+
+struct Theme {
+    QString name;
+    QString bg, fg, surface, overlay, subtext, accent, green, red, yellow, blue, peach, muted, highlight;
+};
+
+static const Theme kThemes[] = {
+    {"Dark",    "#1e1e2e", "#cdd6f4", "#181825", "#313244", "#6c7086", "#cba6f7",
+                "#a6e3a1", "#f38ba8", "#f9e2af", "#89b4fa", "#fab387", "#45475a", "#585b70"},
+    {"Light",   "#eff1f5", "#4c4f69", "#e6e9ef", "#ccd0da", "#8c8fa1", "#8839ef",
+                "#40a02b", "#d20f39", "#df8e1d", "#1e66f5", "#fe640b", "#9ca0b0", "#acb0be"},
+    {"Monokai", "#272822", "#f8f8f2", "#1e1f1c", "#3e3d32", "#75715e", "#ae81ff",
+                "#a6e22e", "#f92672", "#e6db74", "#66d9ef", "#fd971f", "#49483e", "#75715e"},
+};
+static const int kThemeCount = 3;
+static int g_currentTheme = 0;
+
+static const Theme& currentTheme() { return kThemes[g_currentTheme]; }
 
 // ── GhosttyWidget — QOpenGLWidget hosting a ghostty surface ──
 
@@ -81,6 +228,9 @@ class GhosttyWidget : public QOpenGLWidget, protected QOpenGLFunctions {
 
 public:
     QString lastCwd;
+    bool hasNewOutput = false;
+    int progressPercent = -1;
+    int progressState = -1;  // ghostty_action_progress_report_state_e or -1
 
     GhosttyWidget(const QString& startDir = "", QWidget* parent = nullptr) : QOpenGLWidget(parent) {
         if (!startDir.isEmpty())
@@ -172,18 +322,21 @@ protected:
     void keyPressEvent(QKeyEvent* event) override {
         if (!surface) return;
 
-        // Intercept Ctrl+Shift shortcuts before ghostty consumes them
-        if (event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier)) {
+        // Intercept Alt+Arrow keys for pane focus navigation
+        if (event->modifiers() == Qt::AltModifier) {
             switch (event->key()) {
-                case Qt::Key_T: case Qt::Key_N: case Qt::Key_W:
-                case Qt::Key_B: case Qt::Key_P: case Qt::Key_I: case Qt::Key_J:
-                case Qt::Key_K: case Qt::Key_S:
-                case Qt::Key_BracketLeft: case Qt::Key_BracketRight:
-                    // Forward to main window
+                case Qt::Key_Left: case Qt::Key_Right:
+                case Qt::Key_Up: case Qt::Key_Down:
                     QApplication::sendEvent(window(), event);
                     return;
                 default: break;
             }
+        }
+
+        // Intercept shortcuts bound in ShortcutManager before ghostty consumes them
+        if (g_shortcuts && g_shortcuts->shouldIntercept(event)) {
+            QApplication::sendEvent(window(), event);
+            return;
         }
 
         // Ctrl+Tab / Ctrl+Shift+Tab: pass to parent to cycle pane tabs
@@ -213,6 +366,7 @@ protected:
             if (!text.isEmpty()) {
                 QByteArray utf8 = text.toUtf8();
                 ghostty_surface_text(surface, utf8.constData(), utf8.size());
+                if (isBroadcastEnabled(this)) doBroadcastText(this, utf8.constData(), utf8.size());
             }
             return;
         }
@@ -245,6 +399,7 @@ protected:
         ke.unshifted_codepoint = key < 0x110000 ? key : 0;
 
         ghostty_surface_key(surface, ke);
+        if (isBroadcastEnabled(this)) doBroadcastKey(this, ke);
         update();
     }
 
@@ -255,6 +410,7 @@ protected:
         ke.keycode = event->nativeScanCode();
         ke.mods = translateMods(event->modifiers());
         ghostty_surface_key(surface, ke);
+        if (isBroadcastEnabled(this)) doBroadcastKey(this, ke);
     }
 
     void focusInEvent(QFocusEvent*) override {
@@ -267,8 +423,10 @@ protected:
     void inputMethodEvent(QInputMethodEvent* event) override {
         if (!surface) return;
         QByteArray utf8 = event->commitString().toUtf8();
-        if (!utf8.isEmpty())
+        if (!utf8.isEmpty()) {
             ghostty_surface_text(surface, utf8.constData(), utf8.size());
+            if (isBroadcastEnabled(this)) doBroadcastText(this, utf8.constData(), utf8.size());
+        }
     }
 
     void mousePressEvent(QMouseEvent* event) override {
@@ -363,6 +521,20 @@ public:
     }
 };
 
+// ── TabDragFilter — detects cross-pane tab drags ──
+
+class PaneWidget; // forward
+class TabDragFilter : public QObject {
+public:
+    PaneWidget* paneWidget;
+    int dragTabIndex = -1;
+    QPoint dragStartPos;
+
+    TabDragFilter(PaneWidget* pw);
+    bool eventFilter(QObject* obj, QEvent* event) override;
+    void startCrossPaneDrag(QTabBar* tabBar);
+};
+
 // ── PaneWidget: a single pane with tab bar, each tab is one ghostty terminal ──
 // Split buttons emit splitRequested so the parent can replace this pane
 // with a splitter containing this pane + a new pane.
@@ -371,11 +543,14 @@ class PaneWidget : public QWidget {
     Q_OBJECT
 public:
     QTabWidget* tabs;
+    QFrame* progressBar = nullptr;
     std::vector<GhosttyWidget*> terminals; // one per tab
 
     PaneWidget(QWidget* parent = nullptr) : QWidget(parent) {
-        setStyleSheet("border: 2px solid #313244; border-radius: 0px;");
+        const auto& t = currentTheme();
+        setStyleSheet(QString("border: 2px solid %1; border-radius: 0px;").arg(t.overlay));
         setMinimumSize(100, 100);
+        setAcceptDrops(true);
 
         auto* layout = new QVBoxLayout(this);
         layout->setContentsMargins(0, 0, 0, 0);
@@ -384,12 +559,7 @@ public:
         tabs = new QTabWidget();
         tabs->setTabsClosable(true);
         tabs->setMovable(true);
-        tabs->setStyleSheet(
-            "QTabWidget::pane { border: none; background: #1e1e2e; }"
-            "QTabBar::tab { background: #181825; color: #6c7086; padding: 4px 10px; border: none; border-bottom: 2px solid transparent; }"
-            "QTabBar::tab:selected { color: #cdd6f4; border-bottom: 2px solid #a6e3a1; background: #1e1e2e; }"
-            "QTabBar::tab:hover { color: #cdd6f4; background: #313244; }"
-        );
+        applyTabStyle();
 
         // Corner buttons
         QWidget* corner = new QWidget();
@@ -397,10 +567,10 @@ public:
         cl->setContentsMargins(2, 2, 2, 2);
         cl->setSpacing(2);
 
-        auto btn = [](const QString& text) {
+        auto btn = [&t](const QString& text) {
             auto* b = new QPushButton(text);
             b->setFixedHeight(20);
-            b->setStyleSheet("background: #313244; color: #6c7086; border: none; border-radius: 3px; padding: 0 6px;");
+            b->setStyleSheet(QString("background: %1; color: %2; border: none; border-radius: 3px; padding: 0 6px;").arg(t.overlay, t.subtext));
             return b;
         };
 
@@ -436,6 +606,28 @@ public:
         });
 
         layout->addWidget(tabs);
+
+        // Thin progress bar at bottom of pane
+        progressBar = new QFrame();
+        progressBar->setFixedHeight(3);
+        progressBar->setStyleSheet("background: transparent;");
+        progressBar->hide();
+        layout->addWidget(progressBar);
+
+        // Clear activity indicator when switching tabs; update progress bar
+        connect(tabs, &QTabWidget::currentChanged, this, [this](int idx) {
+            if (idx >= 0 && idx < (int)terminals.size()) {
+                terminals[idx]->hasNewOutput = false;
+                tabs->tabBar()->setTabTextColor(idx, QColor());
+                // Remove activity dot prefix
+                QString text = tabs->tabText(idx);
+                if (text.startsWith(QChar(0x25CF)))
+                    tabs->setTabText(idx, text.mid(2));
+                // Update progress bar for newly active tab
+                updateTabProgress(idx, terminals[idx]->progressState, terminals[idx]->progressPercent);
+            }
+        });
+
         addNewTab();
 
         // Install shortcut for Ctrl+Tab / Ctrl+Shift+Tab
@@ -449,6 +641,29 @@ public:
             if (tabs->count() > 1)
                 tabs->setCurrentIndex((tabs->currentIndex() - 1 + tabs->count()) % tabs->count());
         });
+
+        // Install drag filter for cross-pane tab DnD
+        tabs->tabBar()->installEventFilter(new TabDragFilter(this));
+
+        // Sync terminals vector when tabs are reordered within pane
+        connect(tabs->tabBar(), &QTabBar::tabMoved, this, [this](int from, int to) {
+            if (from >= 0 && from < (int)terminals.size() && to >= 0 && to < (int)terminals.size()) {
+                auto* term = terminals[from];
+                terminals.erase(terminals.begin() + from);
+                terminals.insert(terminals.begin() + to, term);
+            }
+        });
+    }
+
+    void applyTabStyle() {
+        const auto& t = currentTheme();
+        tabs->setStyleSheet(QString(
+            "QTabWidget::pane { border: none; background: %1; }"
+            "QTabBar::tab { background: %2; color: %3; padding: 4px 10px; border: none; border-bottom: 2px solid transparent; }"
+            "QTabBar::tab:selected { color: %4; border-bottom: 2px solid %5; background: %1; }"
+            "QTabBar::tab:hover { color: %4; background: %6; }"
+        ).arg(t.bg, t.surface, t.subtext, t.fg, t.green, t.overlay));
+        setStyleSheet(QString("border: 2px solid %1; border-radius: 0px;").arg(t.overlay));
     }
 
     void addNewTab(const QString& startDir = "") {
@@ -473,9 +688,193 @@ public:
 
     std::vector<GhosttyWidget*> allTerminals() const { return terminals; }
 
+    void markTabActivity(int tabIdx) {
+        if (tabIdx < 0 || tabIdx >= tabs->count()) return;
+        if (tabIdx == tabs->currentIndex()) return;
+        tabs->tabBar()->setTabTextColor(tabIdx, QColor(currentTheme().green));
+        QString text = tabs->tabText(tabIdx);
+        if (!text.startsWith(QChar(0x25CF)))
+            tabs->setTabText(tabIdx, QString("%1 %2").arg(QChar(0x25CF)).arg(text));
+    }
+
+    void updateTabProgress(int tabIdx, int state, int percent) {
+        if (tabIdx < 0 || tabIdx >= tabs->count()) return;
+
+        // Determine progress color for visual markers
+        QString color;
+        switch (state) {
+            case GHOSTTY_PROGRESS_STATE_SET: color = "#a6e3a1"; break;
+            case GHOSTTY_PROGRESS_STATE_ERROR: color = "#f38ba8"; break;
+            case GHOSTTY_PROGRESS_STATE_PAUSE: color = "#f9e2af"; break;
+            case GHOSTTY_PROGRESS_STATE_INDETERMINATE: color = "#89b4fa"; break;
+            default: color = ""; break;
+        }
+
+        // Tooltip for any tab
+        QString tooltip;
+        if (state == GHOSTTY_PROGRESS_STATE_SET)
+            tooltip = percent >= 0 ? QString("Progress: %1%").arg(percent) : "Progress";
+        else if (state == GHOSTTY_PROGRESS_STATE_ERROR)
+            tooltip = "Progress: Error";
+        else if (state == GHOSTTY_PROGRESS_STATE_PAUSE)
+            tooltip = "Progress: Paused";
+        else if (state == GHOSTTY_PROGRESS_STATE_INDETERMINATE)
+            tooltip = "Progress: Running...";
+
+        if (!tooltip.isEmpty())
+            tabs->setTabToolTip(tabIdx, tooltip);
+
+        // Always-visible progress marker on tab label for ALL tabs
+        // Strip any existing progress suffix (▰▱ bar or state markers)
+        QString text = tabs->tabText(tabIdx);
+        int markerPos = text.indexOf(QChar(0x2590)); // ▐ separator
+        if (markerPos >= 0)
+            text = text.left(markerPos).trimmed();
+
+        if (state == GHOSTTY_PROGRESS_STATE_REMOVE || state < 0) {
+            // Remove visual marker, reset tab color
+            tabs->setTabText(tabIdx, text);
+            tabs->tabBar()->setTabTextColor(tabIdx, QColor());
+            tabs->setTabToolTip(tabIdx, "");
+        } else {
+            // Build a visible progress suffix on the tab label
+            QString suffix;
+            if (state == GHOSTTY_PROGRESS_STATE_SET && percent >= 0 && percent <= 100) {
+                // Show mini progress bar: ▐▰▰▰▱▱▱ 42%
+                int filled = percent / 20;  // 0-5 blocks
+                int empty = 5 - filled;
+                suffix = QString(" %1%2%3 %4%")
+                    .arg(QChar(0x2590))  // ▐ separator
+                    .arg(QString(filled, QChar(0x2588)))   // █ filled
+                    .arg(QString(empty, QChar(0x2591)))     // ░ empty
+                    .arg(percent);
+            } else if (state == GHOSTTY_PROGRESS_STATE_ERROR) {
+                suffix = QString(" %1 ✗").arg(QChar(0x2590));
+            } else if (state == GHOSTTY_PROGRESS_STATE_PAUSE) {
+                suffix = QString(" %1 ⏸").arg(QChar(0x2590));
+            } else {
+                // Indeterminate
+                suffix = QString(" %1 ◌").arg(QChar(0x2590));
+            }
+            tabs->setTabText(tabIdx, text + suffix);
+            tabs->tabBar()->setTabTextColor(tabIdx, QColor(color));
+        }
+
+        // Show thin progress bar at bottom of pane for the current tab only
+        if (tabIdx != tabs->currentIndex()) return;
+
+        if (state == GHOSTTY_PROGRESS_STATE_REMOVE || state < 0) {
+            progressBar->hide();
+            return;
+        }
+        progressBar->show();
+        if (state == GHOSTTY_PROGRESS_STATE_SET && percent >= 0 && percent <= 100) {
+            double frac = percent / 100.0;
+            progressBar->setStyleSheet(QString(
+                "background: qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+                "stop:0 %1, stop:%2 %1, stop:%3 transparent, stop:1 transparent);"
+            ).arg(color).arg(frac, 0, 'f', 3).arg(frac + 0.001, 0, 'f', 3));
+        } else {
+            progressBar->setStyleSheet(QString("background: %1;").arg(color));
+        }
+    }
+
+protected:
+    void dragEnterEvent(QDragEnterEvent* event) override {
+        if (event->mimeData()->hasFormat("application/x-prettymux-tab"))
+            event->acceptProposedAction();
+    }
+
+    void dragMoveEvent(QDragMoveEvent* event) override {
+        if (event->mimeData()->hasFormat("application/x-prettymux-tab"))
+            event->acceptProposedAction();
+    }
+
+    void dropEvent(QDropEvent* event) override {
+        if (!event->mimeData()->hasFormat("application/x-prettymux-tab")) return;
+
+        QByteArray data = event->mimeData()->data("application/x-prettymux-tab");
+        QDataStream stream(&data, QIODevice::ReadOnly);
+        quint64 sourcePtr;
+        int tabIdx;
+        stream >> sourcePtr >> tabIdx;
+
+        PaneWidget* source = reinterpret_cast<PaneWidget*>(sourcePtr);
+        if (!source || source == this) return;
+        if (tabIdx < 0 || tabIdx >= (int)source->terminals.size()) return;
+        if (source->terminals.size() <= 1) return; // don't remove last tab
+
+        GhosttyWidget* term = source->terminals[tabIdx];
+        QString tabName = source->tabs->tabText(tabIdx);
+
+        source->tabs->removeTab(tabIdx);
+        source->terminals.erase(source->terminals.begin() + tabIdx);
+
+        terminals.push_back(term);
+        tabs->addTab(term, tabName);
+        tabs->setCurrentIndex(terminals.size() - 1);
+        term->setFocus();
+
+        event->acceptProposedAction();
+    }
+
 signals:
     void splitRequested(PaneWidget* source, Qt::Orientation orientation);
 };
+
+// ── TabDragFilter implementation ──
+
+TabDragFilter::TabDragFilter(PaneWidget* pw) : QObject(pw), paneWidget(pw) {}
+
+bool TabDragFilter::eventFilter(QObject* obj, QEvent* event) {
+    auto* tabBar = qobject_cast<QTabBar*>(obj);
+    if (!tabBar) return false;
+
+    if (event->type() == QEvent::MouseButtonPress) {
+        auto* me = static_cast<QMouseEvent*>(event);
+        if (me->button() == Qt::LeftButton) {
+            dragTabIndex = tabBar->tabAt(me->position().toPoint());
+            dragStartPos = me->position().toPoint();
+        }
+    } else if (event->type() == QEvent::MouseMove) {
+        auto* me = static_cast<QMouseEvent*>(event);
+        if (dragTabIndex >= 0 && (me->buttons() & Qt::LeftButton)) {
+            if ((me->position().toPoint() - dragStartPos).manhattanLength() > QApplication::startDragDistance()) {
+                int y = me->position().toPoint().y();
+                if (y < -20 || y > tabBar->height() + 20) {
+                    startCrossPaneDrag(tabBar);
+                    return true;
+                }
+            }
+        }
+    } else if (event->type() == QEvent::MouseButtonRelease) {
+        dragTabIndex = -1;
+    }
+    return false;
+}
+
+void TabDragFilter::startCrossPaneDrag(QTabBar* tabBar) {
+    if (dragTabIndex < 0 || dragTabIndex >= (int)paneWidget->terminals.size()) return;
+
+    QDrag* drag = new QDrag(tabBar);
+    QMimeData* mime = new QMimeData();
+    QByteArray data;
+    QDataStream stream(&data, QIODevice::WriteOnly);
+    stream << (quint64)paneWidget << dragTabIndex;
+    mime->setData("application/x-prettymux-tab", data);
+    drag->setMimeData(mime);
+
+    QPixmap pixmap(120, 30);
+    pixmap.fill(QColor(currentTheme().overlay));
+    QPainter p(&pixmap);
+    p.setPen(QColor(currentTheme().fg));
+    p.drawText(pixmap.rect(), Qt::AlignCenter, tabBar->tabText(dragTabIndex));
+    p.end();
+    drag->setPixmap(pixmap);
+
+    drag->exec(Qt::MoveAction);
+    dragTabIndex = -1;
+}
 
 // ── Workspace: vertical sidebar tab, contains panes arranged in splitters ──
 
@@ -487,7 +886,165 @@ struct Workspace {
     QString cwd;
     QString title;
     QString gitBranch;
+    int gitDirtyCount = 0;
+    int gitAhead = 0;
+    int gitBehind = 0;
+    QStringList listeningPorts;
+    QString notes;
     QString notification;
+    bool broadcast = false;
+    bool zoomed = false;
+    PaneWidget* zoomedPane = nullptr;
+    std::vector<QList<int>> savedSplitterSizes;
+};
+
+// ── PiPWindow — floating picture-in-picture browser window ──
+
+class PiPWindow : public QWidget {
+    Q_OBJECT
+public:
+    QWebEngineView* view = nullptr;
+    int originalTabIndex = -1;
+    QTabWidget* originalTabs = nullptr;
+    QWidget* originalContainer = nullptr;
+    QPoint dragPos;
+    bool dragging = false;
+    int resizeEdge = 0; // 0=none, 1=left, 2=right, 4=top, 8=bottom (combinable)
+
+    PiPWindow(QWidget* parent = nullptr) : QWidget(parent,
+        Qt::Window | Qt::WindowStaysOnTopHint | Qt::Tool | Qt::FramelessWindowHint) {
+        setAttribute(Qt::WA_TranslucentBackground);
+        setMinimumSize(320, 200);
+        resize(560, 380);
+        setMouseTracking(true);
+
+        const auto& t = currentTheme();
+        auto* mainLayout = new QVBoxLayout(this);
+        mainLayout->setContentsMargins(4, 4, 4, 4);
+        mainLayout->setSpacing(0);
+
+        auto* frame = new QWidget();
+        frame->setObjectName("pipFrame");
+        frame->setStyleSheet(QString(
+            "background: %1; border: 1px solid %2; border-radius: 8px;"
+        ).arg(t.bg, t.muted));
+        auto* frameLayout = new QVBoxLayout(frame);
+        frameLayout->setContentsMargins(0, 0, 0, 0);
+        frameLayout->setSpacing(0);
+
+        // Title bar
+        auto* titleBar = new QWidget();
+        titleBar->setObjectName("pipTitleBar");
+        titleBar->setFixedHeight(28);
+        titleBar->setStyleSheet(QString(
+            "background: %1; border-radius: 8px 8px 0 0; border: none;"
+        ).arg(t.surface));
+        auto* titleLayout = new QHBoxLayout(titleBar);
+        titleLayout->setContentsMargins(10, 2, 4, 2);
+
+        auto* titleLabel = new QLabel("Picture in Picture");
+        titleLabel->setObjectName("pipTitle");
+        titleLabel->setStyleSheet(QString("color: %1; font-size: 11px; background: transparent; border: none;").arg(t.fg));
+        titleLayout->addWidget(titleLabel);
+        titleLayout->addStretch();
+
+        auto* closeBtn = new QPushButton("x");
+        closeBtn->setObjectName("pipCloseBtn");
+        closeBtn->setFixedSize(20, 20);
+        closeBtn->setStyleSheet(QString("background: %1; color: %2; border: none; border-radius: 3px;").arg(t.muted, t.fg));
+        connect(closeBtn, &QPushButton::clicked, this, &QWidget::close);
+        titleLayout->addWidget(closeBtn);
+
+        frameLayout->addWidget(titleBar);
+        frameLayout->addStretch(); // placeholder for view
+        mainLayout->addWidget(frame);
+    }
+
+    void setView(QWebEngineView* v, int tabIdx, QTabWidget* tabs, QWidget* container) {
+        view = v;
+        originalTabIndex = tabIdx;
+        originalTabs = tabs;
+        originalContainer = container;
+
+        auto* frame = findChild<QWidget*>()->layout();
+        if (!frame) return;
+        // Remove the stretch placeholder
+        auto* item = frame->itemAt(1);
+        if (item) {
+            frame->removeItem(item);
+            delete item;
+        }
+        frame->addWidget(v);
+
+        auto* titleLabel = findChild<QLabel*>("pipTitle");
+        if (titleLabel) {
+            QString t = view->title().isEmpty() ? "Picture in Picture" : view->title().left(40);
+            titleLabel->setText(t);
+            connect(view, &QWebEngineView::titleChanged, titleLabel, [titleLabel](const QString& title) {
+                titleLabel->setText(title.left(40));
+            });
+        }
+    }
+
+protected:
+    void mousePressEvent(QMouseEvent* event) override {
+        if (event->button() == Qt::LeftButton) {
+            resizeEdge = hitTestEdge(event->position().toPoint());
+            if (resizeEdge) {
+                dragPos = event->globalPosition().toPoint();
+            } else if (event->position().y() < 32) {
+                dragging = true;
+                dragPos = event->globalPosition().toPoint() - frameGeometry().topLeft();
+            }
+        }
+    }
+
+    void mouseMoveEvent(QMouseEvent* event) override {
+        if (dragging) {
+            move(event->globalPosition().toPoint() - dragPos);
+        } else if (resizeEdge) {
+            QPoint delta = event->globalPosition().toPoint() - dragPos;
+            dragPos = event->globalPosition().toPoint();
+            QRect geo = geometry();
+            if (resizeEdge & 2) geo.setRight(geo.right() + delta.x());
+            if (resizeEdge & 1) geo.setLeft(geo.left() + delta.x());
+            if (resizeEdge & 8) geo.setBottom(geo.bottom() + delta.y());
+            if (resizeEdge & 4) geo.setTop(geo.top() + delta.y());
+            if (geo.width() >= minimumWidth() && geo.height() >= minimumHeight())
+                setGeometry(geo);
+        } else {
+            int edge = hitTestEdge(event->position().toPoint());
+            if (edge == 1 || edge == 2) setCursor(Qt::SizeHorCursor);
+            else if (edge == 4 || edge == 8) setCursor(Qt::SizeVerCursor);
+            else if (edge == 5 || edge == 10) setCursor(Qt::SizeFDiagCursor);
+            else if (edge == 6 || edge == 9) setCursor(Qt::SizeBDiagCursor);
+            else setCursor(Qt::ArrowCursor);
+        }
+    }
+
+    void mouseReleaseEvent(QMouseEvent*) override {
+        dragging = false;
+        resizeEdge = 0;
+    }
+
+    void closeEvent(QCloseEvent* event) override {
+        emit restoreRequested();
+        event->accept();
+    }
+
+signals:
+    void restoreRequested();
+
+private:
+    int hitTestEdge(QPoint pos) {
+        int margin = 6;
+        int edge = 0;
+        if (pos.x() < margin) edge |= 1;
+        if (pos.x() > width() - margin) edge |= 2;
+        if (pos.y() < margin) edge |= 4;
+        if (pos.y() > height() - margin) edge |= 8;
+        return edge;
+    }
 };
 
 // ── MainWindow ──
@@ -504,6 +1061,8 @@ private:
     QStackedWidget* terminalStack;
     QTabWidget* browserTabs;
     QSplitter* mainSplitter;
+    QWidget* sidebar = nullptr;
+    QSplitter* outerSplit = nullptr;
     QSystemTrayIcon* trayIcon = nullptr;
     QLocalServer* socketServer = nullptr;
     struct NotificationEntry {
@@ -518,6 +1077,13 @@ private:
     QPushButton* bellBtn = nullptr;
     std::vector<Workspace> workspaces;
     int activeWorkspace = -1;
+    QTextEdit* notesPanel = nullptr;
+    QSplitter* terminalArea = nullptr;
+    QTimer* portScanTimer = nullptr;
+    QStringList lastKnownPorts;
+    bool portScanEnabled = true;
+    QStringList urlHistory;
+    PiPWindow* pipWindow = nullptr;
 
 public:
     PrettyMuxWindow() {
@@ -525,15 +1091,16 @@ public:
         resize(1400, 900);
 
         // Central widget
+        const auto& t = currentTheme();
         QWidget* central = new QWidget(this);
-        QSplitter* outerSplitter = new QSplitter(Qt::Horizontal, central);
-        outerSplitter->setStyleSheet("QSplitter::handle { background: #313244; width: 3px; }");
-        QHBoxLayout* mainLayout = new QHBoxLayout(central); mainLayout->setContentsMargins(0,0,0,0); mainLayout->setSpacing(0); mainLayout->addWidget(outerSplitter);
+        outerSplit = new QSplitter(Qt::Horizontal, central);
+        outerSplit->setStyleSheet(QString("QSplitter::handle { background: %1; width: 3px; }").arg(t.overlay));
+        QHBoxLayout* mainLayout = new QHBoxLayout(central); mainLayout->setContentsMargins(0,0,0,0); mainLayout->setSpacing(0); mainLayout->addWidget(outerSplit);
 
         // ── Sidebar ──
-        QWidget* sidebar = new QWidget();
+        sidebar = new QWidget();
         sidebar->setMinimumWidth(120); sidebar->setMaximumWidth(400);
-        sidebar->setStyleSheet("background: #181825; border-right: 1px solid #313244;");
+        sidebar->setStyleSheet(QString("background: %1; border-right: 1px solid %2;").arg(t.surface, t.overlay));
 
         QVBoxLayout* sidebarLayout = new QVBoxLayout(sidebar);
         sidebarLayout->setContentsMargins(0, 0, 0, 0);
@@ -541,12 +1108,13 @@ public:
 
         // Header
         QWidget* header = new QWidget();
-        header->setStyleSheet("background: #181825; border-bottom: 1px solid #313244; padding: 8px;");
+        header->setObjectName("sidebarHeader");
+        header->setStyleSheet(QString("background: %1; border-bottom: 1px solid %2; padding: 8px;").arg(t.surface, t.overlay));
         QHBoxLayout* headerLayout = new QHBoxLayout(header);
         headerLayout->setContentsMargins(12, 8, 12, 8);
 
         QLabel* title = new QLabel("prettymux");
-        title->setStyleSheet("color: #cba6f7; font-weight: bold;");
+        title->setStyleSheet(QString("color: %1; font-weight: bold;").arg(t.accent));
         headerLayout->addWidget(title);
         headerLayout->addStretch();
 
@@ -555,13 +1123,13 @@ public:
         bellBtn->setFixedSize(28, 28);
         bellBtn->setToolTip("Notifications");
         bellBtn->setIcon(QIcon::fromTheme("notification-symbolic", QIcon::fromTheme("preferences-system-notifications")));
-        bellBtn->setStyleSheet("background: #313244; border: none; border-radius: 4px;");
+        bellBtn->setStyleSheet(QString("background: %1; border: none; border-radius: 4px;").arg(t.overlay));
         connect(bellBtn, &QPushButton::clicked, this, &PrettyMuxWindow::showNotificationDropdown);
         headerLayout->addWidget(bellBtn);
 
         QPushButton* addBtn = new QPushButton("+");
         addBtn->setFixedSize(24, 24);
-        addBtn->setStyleSheet("background: #313244; color: #cdd6f4; border: none; border-radius: 4px;");
+        addBtn->setStyleSheet(QString("background: %1; color: %2; border: none; border-radius: 4px;").arg(t.overlay, t.fg));
         connect(addBtn, &QPushButton::clicked, this, &PrettyMuxWindow::addWorkspace);
         headerLayout->addWidget(addBtn);
 
@@ -570,10 +1138,10 @@ public:
         // Search
         QLineEdit* searchBox = new QLineEdit();
         searchBox->setPlaceholderText("Search workspaces...");
-        searchBox->setStyleSheet(
-            "background: #313244; color: #cdd6f4; border: none; border-radius: 4px;"
-            "padding: 6px 10px; margin: 6px 8px; selection-background-color: #585b70;"
-        );
+        searchBox->setStyleSheet(QString(
+            "background: %1; color: %2; border: none; border-radius: 4px;"
+            "padding: 6px 10px; margin: 6px 8px; selection-background-color: %3;"
+        ).arg(t.overlay, t.fg, t.highlight));
         connect(searchBox, &QLineEdit::textChanged, this, [this](const QString& text) {
             for (int i = 0; i < tabList->count(); i++) {
                 bool match = text.isEmpty() || tabList->item(i)->text().contains(text, Qt::CaseInsensitive);
@@ -585,24 +1153,25 @@ public:
         // Tab list
         tabList = new QListWidget();
         tabList->setWordWrap(true);
-        tabList->setStyleSheet(
-            "QListWidget { background: #181825; border: none; outline: none; }"
+        tabList->setStyleSheet(QString(
+            "QListWidget { background: %1; border: none; outline: none; }"
             "QListWidget::item { color: #a6adc8; padding: 10px 12px; border-left: 3px solid transparent; }"
-            "QListWidget::item:selected { background: #1e3a5f; border-left: 3px solid #89b4fa; color: #cdd6f4; }"
-            "QListWidget::item:hover { background: #1e1e2e; }"
-        );
+            "QListWidget::item:selected { background: rgba(137,180,250,0.15); border-left: 3px solid %2; color: %3; }"
+            "QListWidget::item:hover { background: %4; }"
+        ).arg(t.surface, t.blue, t.fg, t.bg));
         tabList->setEditTriggers(QAbstractItemView::DoubleClicked);
         tabList->setContextMenuPolicy(Qt::CustomContextMenu);
         connect(tabList, &QListWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
             auto* item = tabList->itemAt(pos);
             if (!item) return;
             int idx = tabList->row(item);
+            const auto& tm = currentTheme();
             QMenu menu;
-            menu.setStyleSheet(
-                "QMenu { background: #1e1e2e; border: 1px solid #313244; }"
-                "QMenu::item { color: #cdd6f4; padding: 6px 16px; }"
-                "QMenu::item:selected { background: #313244; }"
-            );
+            menu.setStyleSheet(QString(
+                "QMenu { background: %1; border: 1px solid %2; }"
+                "QMenu::item { color: %3; padding: 6px 16px; }"
+                "QMenu::item:selected { background: %2; }"
+            ).arg(tm.bg, tm.overlay, tm.fg));
             menu.addAction("Rename", [this, idx]() {
                 tabList->editItem(tabList->item(idx));
             });
@@ -632,14 +1201,15 @@ public:
 
         // ── Toolbar ──
         QWidget* toolbar = new QWidget();
-        toolbar->setStyleSheet("background: #181825; border-top: 1px solid #313244;");
+        toolbar->setObjectName("sidebarToolbar");
+        toolbar->setStyleSheet(QString("background: %1; border-top: 1px solid %2;").arg(t.surface, t.overlay));
         QHBoxLayout* toolbarLayout = new QHBoxLayout(toolbar);
         toolbarLayout->setContentsMargins(8, 4, 8, 4);
 
         // Split buttons removed from sidebar, they are now per-pane
 
         QPushButton* browserBtn = new QPushButton("Browser");
-        browserBtn->setStyleSheet("background: #313244; color: #cdd6f4; border: none; border-radius: 3px; padding: 4px 8px;");
+        browserBtn->setStyleSheet(QString("background: %1; color: %2; border: none; border-radius: 3px; padding: 4px 8px;").arg(t.overlay, t.fg));
         browserBtn->setCheckable(true);
         browserBtn->setChecked(true);
         connect(browserBtn, &QPushButton::toggled, this, &PrettyMuxWindow::toggleBrowser);
@@ -648,33 +1218,56 @@ public:
         toolbarLayout->addStretch();
         sidebarLayout->addWidget(toolbar);
 
-        outerSplitter->addWidget(sidebar);
+        outerSplit->addWidget(sidebar);
 
         // ── Main area: terminal stack + browser ──
         mainSplitter = new QSplitter(Qt::Horizontal);
-        mainSplitter->setStyleSheet("QSplitter::handle { background: #313244; width: 4px; }");
+        mainSplitter->setStyleSheet(QString("QSplitter::handle { background: %1; width: 4px; }").arg(t.overlay));
 
         terminalStack = new QStackedWidget();
-        terminalStack->setStyleSheet("background: #1e1e2e;");
-        mainSplitter->addWidget(terminalStack);
+        terminalStack->setStyleSheet(QString("background: %1;").arg(t.bg));
+
+        // Terminal area: terminal stack + notes panel (vertical splitter)
+        terminalArea = new QSplitter(Qt::Vertical);
+        terminalArea->setStyleSheet(QString("QSplitter::handle { background: %1; height: 3px; }").arg(t.highlight));
+        terminalArea->addWidget(terminalStack);
+
+        notesPanel = new QTextEdit();
+        notesPanel->setPlaceholderText("Quick notes for this workspace... (Ctrl+Shift+Q to toggle)");
+        notesPanel->setStyleSheet(QString(
+            "QTextEdit { background: %1; color: %2; border-top: 1px solid %3;"
+            "padding: 12px; font-family: monospace; font-size: 13px; selection-background-color: %4; }"
+        ).arg(t.bg, t.fg, t.overlay, t.highlight));
+        notesPanel->setMinimumHeight(80);
+        notesPanel->setMaximumHeight(300);
+        notesPanel->hide();
+        terminalArea->addWidget(notesPanel);
+
+        // Sync notes to workspace on text change
+        connect(notesPanel, &QTextEdit::textChanged, this, [this]() {
+            if (activeWorkspace >= 0 && activeWorkspace < (int)workspaces.size())
+                workspaces[activeWorkspace].notes = notesPanel->toPlainText();
+        });
+
+        mainSplitter->addWidget(terminalArea);
 
         // Browser tabs
         browserTabs = new QTabWidget();
         browserTabs->setTabsClosable(true);
         browserTabs->setMovable(true);
         browserTabs->setMinimumWidth(300);
-        browserTabs->setStyleSheet(
-            "QTabWidget::pane { border: none; background: #1e1e2e; }"
-            "QTabBar::tab { background: #181825; color: #6c7086; padding: 6px 12px; border: none; border-bottom: 2px solid transparent; }"
-            "QTabBar::tab:selected { color: #cdd6f4; border-bottom: 2px solid #cba6f7; background: #1e1e2e; }"
-            "QTabBar::tab:hover { color: #cdd6f4; background: #313244; }"
+        browserTabs->setStyleSheet(QString(
+            "QTabWidget::pane { border: none; background: %1; }"
+            "QTabBar::tab { background: %2; color: %3; padding: 6px 12px; border: none; border-bottom: 2px solid transparent; }"
+            "QTabBar::tab:selected { color: %4; border-bottom: 2px solid %5; background: %1; }"
+            "QTabBar::tab:hover { color: %4; background: %6; }"
             "QTabBar::close-button { image: none; }"
-        );
+        ).arg(t.bg, t.surface, t.subtext, t.fg, t.accent, t.overlay));
 
         // New tab button
         QPushButton* newTabBtn = new QPushButton("+");
         newTabBtn->setFixedSize(24, 24);
-        newTabBtn->setStyleSheet("background: #313244; color: #cdd6f4; border: none; border-radius: 4px;");
+        newTabBtn->setStyleSheet(QString("background: %1; color: %2; border: none; border-radius: 4px;").arg(t.overlay, t.fg));
         connect(newTabBtn, &QPushButton::clicked, this, [this]() { addBrowserTab("http://localhost:5173"); });
         browserTabs->setCornerWidget(newTabBtn);
 
@@ -692,12 +1285,16 @@ public:
         mainSplitter->addWidget(browserTabs);
 
         mainSplitter->setSizes({700, 700});
-        outerSplitter->addWidget(mainSplitter); outerSplitter->setSizes({200, 1200});
+        outerSplit->addWidget(mainSplitter); outerSplit->setSizes({200, 1200});
 
         setCentralWidget(central);
 
-        // Dark theme
-        setStyleSheet("QMainWindow { background: #1e1e2e; } QToolTip { color: #cdd6f4; background: #313244; border: 1px solid #45475a; padding: 4px; }");
+        // Theme stylesheet
+        setStyleSheet(QString("QMainWindow { background: %1; } QToolTip { color: %2; background: %3; border: 1px solid %4; padding: 4px; }").arg(t.bg, t.fg, t.overlay, t.muted));
+
+        // Connect resize overlay to main splitters
+        connectSplitterOverlay(mainSplitter);
+        connectSplitterOverlay(terminalArea);
 
         // Socket server for prettymux-open
         socketPath = QString("/tmp/prettymux-%1.sock").arg(QCoreApplication::applicationPid());
@@ -739,6 +1336,15 @@ public:
         auto* autoSaveTimer = new QTimer(this);
         connect(autoSaveTimer, &QTimer::timeout, this, &PrettyMuxWindow::saveSession);
         autoSaveTimer->start(30000);
+
+        // Port scanner (disable with PRETTYMUX_PORT_SCAN=0)
+        QByteArray portScanEnv = qgetenv("PRETTYMUX_PORT_SCAN");
+        portScanEnabled = (portScanEnv != "0");
+        if (portScanEnabled) {
+            portScanTimer = new QTimer(this);
+            connect(portScanTimer, &QTimer::timeout, this, &PrettyMuxWindow::scanPorts);
+            portScanTimer->start(5000);
+        }
     }
 
     void connectPane(PaneWidget* pane) {
@@ -761,7 +1367,8 @@ public:
         QSize sourceSize = source->size();
 
         auto* newSplitter = new QSplitter(orientation);
-        newSplitter->setStyleSheet("QSplitter::handle { background: #585b70; width: 3px; }");
+        newSplitter->setStyleSheet(QString("QSplitter::handle { background: %1; width: 3px; }").arg(currentTheme().highlight));
+        connectSplitterOverlay(newSplitter);
 
         auto* newPane = new PaneWidget();
         connectPane(newPane);
@@ -839,6 +1446,11 @@ public slots:
 
     void switchWorkspace(int index) {
         if (index < 0 || index >= (int)workspaces.size()) return;
+
+        // Save notes from previous workspace
+        if (activeWorkspace >= 0 && activeWorkspace < (int)workspaces.size() && notesPanel)
+            workspaces[activeWorkspace].notes = notesPanel->toPlainText();
+
         activeWorkspace = index;
         terminalStack->setCurrentWidget(workspaces[index].container);
 
@@ -848,12 +1460,17 @@ public slots:
             if (!terms.empty()) terms[0]->setFocus();
         }
 
+        // Load notes for new workspace
+        if (notesPanel && notesPanel->isVisible())
+            notesPanel->setPlainText(ws.notes);
+
         ws.notification.clear();
         refreshSidebarItem(index);
         tabList->item(index)->setForeground(QColor("#a6adc8"));
     }
 
     void addBrowserTab(const QString& url) {
+        const auto& t = currentTheme();
         // Container: address bar + webview
         QWidget* container = new QWidget();
         QVBoxLayout* layout = new QVBoxLayout(container);
@@ -863,28 +1480,46 @@ public slots:
         // Address bar
         QWidget* addressBar = new QWidget();
         addressBar->setFixedHeight(36);
-        addressBar->setStyleSheet("background: #181825; border-bottom: 1px solid #313244;");
+        addressBar->setStyleSheet(QString("background: %1; border-bottom: 1px solid %2;").arg(t.surface, t.overlay));
         QHBoxLayout* barLayout = new QHBoxLayout(addressBar);
         barLayout->setContentsMargins(4, 4, 4, 4);
         barLayout->setSpacing(4);
 
+        QString btnStyle = QString("background: %1; color: %2; border: none; border-radius: 4px;").arg(t.overlay, t.fg);
         QPushButton* backBtn = new QPushButton("<");
         backBtn->setFixedSize(28, 28);
-        backBtn->setStyleSheet("background: #313244; color: #cdd6f4; border: none; border-radius: 4px;");
+        backBtn->setStyleSheet(btnStyle);
 
         QPushButton* fwdBtn = new QPushButton(">");
         fwdBtn->setFixedSize(28, 28);
-        fwdBtn->setStyleSheet("background: #313244; color: #cdd6f4; border: none; border-radius: 4px;");
+        fwdBtn->setStyleSheet(btnStyle);
 
         QPushButton* reloadBtn = new QPushButton("R");
         reloadBtn->setFixedSize(28, 28);
-        reloadBtn->setStyleSheet("background: #313244; color: #cdd6f4; border: none; border-radius: 4px;");
+        reloadBtn->setStyleSheet(btnStyle);
 
         QLineEdit* urlBar = new QLineEdit(url);
-        urlBar->setStyleSheet(
-            "background: #313244; color: #cdd6f4; border: none; border-radius: 4px;"
-            "padding: 4px 8px; selection-background-color: #585b70;"
-        );
+        urlBar->setStyleSheet(QString(
+            "background: %1; color: %2; border: none; border-radius: 4px;"
+            "padding: 4px 8px; selection-background-color: %3;"
+        ).arg(t.overlay, t.fg, t.highlight));
+
+        // URL autocomplete from history
+        auto* completerModel = new QStringListModel(urlHistory, urlBar);
+        auto* completer = new QCompleter(completerModel, urlBar);
+        completer->setCaseSensitivity(Qt::CaseInsensitive);
+        completer->setFilterMode(Qt::MatchContains);
+        completer->setMaxVisibleItems(8);
+        // Update model when history changes
+        connect(urlBar, &QLineEdit::returnPressed, urlBar, [completerModel, this]() {
+            completerModel->setStringList(urlHistory);
+        });
+        completer->popup()->setStyleSheet(QString(
+            "QListView { background: %1; color: %2; border: 1px solid %3; padding: 2px; }"
+            "QListView::item { padding: 4px 8px; }"
+            "QListView::item:selected { background: %4; }"
+        ).arg(t.surface, t.fg, t.overlay, t.overlay));
+        urlBar->setCompleter(completer);
 
         barLayout->addWidget(backBtn);
         barLayout->addWidget(fwdBtn);
@@ -913,8 +1548,8 @@ public slots:
         connect(fwdBtn, &QPushButton::clicked, view, &QWebEngineView::forward);
         connect(reloadBtn, &QPushButton::clicked, view, &QWebEngineView::reload);
 
-        // Enter in URL bar navigates
-        connect(urlBar, &QLineEdit::returnPressed, this, [view, urlBar]() {
+        // Enter in URL bar navigates and records history
+        connect(urlBar, &QLineEdit::returnPressed, this, [this, view, urlBar]() {
             QString text = urlBar->text().trimmed();
             if (!text.startsWith("http://") && !text.startsWith("https://") && !text.startsWith("file://")) {
                 if (text.contains(".") && !text.contains(" "))
@@ -922,12 +1557,14 @@ public slots:
                 else
                     text = "https://www.google.com/search?q=" + QUrl::toPercentEncoding(text);
             }
+            addUrlToHistory(text);
             view->setUrl(QUrl(text));
         });
 
-        // Update URL bar when page navigates
-        connect(view, &QWebEngineView::urlChanged, this, [urlBar](const QUrl& newUrl) {
+        // Update URL bar when page navigates and record history
+        connect(view, &QWebEngineView::urlChanged, this, [this, urlBar](const QUrl& newUrl) {
             urlBar->setText(newUrl.toString());
+            addUrlToHistory(newUrl.toString());
         });
 
         // Update tab title
@@ -978,15 +1615,45 @@ public slots:
         // Store CWD on the terminal widget for session restore
         if (loc.term) loc.term->lastCwd = cwd;
 
-        // Detect git branch
+        // Detect git branch + status
         QProcess git;
         git.setWorkingDirectory(cwd);
         git.start("git", {"rev-parse", "--abbrev-ref", "HEAD"});
         git.waitForFinished(500);
         if (git.exitCode() == 0) {
             ws.gitBranch = git.readAllStandardOutput().trimmed();
+
+            // Dirty file count
+            QProcess gitStatus;
+            gitStatus.setWorkingDirectory(cwd);
+            gitStatus.start("git", {"status", "--porcelain"});
+            gitStatus.waitForFinished(500);
+            if (gitStatus.exitCode() == 0) {
+                QByteArray output = gitStatus.readAllStandardOutput();
+                ws.gitDirtyCount = output.isEmpty() ? 0 : output.split('\n').count() - (output.endsWith('\n') ? 1 : 0);
+            } else {
+                ws.gitDirtyCount = 0;
+            }
+
+            // Ahead/behind upstream
+            QProcess gitRevList;
+            gitRevList.setWorkingDirectory(cwd);
+            gitRevList.start("git", {"rev-list", "--left-right", "--count", "HEAD...@{upstream}"});
+            gitRevList.waitForFinished(500);
+            if (gitRevList.exitCode() == 0) {
+                QString ab = gitRevList.readAllStandardOutput().trimmed();
+                QStringList parts = ab.split('\t');
+                ws.gitAhead = parts.size() > 0 ? parts[0].toInt() : 0;
+                ws.gitBehind = parts.size() > 1 ? parts[1].toInt() : 0;
+            } else {
+                ws.gitAhead = 0;
+                ws.gitBehind = 0;
+            }
         } else {
             ws.gitBranch.clear();
+            ws.gitDirtyCount = 0;
+            ws.gitAhead = 0;
+            ws.gitBehind = 0;
         }
 
         refreshSidebarItem(loc.workspaceIdx);
@@ -1026,7 +1693,14 @@ public slots:
             lines << ws.name;
         }
         if (!ws.gitBranch.isEmpty()) {
-            lines << QString("⎇ %1").arg(ws.gitBranch);
+            QString gitLine = QString("⎇ %1").arg(ws.gitBranch);
+            if (ws.gitDirtyCount > 0)
+                gitLine += QString(" *%1").arg(ws.gitDirtyCount);
+            if (ws.gitAhead > 0)
+                gitLine += QString(" ↑%1").arg(ws.gitAhead);
+            if (ws.gitBehind > 0)
+                gitLine += QString(" ↓%1").arg(ws.gitBehind);
+            lines << gitLine;
         }
         if (!ws.cwd.isEmpty()) {
             QString shortCwd = ws.cwd;
@@ -1035,11 +1709,30 @@ public slots:
                 shortCwd = "~" + shortCwd.mid(home.length());
             lines << shortCwd;
         }
+        if (!ws.listeningPorts.isEmpty()) {
+            lines << QString("⚡ ports: %1").arg(ws.listeningPorts.join(", "));
+        }
         if (!ws.notification.isEmpty()) {
             lines << ws.notification;
         }
+        if (ws.broadcast) {
+            lines << "BROADCAST";
+        }
+        if (ws.zoomed) {
+            lines << "ZOOMED";
+        }
 
         tabList->item(idx)->setText(lines.join("\n"));
+
+        // Color sidebar item based on state
+        if (ws.broadcast)
+            tabList->item(idx)->setForeground(QColor("#f38ba8"));
+        else if (!ws.gitBranch.isEmpty() && ws.gitDirtyCount > 0)
+            tabList->item(idx)->setForeground(QColor("#f9e2af"));
+        else if (!ws.gitBranch.isEmpty() && ws.gitDirtyCount == 0)
+            tabList->item(idx)->setForeground(QColor("#a6e3a1"));
+        else
+            tabList->item(idx)->setForeground(QColor("#a6adc8"));
     }
 
     // Find workspace index that contains a given GhosttyWidget pointer
@@ -1097,14 +1790,15 @@ public slots:
     }
 
     void showNotificationDropdown() {
+        const auto& t = currentTheme();
         QMenu* menu = new QMenu(this);
-        menu->setStyleSheet(
-            "QMenu { background: #1e1e2e; border: 1px solid #313244; padding: 4px; min-width: 300px; }"
-            "QMenu::item { color: #cdd6f4; padding: 8px 12px; }"
-            "QMenu::item:selected { background: #313244; }"
-            "QMenu::item:disabled { color: #45475a; }"
-            "QMenu::separator { background: #313244; height: 1px; margin: 4px 8px; }"
-        );
+        menu->setStyleSheet(QString(
+            "QMenu { background: %1; border: 1px solid %2; padding: 4px; min-width: 300px; }"
+            "QMenu::item { color: %3; padding: 8px 12px; }"
+            "QMenu::item:selected { background: %2; }"
+            "QMenu::item:disabled { color: %4; }"
+            "QMenu::separator { background: %2; height: 1px; margin: 4px 8px; }"
+        ).arg(t.bg, t.overlay, t.fg, t.muted));
 
         if (notifications.empty()) {
             menu->addAction("No notifications")->setEnabled(false);
@@ -1151,84 +1845,186 @@ public slots:
     }
 
     void showShortcutOverlay() {
-        // Check if overlay already exists, toggle it
         auto* existing = findChild<QWidget*>("shortcutOverlay");
-        if (existing) {
-            existing->deleteLater();
-            return;
-        }
+        if (existing) { existing->deleteLater(); return; }
 
-        // Overlay background
+        const auto& t = currentTheme();
+        QColor bgc(t.bg);
+        // Pre-compute theme-aware key button styles for reuse
+        QString keyBtnNormal = QString(
+            "QPushButton { color: %1; font-size: 12px; font-family: monospace; border: 1px solid %2;"
+            "border-radius: 4px; padding: 2px 8px; background: %3; min-width: 100px; }"
+            "QPushButton:hover { border-color: %4; color: %5; }"
+        ).arg(t.subtext, t.muted, t.overlay, t.accent, t.fg);
+        QString keyBtnRecording = QString(
+            "QPushButton { color: %1; font-size: 12px; font-family: monospace; border: 2px solid %1;"
+            "border-radius: 4px; padding: 2px 8px; background: %2; min-width: 100px; }"
+        ).arg(t.yellow, t.muted);
+        QString keyBtnConfirmed = QString(
+            "QPushButton { color: %1; font-size: 12px; font-family: monospace; border: 1px solid %1;"
+            "border-radius: 4px; padding: 2px 8px; background: %2; min-width: 100px; }"
+        ).arg(t.green, t.overlay);
+
         auto* overlay = new QWidget(this);
         overlay->setObjectName("shortcutOverlay");
         overlay->setGeometry(rect());
-        overlay->setStyleSheet("background: rgba(17,17,27,0.92);");
+        overlay->setStyleSheet(QString("background: rgba(%1,%2,%3,0.92);").arg(bgc.red()).arg(bgc.green()).arg(bgc.blue()));
 
         auto* mainLayout = new QVBoxLayout(overlay);
         mainLayout->setAlignment(Qt::AlignCenter);
 
-        // Content card
         auto* card = new QWidget();
-        card->setMaximumWidth(720);
-        card->setStyleSheet(
-            "background: rgba(30,30,46,0.95);"
-            "border: 1px solid #313244;"
-            "border-radius: 16px;"
-        );
+        card->setMaximumWidth(780);
+        card->setStyleSheet(QString("background: rgba(%1,%2,%3,0.95); border: 1px solid %4; border-radius: 16px;")
+            .arg(bgc.red()).arg(bgc.green()).arg(bgc.blue()).arg(t.overlay));
 
         auto* cardLayout = new QVBoxLayout(card);
         cardLayout->setContentsMargins(40, 32, 40, 32);
-        cardLayout->setSpacing(24);
+        cardLayout->setSpacing(16);
 
-        // Title
         auto* title = new QLabel("Keyboard Shortcuts");
         title->setAlignment(Qt::AlignCenter);
-        title->setStyleSheet("color: #cdd6f4; font-size: 20px; font-weight: 600; border: none; background: transparent;");
+        title->setStyleSheet(QString("color: %1; font-size: 20px; font-weight: 600; border: none; background: transparent;").arg(t.fg));
         cardLayout->addWidget(title);
 
-        // Columns
-        auto* columns = new QHBoxLayout();
-        columns->setSpacing(32);
+        auto* subtitle = new QLabel("Click any shortcut to rebind it");
+        subtitle->setAlignment(Qt::AlignCenter);
+        subtitle->setStyleSheet(QString("color: %1; font-size: 12px; border: none; background: transparent;").arg(t.subtext));
+        cardLayout->addWidget(subtitle);
 
-        struct ShortcutItem { const char* label; const char* keys; };
+        // Recording state (shared via QObject property on overlay)
+        // We track which button is being recorded via a custom event filter
+        class KeyCaptureFilter : public QObject {
+        public:
+            QPushButton* activeBtn = nullptr;
+            QString activeAction;
+            QWidget* overlayWidget;
+            QMap<QString, QKeySequence> pendingChanges;
+            QString normalStyle, confirmedStyle, recordingStyle;
 
-        // Left column
-        auto* leftCol = new QVBoxLayout();
-        leftCol->setSpacing(4);
+            KeyCaptureFilter(QWidget* o, const QString& ns, const QString& cs, const QString& rs)
+                : QObject(o), overlayWidget(o), normalStyle(ns), confirmedStyle(cs), recordingStyle(rs) {}
 
-        auto addSection = [](QVBoxLayout* col, const char* name) {
+            bool eventFilter(QObject*, QEvent* event) override {
+                if (event->type() != QEvent::KeyPress || !activeBtn) return false;
+                QKeyEvent* ke = static_cast<QKeyEvent*>(event);
+
+                // Ignore lone modifier keys
+                if (ke->key() == Qt::Key_Shift || ke->key() == Qt::Key_Control ||
+                    ke->key() == Qt::Key_Alt || ke->key() == Qt::Key_Meta)
+                    return true;
+
+                if (ke->key() == Qt::Key_Escape && ke->modifiers() == Qt::NoModifier) {
+                    // Cancel recording - show pending change if any, else current binding
+                    auto it = pendingChanges.find(activeAction);
+                    QKeySequence displaySeq = (it != pendingChanges.end()) ? *it : g_shortcuts->getBinding(activeAction);
+                    activeBtn->setText(displaySeq.toString(QKeySequence::NativeText));
+                    activeBtn->setStyleSheet(normalStyle);
+                    activeBtn = nullptr;
+                    activeAction.clear();
+                    return true;
+                }
+
+                QKeyCombination combo(ke->modifiers(), static_cast<Qt::Key>(ke->key()));
+                QKeySequence seq(combo);
+                pendingChanges[activeAction] = seq;
+
+                activeBtn->setText(seq.toString(QKeySequence::NativeText));
+                activeBtn->setStyleSheet(confirmedStyle);
+                auto* btn = activeBtn;
+                auto ns = normalStyle;
+                QTimer::singleShot(800, btn, [btn, ns]() {
+                    btn->setStyleSheet(ns);
+                });
+                activeBtn = nullptr;
+                activeAction.clear();
+                return true;
+            }
+        };
+
+        auto* filter = new KeyCaptureFilter(overlay, keyBtnNormal, keyBtnConfirmed, keyBtnRecording);
+        overlay->installEventFilter(filter);
+
+        // Helper: section header
+        auto addSection = [&t](QVBoxLayout* col, const char* name) {
             auto* lbl = new QLabel(name);
-            lbl->setStyleSheet("color: #6c7086; font-size: 10px; text-transform: uppercase; letter-spacing: 2px; padding-top: 8px; border: none; background: transparent;");
+            lbl->setStyleSheet(QString("color: %1; font-size: 10px; text-transform: uppercase; letter-spacing: 2px; padding-top: 8px; border: none; background: transparent;").arg(t.subtext));
             col->addWidget(lbl);
         };
 
-        auto addItem = [](QVBoxLayout* col, const char* label, const char* keys) {
+        // Helper: editable shortcut row
+        auto addRow = [filter, overlay](QVBoxLayout* col, const char* label, const QString& action) {
+            const auto& t = currentTheme();
+            auto* row = new QWidget();
+            row->setStyleSheet("border: none; background: transparent;");
+            auto* rl = new QHBoxLayout(row);
+            rl->setContentsMargins(0, 4, 0, 4);
+
+            auto* lbl = new QLabel(label);
+            lbl->setStyleSheet(QString("color: %1; font-size: 13px; border: none; background: transparent;").arg(t.subtext));
+            rl->addWidget(lbl);
+            rl->addStretch();
+
+            auto* keyBtn = new QPushButton(g_shortcuts->getBinding(action).toString(QKeySequence::NativeText));
+            keyBtn->setFocusPolicy(Qt::NoFocus);
+            keyBtn->setStyleSheet(filter->normalStyle);
+
+            QObject::connect(keyBtn, &QPushButton::clicked, overlay, [filter, keyBtn, action, overlay]() {
+                // Cancel previous recording if any
+                if (filter->activeBtn && filter->activeBtn != keyBtn) {
+                    filter->activeBtn->setText(g_shortcuts->getBinding(filter->activeAction).toString(QKeySequence::NativeText));
+                    filter->activeBtn->setStyleSheet(filter->normalStyle);
+                }
+                filter->activeBtn = keyBtn;
+                filter->activeAction = action;
+                keyBtn->setText("Press keys...");
+                keyBtn->setStyleSheet(filter->recordingStyle);
+                overlay->setFocus();
+            });
+
+            rl->addWidget(keyBtn);
+            col->addWidget(row);
+        };
+
+        // Helper: non-editable shortcut row
+        auto addFixed = [&t](QVBoxLayout* col, const char* label, const char* keys) {
             auto* row = new QWidget();
             row->setStyleSheet("border: none; background: transparent;");
             auto* rl = new QHBoxLayout(row);
             rl->setContentsMargins(0, 4, 0, 4);
             auto* lbl = new QLabel(label);
-            lbl->setStyleSheet("color: #a6adc8; font-size: 13px; border: none; background: transparent;");
+            lbl->setStyleSheet(QString("color: %1; font-size: 12px; border: none; background: transparent;").arg(t.highlight));
             auto* k = new QLabel(keys);
             k->setAlignment(Qt::AlignRight);
-            k->setStyleSheet("color: #6c7086; font-size: 12px; font-family: monospace; border: none; background: transparent;");
+            k->setStyleSheet(QString("color: %1; font-size: 11px; font-family: monospace; border: none; background: transparent;").arg(t.muted));
             rl->addWidget(lbl);
             rl->addStretch();
             rl->addWidget(k);
             col->addWidget(row);
         };
 
+        auto* columns = new QHBoxLayout();
+        columns->setSpacing(32);
+
+        // Left column
+        auto* leftCol = new QVBoxLayout();
+        leftCol->setSpacing(4);
+
         addSection(leftCol, "Workspaces");
-        addItem(leftCol, "New workspace", "Ctrl+Shift+N");
-        addItem(leftCol, "Close workspace", "Ctrl+Shift+W");
-        addItem(leftCol, "Next workspace", "Ctrl+Shift+]");
-        addItem(leftCol, "Previous workspace", "Ctrl+Shift+[");
-        addItem(leftCol, "Switch to 1-9", "Ctrl+1-9");
+        addRow(leftCol, "New workspace", "workspace.new");
+        addRow(leftCol, "Close workspace", "workspace.close");
+        addRow(leftCol, "Next workspace", "workspace.next");
+        addRow(leftCol, "Previous workspace", "workspace.prev");
 
         addSection(leftCol, "Panes & Tabs");
-        addItem(leftCol, "New terminal tab", "Ctrl+Shift+T");
-        addItem(leftCol, "Cycle tabs", "Ctrl+Tab");
-        addItem(leftCol, "Split pane", "⬌ ⬍ buttons");
+        addRow(leftCol, "New terminal tab", "pane.tab.new");
+        addRow(leftCol, "Zoom pane", "pane.zoom");
+
+        addSection(leftCol, "Power Features");
+        addRow(leftCol, "Terminal search", "terminal.search");
+        addRow(leftCol, "Broadcast mode", "broadcast.toggle");
+        addRow(leftCol, "Quick notes", "notes.toggle");
+        addRow(leftCol, "Command history", "history.show");
         leftCol->addStretch();
 
         // Right column
@@ -1236,47 +2032,92 @@ public slots:
         rightCol->setSpacing(4);
 
         addSection(rightCol, "Browser");
-        addItem(rightCol, "Toggle browser", "Ctrl+Shift+B");
-        addItem(rightCol, "New browser tab", "Ctrl+Shift+P");
-        addItem(rightCol, "Inspector docked", "Ctrl+Shift+I");
-        addItem(rightCol, "Inspector window", "Ctrl+Shift+J");
-        addItem(rightCol, "Open URL", "open <url>");
-
-        addSection(rightCol, "Terminal");
-        addItem(rightCol, "Copy", "Ctrl+Shift+C");
-        addItem(rightCol, "Paste", "Ctrl+Shift+V");
-        addItem(rightCol, "Font increase", "Ctrl++");
-        addItem(rightCol, "Font decrease", "Ctrl+-");
-        addItem(rightCol, "Font reset", "Ctrl+0");
+        addRow(rightCol, "Toggle browser", "browser.toggle");
+        addRow(rightCol, "New browser tab", "browser.new");
+        addRow(rightCol, "Inspector docked", "devtools.docked");
+        addRow(rightCol, "Inspector window", "devtools.window");
 
         addSection(rightCol, "Window");
-        addItem(rightCol, "Fullscreen", "F11");
-        addItem(rightCol, "This overlay", "Ctrl+Shift+K");
+        addRow(rightCol, "Search palette", "search.show");
+        addRow(rightCol, "Shortcuts overlay", "shortcuts.show");
+        addRow(rightCol, "Cycle theme", "theme.cycle");
+        addRow(rightCol, "Picture in picture", "pip.toggle");
+
+        addSection(rightCol, "Fixed Shortcuts");
+        addFixed(rightCol, "Switch workspace 1-9", "Ctrl+1-9");
+        addFixed(rightCol, "Focus pane", "Alt+Arrow");
+        addFixed(rightCol, "Cycle tabs", "Ctrl+Tab");
+        addFixed(rightCol, "Copy / Paste", "Ctrl+Shift+C/V");
+        addFixed(rightCol, "Fullscreen", "F11");
         rightCol->addStretch();
 
         columns->addLayout(leftCol);
 
-        // Divider
         auto* divider = new QFrame();
         divider->setFrameShape(QFrame::VLine);
-        divider->setStyleSheet("color: #313244; border: none; background: #313244; max-width: 1px;");
+        divider->setStyleSheet(QString("color: %1; border: none; background: %1; max-width: 1px;").arg(t.overlay));
         columns->addWidget(divider);
 
         columns->addLayout(rightCol);
         cardLayout->addLayout(columns);
 
-        // Dismiss hint
-        auto* hint = new QLabel("Press Ctrl+Shift+K or Escape to close");
-        hint->setAlignment(Qt::AlignCenter);
-        hint->setStyleSheet("color: #45475a; font-size: 12px; padding-top: 8px; border: none; background: transparent;");
-        cardLayout->addWidget(hint);
+        // Buttons bar
+        auto* btnBar = new QWidget();
+        btnBar->setStyleSheet("border: none; background: transparent;");
+        auto* btnLayout = new QHBoxLayout(btnBar);
+        btnLayout->setContentsMargins(0, 8, 0, 0);
+
+        auto* resetBtn = new QPushButton("Reset to Defaults");
+        resetBtn->setFocusPolicy(Qt::NoFocus);
+        resetBtn->setStyleSheet(QString("background: %1; color: %2; border: none; border-radius: 4px; padding: 6px 16px;").arg(t.muted, t.fg));
+        connect(resetBtn, &QPushButton::clicked, overlay, [this, overlay]() {
+            g_shortcuts->resetToDefaults();
+            overlay->deleteLater();
+            showShortcutOverlay(); // Reopen with defaults
+        });
+        btnLayout->addWidget(resetBtn);
+
+        btnLayout->addStretch();
+
+        auto* cancelBtn = new QPushButton("Cancel");
+        cancelBtn->setFocusPolicy(Qt::NoFocus);
+        cancelBtn->setStyleSheet(QString("background: %1; color: %2; border: none; border-radius: 4px; padding: 6px 16px;").arg(t.muted, t.fg));
+        connect(cancelBtn, &QPushButton::clicked, overlay, [overlay]() {
+            overlay->deleteLater();
+        });
+        btnLayout->addWidget(cancelBtn);
+
+        auto* saveBtn = new QPushButton("Save");
+        saveBtn->setFocusPolicy(Qt::NoFocus);
+        saveBtn->setStyleSheet(QString("background: %1; color: %2; border: none; border-radius: 4px; padding: 6px 16px; font-weight: bold;").arg(t.green, t.bg));
+        connect(saveBtn, &QPushButton::clicked, overlay, [this, overlay, filter]() {
+            for (auto it = filter->pendingChanges.begin(); it != filter->pendingChanges.end(); ++it)
+                g_shortcuts->setBinding(it.key(), it.value());
+            g_shortcuts->saveToFile();
+            overlay->deleteLater();
+        });
+        btnLayout->addWidget(saveBtn);
+
+        cardLayout->addWidget(btnBar);
 
         mainLayout->addWidget(card);
 
-        // Close on Escape, click, or Ctrl+Shift+K
+        // Close on Escape (when not recording) or Ctrl+Shift+K
         overlay->setFocusPolicy(Qt::StrongFocus);
         connect(new QShortcut(QKeySequence(Qt::Key_Escape), overlay), &QShortcut::activated,
-            overlay, &QWidget::deleteLater);
+            overlay, [overlay, filter]() {
+                if (filter->activeBtn) {
+                    // Cancel recording - show pending change if any, else current binding
+                    auto it = filter->pendingChanges.find(filter->activeAction);
+                    QKeySequence displaySeq = (it != filter->pendingChanges.end()) ? *it : g_shortcuts->getBinding(filter->activeAction);
+                    filter->activeBtn->setText(displaySeq.toString(QKeySequence::NativeText));
+                    filter->activeBtn->setStyleSheet(filter->normalStyle);
+                    filter->activeBtn = nullptr;
+                    filter->activeAction.clear();
+                    return;
+                }
+                overlay->deleteLater();
+            });
         connect(new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_K), overlay), &QShortcut::activated,
             overlay, &QWidget::deleteLater);
         overlay->show();
@@ -1289,11 +2130,14 @@ public slots:
         auto* existing = findChild<QWidget*>("searchOverlay");
         if (existing) { existing->deleteLater(); return; }
 
+        const auto& t = currentTheme();
+        QColor bgc(t.bg);
+
         // Overlay
         auto* overlay = new QWidget(this);
         overlay->setObjectName("searchOverlay");
         overlay->setGeometry(rect());
-        overlay->setStyleSheet("background: rgba(17,17,27,0.88);");
+        overlay->setStyleSheet(QString("background: rgba(%1,%2,%3,0.88);").arg(bgc.red()).arg(bgc.green()).arg(bgc.blue()));
 
         auto* outerLayout = new QVBoxLayout(overlay);
         outerLayout->setAlignment(Qt::AlignTop | Qt::AlignHCenter);
@@ -1303,53 +2147,55 @@ public slots:
         auto* card = new QWidget();
         card->setFixedWidth(560);
         card->setMaximumHeight(500);
-        card->setStyleSheet(
-            "background: #1e1e2e;"
-            "border: 1px solid #45475a;"
+        card->setStyleSheet(QString(
+            "background: %1;"
+            "border: 1px solid %2;"
             "border-radius: 12px;"
-        );
+        ).arg(t.bg, t.muted));
         auto* cardLayout = new QVBoxLayout(card);
         cardLayout->setContentsMargins(0, 0, 0, 0);
         cardLayout->setSpacing(0);
 
         // Search input
         auto* inputWrapper = new QWidget();
-        inputWrapper->setStyleSheet("background: transparent; border-bottom: 1px solid #313244; border-radius: 0;");
+        inputWrapper->setStyleSheet(QString("background: transparent; border-bottom: 1px solid %1; border-radius: 0;").arg(t.overlay));
         auto* inputLayout = new QHBoxLayout(inputWrapper);
         inputLayout->setContentsMargins(20, 16, 20, 16);
 
         auto* searchIcon = new QLabel(">");
-        searchIcon->setStyleSheet("color: #cba6f7; font-size: 18px; font-weight: bold; border: none; background: transparent;");
+        searchIcon->setStyleSheet(QString("color: %1; font-size: 18px; font-weight: bold; border: none; background: transparent;").arg(t.accent));
         inputLayout->addWidget(searchIcon);
 
         auto* searchInput = new QLineEdit();
         searchInput->setPlaceholderText("Search workspaces, tabs, browser...");
-        searchInput->setStyleSheet(
-            "background: transparent; border: none; color: #cdd6f4;"
-            "font-size: 16px; padding: 4px 8px; selection-background-color: #585b70;"
-        );
+        searchInput->setStyleSheet(QString(
+            "background: transparent; border: none; color: %1;"
+            "font-size: 16px; padding: 4px 8px; selection-background-color: %2;"
+        ).arg(t.fg, t.highlight));
         inputLayout->addWidget(searchInput);
         cardLayout->addWidget(inputWrapper);
 
         // Results list
+        QColor accentC(t.accent);
+        QString accentRgb = QString("%1,%2,%3").arg(accentC.red()).arg(accentC.green()).arg(accentC.blue());
         auto* resultsList = new QListWidget();
-        resultsList->setStyleSheet(
+        resultsList->setStyleSheet(QString(
             "QListWidget { background: transparent; border: none; outline: none; padding: 4px 0; }"
-            "QListWidget::item { color: #cdd6f4; padding: 10px 20px; border: none; border-radius: 0; }"
-            "QListWidget::item:selected { background: rgba(203,166,247,0.12); }"
-            "QListWidget::item:hover { background: rgba(203,166,247,0.08); }"
-        );
+            "QListWidget::item { color: %1; padding: 10px 20px; border: none; border-radius: 0; }"
+            "QListWidget::item:selected { background: rgba(%2, 0.12); }"
+            "QListWidget::item:hover { background: rgba(%2, 0.08); }"
+        ).arg(t.fg, accentRgb));
         resultsList->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         resultsList->setFocusPolicy(Qt::NoFocus);
         cardLayout->addWidget(resultsList);
 
         // Hint bar
         auto* hintBar = new QWidget();
-        hintBar->setStyleSheet("background: transparent; border-top: 1px solid #313244; border-radius: 0;");
+        hintBar->setStyleSheet(QString("background: transparent; border-top: 1px solid %1; border-radius: 0;").arg(t.overlay));
         auto* hintLayout = new QHBoxLayout(hintBar);
         hintLayout->setContentsMargins(20, 8, 20, 8);
         auto* hintText = new QLabel("↑↓ navigate    Enter select    Esc close");
-        hintText->setStyleSheet("color: #45475a; font-size: 11px; border: none; background: transparent;");
+        hintText->setStyleSheet(QString("color: %1; font-size: 11px; border: none; background: transparent;").arg(t.muted));
         hintLayout->addWidget(hintText);
         cardLayout->addWidget(hintBar);
 
@@ -1751,6 +2597,684 @@ public slots:
         browserTabs->setVisible(show);
     }
 
+    // ── Alt+Arrow pane navigation ──
+    void navigatePane(int dx, int dy) {
+        if (activeWorkspace < 0 || activeWorkspace >= (int)workspaces.size()) return;
+        Workspace& ws = workspaces[activeWorkspace];
+        if (ws.panes.size() <= 1) return;
+
+        PaneWidget* current = nullptr;
+        for (auto* pane : ws.panes) {
+            if (pane->isVisible() && pane->isAncestorOf(QApplication::focusWidget())) {
+                current = pane;
+                break;
+            }
+        }
+        if (!current) current = ws.panes[0];
+
+        QPoint currentCenter = current->mapToGlobal(QPoint(current->width()/2, current->height()/2));
+        PaneWidget* best = nullptr;
+        int bestDist = INT_MAX;
+
+        for (auto* pane : ws.panes) {
+            if (pane == current || !pane->isVisible()) continue;
+            QPoint center = pane->mapToGlobal(QPoint(pane->width()/2, pane->height()/2));
+            int diffX = center.x() - currentCenter.x();
+            int diffY = center.y() - currentCenter.y();
+
+            bool valid = false;
+            if (dx > 0 && diffX > 0) valid = true;
+            if (dx < 0 && diffX < 0) valid = true;
+            if (dy > 0 && diffY > 0) valid = true;
+            if (dy < 0 && diffY < 0) valid = true;
+            if (!valid) continue;
+
+            int dist = abs(diffX) + abs(diffY);
+            if (dist < bestDist) { bestDist = dist; best = pane; }
+        }
+
+        if (best) {
+            int idx = best->tabs->currentIndex();
+            if (idx >= 0 && idx < (int)best->terminals.size())
+                best->terminals[idx]->setFocus();
+        }
+    }
+
+    // ── Pane zoom (Ctrl+Shift+Z) ──
+
+    void saveSplitterSizesRecursive(QWidget* w, std::vector<QList<int>>& sizes) {
+        auto* s = qobject_cast<QSplitter*>(w);
+        if (s) {
+            sizes.push_back(s->sizes());
+            for (int i = 0; i < s->count(); i++)
+                saveSplitterSizesRecursive(s->widget(i), sizes);
+        }
+    }
+
+    void restoreSplitterSizesRecursive(QWidget* w, const std::vector<QList<int>>& sizes, int& idx) {
+        auto* s = qobject_cast<QSplitter*>(w);
+        if (s && idx < (int)sizes.size()) {
+            s->setSizes(sizes[idx++]);
+            for (int i = 0; i < s->count(); i++)
+                restoreSplitterSizesRecursive(s->widget(i), sizes, idx);
+        }
+    }
+
+    void toggleZoom() {
+        if (activeWorkspace < 0 || activeWorkspace >= (int)workspaces.size()) return;
+        Workspace& ws = workspaces[activeWorkspace];
+
+        if (ws.zoomed) {
+            // Unzoom: show all panes, restore sizes
+            for (auto* pane : ws.panes) pane->show();
+            if (!ws.savedSplitterSizes.empty()) {
+                int idx = 0;
+                restoreSplitterSizesRecursive(ws.container, ws.savedSplitterSizes, idx);
+                ws.savedSplitterSizes.clear();
+            }
+            if (ws.zoomedPane)
+                ws.zoomedPane->setStyleSheet("border: 2px solid #313244; border-radius: 0px;");
+            ws.zoomed = false;
+            ws.zoomedPane = nullptr;
+            refreshSidebarItem(activeWorkspace);
+            return;
+        }
+
+        if (ws.panes.size() <= 1) return;
+
+        // Find focused pane
+        PaneWidget* focused = nullptr;
+        for (auto* pane : ws.panes) {
+            if (pane->isAncestorOf(QApplication::focusWidget())) {
+                focused = pane;
+                break;
+            }
+        }
+        if (!focused && !ws.panes.empty()) focused = ws.panes[0];
+        if (!focused) return;
+
+        // Save splitter sizes before hiding
+        ws.savedSplitterSizes.clear();
+        saveSplitterSizesRecursive(ws.container, ws.savedSplitterSizes);
+
+        // Hide all other panes
+        for (auto* pane : ws.panes) {
+            if (pane != focused) pane->hide();
+        }
+        ws.zoomed = true;
+        ws.zoomedPane = focused;
+        focused->setStyleSheet("border: 2px solid #f9e2af; border-radius: 0px;");
+        refreshSidebarItem(activeWorkspace);
+    }
+
+    // ── Terminal search (Ctrl+Shift+F) ──
+    void triggerSearch() {
+        if (activeWorkspace < 0 || activeWorkspace >= (int)workspaces.size()) return;
+        Workspace& ws = workspaces[activeWorkspace];
+
+        for (auto* pane : ws.panes) {
+            if (pane->isAncestorOf(QApplication::focusWidget())) {
+                int idx = pane->tabs->currentIndex();
+                if (idx >= 0 && idx < (int)pane->terminals.size()) {
+                    auto* surface = (ghostty_surface_t)pane->terminals[idx]->getSurface();
+                    if (surface)
+                        ghostty_surface_binding_action(surface, "search_forward", 14);
+                }
+                return;
+            }
+        }
+    }
+
+    // ── Broadcast mode (Ctrl+Shift+Enter) ──
+    void toggleBroadcast() {
+        if (activeWorkspace < 0 || activeWorkspace >= (int)workspaces.size()) return;
+        Workspace& ws = workspaces[activeWorkspace];
+        ws.broadcast = !ws.broadcast;
+        refreshSidebarItem(activeWorkspace);
+    }
+
+    // ── Port scanner ──
+    void scanPorts() {
+        QStringList ports;
+        for (const QString& path : {QString("/proc/net/tcp"), QString("/proc/net/tcp6")}) {
+            QFile f(path);
+            if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) continue;
+            f.readLine(); // skip header
+            while (!f.atEnd()) {
+                QByteArray line = f.readLine().trimmed();
+                QList<QByteArray> fields;
+                // Split by whitespace, collapsing multiple spaces
+                for (const QByteArray& part : line.split(' ')) {
+                    if (!part.isEmpty()) fields.append(part);
+                }
+                if (fields.size() < 4) continue;
+                if (fields[3] != "0A") continue; // 0A = LISTEN
+                QByteArray localAddr = fields[1];
+                int colonPos = localAddr.lastIndexOf(':');
+                if (colonPos < 0) continue;
+                bool ok;
+                uint port = localAddr.mid(colonPos + 1).toUInt(&ok, 16);
+                if (!ok || port == 0) continue;
+                QString portStr = QString::number(port);
+                if (!ports.contains(portStr))
+                    ports.append(portStr);
+            }
+        }
+        std::sort(ports.begin(), ports.end(), [](const QString& a, const QString& b) {
+            return a.toInt() < b.toInt();
+        });
+
+        // Detect new ports
+        QStringList newPorts;
+        for (const QString& p : ports) {
+            if (!lastKnownPorts.contains(p))
+                newPorts.append(p);
+        }
+        lastKnownPorts = ports;
+
+        // Update all workspaces
+        for (int i = 0; i < (int)workspaces.size(); i++) {
+            if (workspaces[i].listeningPorts != ports) {
+                workspaces[i].listeningPorts = ports;
+                refreshSidebarItem(i);
+            }
+        }
+
+        // Notify about new ports
+        if (!newPorts.isEmpty() && activeWorkspace >= 0 && activeWorkspace < (int)workspaces.size()) {
+            workspaces[activeWorkspace].notification = QString("New port: %1").arg(newPorts.join(", "));
+            refreshSidebarItem(activeWorkspace);
+        }
+    }
+
+    // ── Quick Notes toggle ──
+    void toggleNotes() {
+        if (!notesPanel) return;
+        if (notesPanel->isVisible()) {
+            if (activeWorkspace >= 0 && activeWorkspace < (int)workspaces.size())
+                workspaces[activeWorkspace].notes = notesPanel->toPlainText();
+            notesPanel->hide();
+        } else {
+            if (activeWorkspace >= 0 && activeWorkspace < (int)workspaces.size())
+                notesPanel->setPlainText(workspaces[activeWorkspace].notes);
+            notesPanel->show();
+            notesPanel->setFocus();
+        }
+    }
+
+    // ── Activity indicator (called from action_cb on RENDER) ──
+    Q_INVOKABLE void markActivity(quint64 surfacePtr) {
+        auto loc = findSurfaceLocation((void*)surfacePtr);
+        if (loc.workspaceIdx < 0 || !loc.pane || !loc.term) return;
+        if (loc.tabIdx == loc.pane->tabs->currentIndex()) return;
+        if (loc.term->hasNewOutput) return;  // already marked
+        loc.term->hasNewOutput = true;
+        loc.pane->markTabActivity(loc.tabIdx);
+    }
+
+    // ── Progress bar (called from action_cb on PROGRESS_REPORT) ──
+    Q_INVOKABLE void updateTerminalProgress(quint64 surfacePtr, int state, int percent) {
+        auto loc = findSurfaceLocation((void*)surfacePtr);
+        if (loc.workspaceIdx < 0 || !loc.pane || !loc.term) return;
+        loc.term->progressState = state;
+        loc.term->progressPercent = percent;
+        loc.pane->updateTabProgress(loc.tabIdx, state, percent);
+    }
+
+    // Broadcast helpers (public so static functions can access them)
+    bool isBroadcastForWorkspace(GhosttyWidget* term) {
+        for (auto& ws : workspaces) {
+            if (!ws.broadcast) continue;
+            for (auto* pane : ws.panes) {
+                for (auto* t : pane->allTerminals()) {
+                    if (t == term) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    std::vector<GhosttyWidget*> getAllTerminalsInWorkspace(GhosttyWidget* term) {
+        std::vector<GhosttyWidget*> result;
+        for (auto& ws : workspaces) {
+            for (auto* pane : ws.panes) {
+                for (auto* t : pane->allTerminals()) {
+                    if (t == term) {
+                        for (auto* p : ws.panes)
+                            for (auto* tt : p->allTerminals())
+                                result.push_back(tt);
+                        return result;
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    // ── URL history helper ──
+    void addUrlToHistory(const QString& url) {
+        if (url.isEmpty() || url == "about:blank") return;
+        urlHistory.removeAll(url);
+        urlHistory.prepend(url);
+        while (urlHistory.size() > 500) urlHistory.removeLast();
+    }
+
+    // ── Theme system ──
+    void applyTheme() {
+        const auto& t = currentTheme();
+
+        // QPalette
+        QPalette palette;
+        palette.setColor(QPalette::Window, QColor(t.bg));
+        palette.setColor(QPalette::WindowText, QColor(t.fg));
+        palette.setColor(QPalette::Base, QColor(t.surface));
+        palette.setColor(QPalette::Text, QColor(t.fg));
+        palette.setColor(QPalette::Button, QColor(t.overlay));
+        palette.setColor(QPalette::ButtonText, QColor(t.fg));
+        palette.setColor(QPalette::Highlight, QColor(t.accent));
+        qApp->setPalette(palette);
+
+        // Main window
+        setStyleSheet(QString("QMainWindow { background: %1; } QToolTip { color: %2; background: %3; border: 1px solid %4; padding: 4px; }").arg(t.bg, t.fg, t.overlay, t.muted));
+
+        // Sidebar
+        if (sidebar)
+            sidebar->setStyleSheet(QString("background: %1; border-right: 1px solid %2;").arg(t.surface, t.overlay));
+
+        // Tab list
+        if (tabList)
+            tabList->setStyleSheet(QString(
+                "QListWidget { background: %1; border: none; outline: none; }"
+                "QListWidget::item { color: #a6adc8; padding: 10px 12px; border-left: 3px solid transparent; }"
+                "QListWidget::item:selected { background: rgba(137,180,250,0.15); border-left: 3px solid %2; color: %3; }"
+                "QListWidget::item:hover { background: %4; }"
+            ).arg(t.surface, t.blue, t.fg, t.bg));
+
+        // Browser tabs
+        if (browserTabs)
+            browserTabs->setStyleSheet(QString(
+                "QTabWidget::pane { border: none; background: %1; }"
+                "QTabBar::tab { background: %2; color: %3; padding: 6px 12px; border: none; border-bottom: 2px solid transparent; }"
+                "QTabBar::tab:selected { color: %4; border-bottom: 2px solid %5; background: %1; }"
+                "QTabBar::tab:hover { color: %4; background: %6; }"
+                "QTabBar::close-button { image: none; }"
+            ).arg(t.bg, t.surface, t.subtext, t.fg, t.accent, t.overlay));
+
+        // Terminal stack
+        if (terminalStack)
+            terminalStack->setStyleSheet(QString("background: %1;").arg(t.bg));
+
+        // Notes panel
+        if (notesPanel)
+            notesPanel->setStyleSheet(QString(
+                "QTextEdit { background: %1; color: %2; border-top: 1px solid %3;"
+                "padding: 12px; font-family: monospace; font-size: 13px; selection-background-color: %4; }"
+            ).arg(t.bg, t.fg, t.overlay, t.highlight));
+
+        // Splitter handles
+        if (mainSplitter)
+            mainSplitter->setStyleSheet(QString("QSplitter::handle { background: %1; width: 4px; }").arg(t.overlay));
+        if (terminalArea)
+            terminalArea->setStyleSheet(QString("QSplitter::handle { background: %1; height: 3px; }").arg(t.highlight));
+
+        // All pane widgets
+        for (auto& ws : workspaces)
+            for (auto* pane : ws.panes)
+                pane->applyTabStyle();
+
+        // Outer splitter handle
+        if (outerSplit)
+            outerSplit->setStyleSheet(QString("QSplitter::handle { background: %1; width: 3px; }").arg(t.overlay));
+
+        // Bell button
+        if (bellBtn)
+            bellBtn->setStyleSheet(QString("background: %1; border: none; border-radius: 4px;").arg(t.overlay));
+
+        // Sidebar header and toolbar
+        if (sidebar) {
+            auto* header = sidebar->findChild<QWidget*>("sidebarHeader");
+            if (header)
+                header->setStyleSheet(QString("background: %1; border-bottom: 1px solid %2; padding: 8px;").arg(t.surface, t.overlay));
+            auto* toolbar = sidebar->findChild<QWidget*>("sidebarToolbar");
+            if (toolbar)
+                toolbar->setStyleSheet(QString("background: %1; border-top: 1px solid %2;").arg(t.surface, t.overlay));
+        }
+
+        // Sidebar search box and sub-widgets
+        if (sidebar) {
+            for (auto* le : sidebar->findChildren<QLineEdit*>()) {
+                le->setStyleSheet(QString(
+                    "background: %1; color: %2; border: none; border-radius: 4px;"
+                    "padding: 6px 10px; margin: 6px 8px; selection-background-color: %3;"
+                ).arg(t.overlay, t.fg, t.highlight));
+            }
+            for (auto* btn : sidebar->findChildren<QPushButton*>()) {
+                if (btn == bellBtn) continue;
+                btn->setStyleSheet(QString("background: %1; color: %2; border: none; border-radius: 3px; padding: 4px 8px;").arg(t.overlay, t.fg));
+            }
+            for (auto* lbl : sidebar->findChildren<QLabel*>()) {
+                if (lbl->text() == "prettymux")
+                    lbl->setStyleSheet(QString("color: %1; font-weight: bold;").arg(t.accent));
+            }
+        }
+
+        // Browser address bars and controls
+        if (browserTabs) {
+            QString btnStyle = QString("background: %1; color: %2; border: none; border-radius: 4px;").arg(t.overlay, t.fg);
+            for (int i = 0; i < browserTabs->count(); i++) {
+                QWidget* container = browserTabs->widget(i);
+                if (!container) continue;
+                // Find address bar (fixed height 36 widget)
+                for (auto* child : container->children()) {
+                    auto* w = qobject_cast<QWidget*>(child);
+                    if (w && w->maximumHeight() == 36) {
+                        w->setStyleSheet(QString("background: %1; border-bottom: 1px solid %2;").arg(t.surface, t.overlay));
+                    }
+                }
+                // URL bars
+                for (auto* urlBar : container->findChildren<QLineEdit*>()) {
+                    urlBar->setStyleSheet(QString(
+                        "background: %1; color: %2; border: none; border-radius: 4px;"
+                        "padding: 4px 8px; selection-background-color: %3;"
+                    ).arg(t.overlay, t.fg, t.highlight));
+                    if (urlBar->completer() && urlBar->completer()->popup()) {
+                        urlBar->completer()->popup()->setStyleSheet(QString(
+                            "QListView { background: %1; color: %2; border: 1px solid %3; padding: 2px; }"
+                            "QListView::item { padding: 4px 8px; }"
+                            "QListView::item:selected { background: %4; }"
+                        ).arg(t.surface, t.fg, t.overlay, t.overlay));
+                    }
+                }
+                // Address bar buttons (28x28)
+                for (auto* btn : container->findChildren<QPushButton*>()) {
+                    if (btn->maximumWidth() == 28)
+                        btn->setStyleSheet(btnStyle);
+                }
+            }
+            // Browser corner new-tab button (24x24)
+            for (auto* btn : browserTabs->findChildren<QPushButton*>()) {
+                if (btn->maximumWidth() == 24)
+                    btn->setStyleSheet(QString("background: %1; color: %2; border: none; border-radius: 4px;").arg(t.overlay, t.fg));
+            }
+        }
+
+        // PiP window
+        if (pipWindow) {
+            auto* pipFrame = pipWindow->findChild<QWidget*>("pipFrame");
+            if (pipFrame)
+                pipFrame->setStyleSheet(QString("background: %1; border: 1px solid %2; border-radius: 8px;").arg(t.bg, t.muted));
+            auto* titleBar = pipWindow->findChild<QWidget*>("pipTitleBar");
+            if (titleBar)
+                titleBar->setStyleSheet(QString("background: %1; border-radius: 8px 8px 0 0; border: none;").arg(t.surface));
+            auto* titleLabel = pipWindow->findChild<QLabel*>("pipTitle");
+            if (titleLabel)
+                titleLabel->setStyleSheet(QString("color: %1; font-size: 11px; background: transparent; border: none;").arg(t.fg));
+            auto* pipCloseBtn = pipWindow->findChild<QPushButton*>("pipCloseBtn");
+            if (pipCloseBtn)
+                pipCloseBtn->setStyleSheet(QString("background: %1; color: %2; border: none; border-radius: 3px;").arg(t.muted, t.fg));
+        }
+
+        // Save theme preference
+        QString configDir = QDir::homePath() + "/.config/prettymux";
+        QDir().mkpath(configDir);
+        QFile f(configDir + "/theme.conf");
+        if (f.open(QIODevice::WriteOnly)) {
+            f.write(kThemes[g_currentTheme].name.toUtf8());
+            f.close();
+        }
+    }
+
+    void cycleTheme() {
+        g_currentTheme = (g_currentTheme + 1) % kThemeCount;
+        applyTheme();
+
+        // Brief notification
+        auto* label = new QLabel(QString("Theme: %1").arg(currentTheme().name), this);
+        label->setAlignment(Qt::AlignCenter);
+        label->setStyleSheet(QString(
+            "background: %1; color: %2; border: 1px solid %3; border-radius: 8px; padding: 12px 24px; font-size: 14px;"
+        ).arg(currentTheme().overlay, currentTheme().fg, currentTheme().muted));
+        label->adjustSize();
+        label->move((width() - label->width()) / 2, height() / 2 - label->height() / 2);
+        label->show();
+        label->raise();
+        QTimer::singleShot(1000, label, &QLabel::deleteLater);
+    }
+
+    // ── Command history search (Ctrl+Shift+H) ──
+    void showHistoryOverlay() {
+        auto* existing = findChild<QWidget*>("historyOverlay");
+        if (existing) { existing->deleteLater(); return; }
+
+        // Capture focused terminal before overlay steals focus
+        GhosttyWidget* focusedTerm = nullptr;
+        if (activeWorkspace >= 0 && activeWorkspace < (int)workspaces.size()) {
+            Workspace& ws = workspaces[activeWorkspace];
+            for (auto* pane : ws.panes) {
+                if (pane->isAncestorOf(QApplication::focusWidget())) {
+                    int idx = pane->tabs->currentIndex();
+                    if (idx >= 0 && idx < (int)pane->terminals.size())
+                        focusedTerm = pane->terminals[idx];
+                    break;
+                }
+            }
+            if (!focusedTerm && !ws.panes.empty()) {
+                auto* pane = ws.panes[0];
+                int idx = pane->tabs->currentIndex();
+                if (idx >= 0 && idx < (int)pane->terminals.size())
+                    focusedTerm = pane->terminals[idx];
+            }
+        }
+
+        const auto& t = currentTheme();
+        auto* overlay = new QWidget(this);
+        overlay->setObjectName("historyOverlay");
+        overlay->setGeometry(rect());
+        QColor bgc(t.bg);
+        overlay->setStyleSheet(QString("background: rgba(%1,%2,%3, 0.88);").arg(bgc.red()).arg(bgc.green()).arg(bgc.blue()));
+
+        auto* outerLayout = new QVBoxLayout(overlay);
+        outerLayout->setAlignment(Qt::AlignTop | Qt::AlignHCenter);
+        outerLayout->setContentsMargins(0, 80, 0, 0);
+
+        auto* card = new QWidget();
+        card->setFixedWidth(600);
+        card->setMaximumHeight(500);
+        card->setStyleSheet(QString("background: %1; border: 1px solid %2; border-radius: 12px;").arg(t.bg, t.muted));
+        auto* cardLayout = new QVBoxLayout(card);
+        cardLayout->setContentsMargins(0, 0, 0, 0);
+        cardLayout->setSpacing(0);
+
+        // Input
+        auto* inputWrapper = new QWidget();
+        inputWrapper->setStyleSheet(QString("background: transparent; border-bottom: 1px solid %1; border-radius: 0;").arg(t.overlay));
+        auto* inputLayout = new QHBoxLayout(inputWrapper);
+        inputLayout->setContentsMargins(20, 16, 20, 16);
+
+        auto* icon = new QLabel("H");
+        icon->setStyleSheet(QString("color: %1; font-size: 18px; font-weight: bold; border: none; background: transparent;").arg(t.accent));
+        inputLayout->addWidget(icon);
+
+        auto* searchInput = new QLineEdit();
+        searchInput->setPlaceholderText("Search command history...");
+        searchInput->setStyleSheet(QString(
+            "background: transparent; border: none; color: %1; font-size: 16px; padding: 4px 8px; selection-background-color: %2;"
+        ).arg(t.fg, t.highlight));
+        inputLayout->addWidget(searchInput);
+        cardLayout->addWidget(inputWrapper);
+
+        // Results
+        QColor accentC(t.accent);
+        QString accentRgb = QString("%1,%2,%3").arg(accentC.red()).arg(accentC.green()).arg(accentC.blue());
+        auto* resultsList = new QListWidget();
+        resultsList->setStyleSheet(QString(
+            "QListWidget { background: transparent; border: none; outline: none; padding: 4px 0; }"
+            "QListWidget::item { color: %1; padding: 8px 20px; border: none; border-radius: 0; font-family: monospace; font-size: 13px; }"
+            "QListWidget::item:selected { background: rgba(%2, 0.12); }"
+            "QListWidget::item:hover { background: rgba(%2, 0.08); }"
+        ).arg(t.fg, accentRgb));
+        resultsList->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        resultsList->setFocusPolicy(Qt::NoFocus);
+        cardLayout->addWidget(resultsList);
+
+        // Hint
+        auto* hintBar = new QWidget();
+        hintBar->setStyleSheet(QString("background: transparent; border-top: 1px solid %1; border-radius: 0;").arg(t.overlay));
+        auto* hintLayout = new QHBoxLayout(hintBar);
+        hintLayout->setContentsMargins(20, 8, 20, 8);
+        auto* hintText = new QLabel("Enter: type into terminal    Esc: close");
+        hintText->setStyleSheet(QString("color: %1; font-size: 11px; border: none; background: transparent;").arg(t.muted));
+        hintLayout->addWidget(hintText);
+        cardLayout->addWidget(hintBar);
+
+        outerLayout->addWidget(card);
+
+        // Read history file
+        QString histFile = qgetenv("HISTFILE");
+        if (histFile.isEmpty()) histFile = QDir::homePath() + "/.bash_history";
+        QStringList* commands = new QStringList();
+        QFile hf(histFile);
+        if (hf.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            while (!hf.atEnd()) {
+                QString line = QString::fromUtf8(hf.readLine()).trimmed();
+                if (!line.isEmpty() && !line.startsWith('#'))
+                    commands->prepend(line); // most recent first
+            }
+            hf.close();
+        }
+        commands->removeDuplicates();
+
+        auto populateResults = [resultsList, commands](const QString& query) {
+            resultsList->clear();
+            int count = 0;
+            for (const QString& cmd : *commands) {
+                if (count >= 100) break;
+                if (!query.isEmpty() && !cmd.contains(query, Qt::CaseInsensitive)) continue;
+                resultsList->addItem(cmd);
+                count++;
+            }
+            if (resultsList->count() > 0) resultsList->setCurrentRow(0);
+        };
+        populateResults("");
+
+        connect(searchInput, &QLineEdit::textChanged, overlay, [populateResults](const QString& text) {
+            populateResults(text);
+        });
+
+        // Select command -> type into the terminal that was focused when overlay opened
+        auto selectCommand = [this, overlay, resultsList, commands, focusedTerm]() {
+            auto* item = resultsList->currentItem();
+            if (!item) return;
+            QString cmd = item->text();
+            delete commands;
+            overlay->deleteLater();
+
+            // Type into the captured focused terminal
+            if (focusedTerm && focusedTerm->getSurface()) {
+                auto* surface = (ghostty_surface_t)focusedTerm->getSurface();
+                QByteArray utf8 = cmd.toUtf8();
+                ghostty_surface_text(surface, utf8.constData(), utf8.size());
+            }
+        };
+
+        connect(resultsList, &QListWidget::itemDoubleClicked, overlay, [selectCommand](QListWidgetItem*) {
+            selectCommand();
+        });
+        connect(searchInput, &QLineEdit::returnPressed, overlay, selectCommand);
+
+        // Arrow keys
+        QObject::connect(new QShortcut(QKeySequence(Qt::Key_Down), searchInput), &QShortcut::activated,
+            overlay, [resultsList]() {
+                int next = resultsList->currentRow() + 1;
+                if (next < resultsList->count()) resultsList->setCurrentRow(next);
+            });
+        QObject::connect(new QShortcut(QKeySequence(Qt::Key_Up), searchInput), &QShortcut::activated,
+            overlay, [resultsList]() {
+                int prev = resultsList->currentRow() - 1;
+                if (prev >= 0) resultsList->setCurrentRow(prev);
+            });
+
+        // Close
+        connect(new QShortcut(QKeySequence(Qt::Key_Escape), overlay), &QShortcut::activated,
+            overlay, [overlay, commands]() { delete commands; overlay->deleteLater(); });
+        connect(new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_H), overlay), &QShortcut::activated,
+            overlay, [overlay, commands]() { delete commands; overlay->deleteLater(); });
+
+        overlay->show();
+        overlay->raise();
+        searchInput->setFocus();
+    }
+
+    // ── Picture in Picture (Ctrl+Shift+M) ──
+    void togglePiP() {
+        // If PiP is already showing, close it (restores view)
+        if (pipWindow) {
+            pipWindow->close();
+            return;
+        }
+
+        QWidget* current = browserTabs->currentWidget();
+        if (!current) return;
+        auto* view = current->findChild<QWebEngineView*>();
+        if (!view) return;
+
+        int tabIdx = browserTabs->currentIndex();
+
+        pipWindow = new PiPWindow(nullptr);
+        pipWindow->setView(view, tabIdx, browserTabs, current);
+
+        connect(pipWindow, &PiPWindow::restoreRequested, this, [this]() {
+            if (!pipWindow || !pipWindow->view) return;
+
+            // Move view back to its original container
+            QWidget* container = pipWindow->originalContainer;
+            if (container) {
+                auto* layout = container->layout();
+                if (layout) layout->addWidget(pipWindow->view);
+            }
+
+            pipWindow->deleteLater();
+            pipWindow = nullptr;
+        });
+
+        // Position near bottom-right of main window
+        QPoint pos = mapToGlobal(QPoint(width() - 580, height() - 400));
+        pipWindow->move(pos);
+        pipWindow->show();
+    }
+
+    // ── Resize overlay ──
+    void connectSplitterOverlay(QSplitter* splitter) {
+        connect(splitter, &QSplitter::splitterMoved, this, [this, splitter](int, int) {
+            // Show overlay with pane dimensions
+            auto* existing = findChild<QLabel*>("resizeOverlayLabel");
+            if (existing) existing->deleteLater();
+
+            QStringList dims;
+            for (int i = 0; i < splitter->count(); i++) {
+                QWidget* w = splitter->widget(i);
+                dims << QString("%1x%2").arg(w->width()).arg(w->height());
+            }
+
+            auto* label = new QLabel(dims.join("  |  "), this);
+            label->setObjectName("resizeOverlayLabel");
+            label->setAlignment(Qt::AlignCenter);
+            label->setStyleSheet(QString(
+                "background: %1; color: %2; border: 1px solid %3; border-radius: 6px; padding: 6px 14px; font-size: 12px; font-family: monospace;"
+            ).arg(currentTheme().overlay, currentTheme().fg, currentTheme().muted));
+            label->adjustSize();
+
+            // Position near the splitter handle
+            QPoint splitterCenter = splitter->mapToGlobal(QPoint(splitter->width() / 2, splitter->height() / 2));
+            QPoint localPos = mapFromGlobal(splitterCenter);
+            label->move(localPos.x() - label->width() / 2, localPos.y() - label->height() / 2);
+            label->show();
+            label->raise();
+
+            QTimer::singleShot(1200, label, &QLabel::deleteLater);
+        });
+    }
+
     // ── Session save/restore ──
 
     QString sessionPath() {
@@ -1782,6 +3306,12 @@ public slots:
             }
         }
         root["browserTabs"] = browserArr;
+
+        // Save URL history
+        QJsonArray urlHistArr;
+        for (const QString& u : urlHistory) urlHistArr.append(u);
+        root["urlHistory"] = urlHistArr;
+        root["theme"] = kThemes[g_currentTheme].name;
 
         // Save workspaces
         QJsonArray wsArr;
@@ -1827,6 +3357,7 @@ public slots:
                 panesArr.append(paneObj);
             }
             wsObj["panes"] = panesArr;
+            wsObj["notes"] = ws.notes;
             wsArr.append(wsObj);
         }
         root["workspaces"] = wsArr;
@@ -1854,6 +3385,17 @@ public slots:
         int ww = root["windowW"].toInt(1400);
         int wh = root["windowH"].toInt(900);
         setGeometry(wx, wy, ww, wh);
+
+        // Restore URL history
+        QJsonArray urlHistArr = root["urlHistory"].toArray();
+        urlHistory.clear();
+        for (auto val : urlHistArr) urlHistory.append(val.toString());
+
+        // Restore theme
+        QString savedTheme = root["theme"].toString();
+        for (int i = 0; i < kThemeCount; i++) {
+            if (kThemes[i].name == savedTheme) { g_currentTheme = i; break; }
+        }
 
         // Restore browser visibility
         browserTabs->setVisible(root["browserVisible"].toBool(true));
@@ -1895,6 +3437,7 @@ public slots:
             Workspace& ws = workspaces.back();
             ws.name = wsObj["name"].toString(ws.name);
             ws.userRenamed = wsObj["userRenamed"].toBool(false);
+            ws.notes = wsObj["notes"].toString();
             tabList->item(workspaces.size() - 1)->setText(ws.name);
 
             // Restore panes (first pane already created by addWorkspace)
@@ -1970,13 +3513,12 @@ protected:
     }
 
     void keyPressEvent(QKeyEvent* event) override {
-        // All app shortcuts use Ctrl+Shift to avoid conflicting with ghostty
-        if (event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier)) {
-            switch (event->key()) {
-                // Workspaces
-                case Qt::Key_N: addWorkspace(); return;
-                case Qt::Key_W: {
-                    // Close current workspace
+        // Dispatch configurable shortcuts via ShortcutManager
+        if (g_shortcuts) {
+            QString action = g_shortcuts->matchShortcut(event);
+            if (!action.isEmpty()) {
+                if (action == "workspace.new") { addWorkspace(); return; }
+                if (action == "workspace.close") {
                     if ((int)workspaces.size() > 1 && activeWorkspace >= 0) {
                         Workspace& ws = workspaces[activeWorkspace];
                         terminalStack->removeWidget(ws.container);
@@ -1990,45 +3532,34 @@ protected:
                     }
                     return;
                 }
-                case Qt::Key_BracketRight: {
-                    // Next workspace
+                if (action == "workspace.next") {
                     if (!workspaces.empty())
                         tabList->setCurrentRow((activeWorkspace + 1) % workspaces.size());
                     return;
                 }
-                case Qt::Key_BracketLeft: {
-                    // Previous workspace
+                if (action == "workspace.prev") {
                     if (!workspaces.empty())
                         tabList->setCurrentRow((activeWorkspace - 1 + workspaces.size()) % workspaces.size());
                     return;
                 }
-
-                // Panes
-                case Qt::Key_T: addTabInFocusedPane(); return;
-
-                // Browser
-                case Qt::Key_B: browserTabs->setVisible(!browserTabs->isVisible()); return;
-                case Qt::Key_P: addBrowserTab("file:///home/pe/newnewrepos/w/yo/prettymux/src/qt/welcome.html"); return;
-
-                // Dev tools
-                case Qt::Key_I: openDevTools(false); return;
-                case Qt::Key_J: openDevTools(true); return;
-
-                // Shortcut overlay
-                case Qt::Key_K: showShortcutOverlay(); return;
-
-                // Command palette / search
-                case Qt::Key_S: showSearchOverlay(); return;
-
-                // Fullscreen
-                case Qt::Key_F11: {
-                    if (isFullScreen()) showNormal(); else showFullScreen();
-                    return;
-                }
+                if (action == "pane.tab.new") { addTabInFocusedPane(); return; }
+                if (action == "browser.toggle") { browserTabs->setVisible(!browserTabs->isVisible()); return; }
+                if (action == "browser.new") { addBrowserTab("file:///home/pe/newnewrepos/w/yo/prettymux/src/qt/welcome.html"); return; }
+                if (action == "devtools.docked") { openDevTools(false); return; }
+                if (action == "devtools.window") { openDevTools(true); return; }
+                if (action == "shortcuts.show") { showShortcutOverlay(); return; }
+                if (action == "search.show") { showSearchOverlay(); return; }
+                if (action == "pane.zoom") { toggleZoom(); return; }
+                if (action == "terminal.search") { triggerSearch(); return; }
+                if (action == "broadcast.toggle") { toggleBroadcast(); return; }
+                if (action == "notes.toggle") { toggleNotes(); return; }
+                if (action == "theme.cycle") { cycleTheme(); return; }
+                if (action == "history.show") { showHistoryOverlay(); return; }
+                if (action == "pip.toggle") { togglePiP(); return; }
             }
         }
 
-        // Ctrl+1-9 switch workspace (keep as Ctrl only, doesn't conflict)
+        // Ctrl+1-9 switch workspace
         if (event->modifiers() == Qt::ControlModifier &&
             event->key() >= Qt::Key_1 && event->key() <= Qt::Key_9) {
             int idx = event->key() - Qt::Key_1;
@@ -2037,7 +3568,18 @@ protected:
             return;
         }
 
-        // F11 fullscreen (no modifier needed)
+        // Alt+Arrow: navigate between panes
+        if (event->modifiers() == Qt::AltModifier) {
+            switch (event->key()) {
+                case Qt::Key_Left:  navigatePane(-1, 0); return;
+                case Qt::Key_Right: navigatePane(1, 0);  return;
+                case Qt::Key_Up:    navigatePane(0, -1); return;
+                case Qt::Key_Down:  navigatePane(0, 1);  return;
+                default: break;
+            }
+        }
+
+        // F11 fullscreen
         if (event->key() == Qt::Key_F11 && event->modifiers() == Qt::NoModifier) {
             if (isFullScreen()) showNormal(); else showFullScreen();
             return;
@@ -2046,6 +3588,30 @@ protected:
         QMainWindow::keyPressEvent(event);
     }
 };
+
+// ── Broadcast functions (defined after PrettyMuxWindow) ──
+
+static bool isBroadcastEnabled(GhosttyWidget* source) {
+    return g_window && g_window->isBroadcastForWorkspace(source);
+}
+
+static void doBroadcastKey(GhosttyWidget* source, ghostty_input_key_s ke) {
+    if (!g_window) return;
+    auto terms = g_window->getAllTerminalsInWorkspace(source);
+    for (auto* t : terms) {
+        if (t != source && t->getSurface())
+            ghostty_surface_key((ghostty_surface_t)t->getSurface(), ke);
+    }
+}
+
+static void doBroadcastText(GhosttyWidget* source, const char* text, size_t len) {
+    if (!g_window) return;
+    auto terms = g_window->getAllTerminalsInWorkspace(source);
+    for (auto* t : terms) {
+        if (t != source && t->getSurface())
+            ghostty_surface_text((ghostty_surface_t)t->getSurface(), text, len);
+    }
+}
 
 // ── Action callback (after PrettyMuxWindow is defined) ──
 
@@ -2128,6 +3694,37 @@ static bool action_cb(ghostty_app_t, ghostty_target_s target, ghostty_action_s a
         return true;
     }
 
+    // Activity indicator: RENDER fires when a terminal has new content
+    if (action.tag == GHOSTTY_ACTION_RENDER) {
+        if (sp) {
+            QMetaObject::invokeMethod(g_window, "markActivity",
+                Qt::QueuedConnection, Q_ARG(quint64, sp));
+        }
+        return true;
+    }
+
+    // Progress bar: track progress state per surface
+    if (action.tag == GHOSTTY_ACTION_PROGRESS_REPORT) {
+        auto pr = action.action.progress_report;
+        QMetaObject::invokeMethod(g_window, "updateTerminalProgress",
+            Qt::QueuedConnection, Q_ARG(quint64, sp),
+            Q_ARG(int, (int)pr.state), Q_ARG(int, (int)pr.progress));
+        return true;
+    }
+
+    // Search: acknowledge ghostty's built-in search
+    if (action.tag == GHOSTTY_ACTION_START_SEARCH) {
+        return true;
+    }
+
+    if (action.tag == GHOSTTY_ACTION_SEARCH_TOTAL) {
+        return true;
+    }
+
+    if (action.tag == GHOSTTY_ACTION_SEARCH_SELECTED) {
+        return true;
+    }
+
     return false;
 }
 
@@ -2183,16 +3780,43 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Dark palette
-    QPalette palette;
-    palette.setColor(QPalette::Window, QColor("#1e1e2e"));
-    palette.setColor(QPalette::WindowText, QColor("#cdd6f4"));
-    palette.setColor(QPalette::Base, QColor("#181825"));
-    palette.setColor(QPalette::Text, QColor("#cdd6f4"));
-    palette.setColor(QPalette::Button, QColor("#313244"));
-    palette.setColor(QPalette::ButtonText, QColor("#cdd6f4"));
-    palette.setColor(QPalette::Highlight, QColor("#cba6f7"));
-    app.setPalette(palette);
+    // Load saved theme or detect system preference
+    {
+        QFile themeFile(QDir::homePath() + "/.config/prettymux/theme.conf");
+        if (themeFile.open(QIODevice::ReadOnly)) {
+            QString name = QString::fromUtf8(themeFile.readAll()).trimmed();
+            themeFile.close();
+            for (int i = 0; i < kThemeCount; i++) {
+                if (kThemes[i].name == name) { g_currentTheme = i; break; }
+            }
+        } else {
+            // Detect system preference via gsettings
+            FILE* fp2 = popen("gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null", "r");
+            if (fp2) {
+                char buf2[64];
+                if (fgets(buf2, sizeof(buf2), fp2)) {
+                    QString scheme = QString::fromUtf8(buf2).trimmed().remove('\'');
+                    if (scheme == "prefer-light" || scheme == "default")
+                        g_currentTheme = 1; // Light theme
+                }
+                pclose(fp2);
+            }
+        }
+    }
+
+    // Apply initial palette from theme
+    {
+        const auto& t = currentTheme();
+        QPalette palette;
+        palette.setColor(QPalette::Window, QColor(t.bg));
+        palette.setColor(QPalette::WindowText, QColor(t.fg));
+        palette.setColor(QPalette::Base, QColor(t.surface));
+        palette.setColor(QPalette::Text, QColor(t.fg));
+        palette.setColor(QPalette::Button, QColor(t.overlay));
+        palette.setColor(QPalette::ButtonText, QColor(t.fg));
+        palette.setColor(QPalette::Highlight, QColor(t.accent));
+        app.setPalette(palette);
+    }
 
     // Init ghostty
     if (ghostty_init(0, nullptr) != 0) {
@@ -2217,6 +3841,9 @@ int main(int argc, char* argv[]) {
         fprintf(stderr, "ghostty_app_new failed\n");
         return 1;
     }
+
+    ShortcutManager shortcuts;
+    g_shortcuts = &shortcuts;
 
     PrettyMuxWindow window;
     g_window = &window;
