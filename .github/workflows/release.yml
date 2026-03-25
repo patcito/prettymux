@@ -12,10 +12,10 @@ env:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Ubuntu 22.04 LTS
+  # Ubuntu 24.04 LTS
   # ---------------------------------------------------------------------------
   build-linux-ubuntu-lts:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout prettymux
         uses: actions/checkout@v4
@@ -58,16 +58,16 @@ jobs:
           cp src/qt/welcome.html dist/
           cp src/qt/prettymux-shell-integration.sh dist/
           cp ghostty/zig-out/lib/libghostty.so dist/ || true
-          tar czf prettymux-ubuntu-22.04-amd64.tar.gz -C dist .
+          tar czf prettymux-ubuntu-24.04-amd64.tar.gz -C dist .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: prettymux-ubuntu-22.04-amd64
-          path: prettymux-ubuntu-22.04-amd64.tar.gz
+          name: prettymux-ubuntu-24.04-amd64
+          path: prettymux-ubuntu-24.04-amd64.tar.gz
 
   # ---------------------------------------------------------------------------
-  # Ubuntu 24.04 (current)
+  # Ubuntu 24.04 (latest)
   # ---------------------------------------------------------------------------
   build-linux-ubuntu-current:
     runs-on: ubuntu-24.04
@@ -472,7 +472,7 @@ jobs:
   # AppImage
   # ---------------------------------------------------------------------------
   build-appimage:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout prettymux
         uses: actions/checkout@v4
@@ -553,7 +553,7 @@ jobs:
       - name: Install Qt6
         uses: jurplel/install-qt-action@v4
         with:
-          version: '6.6.0'
+          version: '6.8.0'
           modules: 'qtwebengine'
           arch: 'win64_msvc2019_64'
 
@@ -616,7 +616,7 @@ jobs:
       - name: Install Qt6
         uses: jurplel/install-qt-action@v4
         with:
-          version: '6.6.0'
+          version: '6.8.0'
           modules: 'qtwebengine'
 
       - name: Build ghostty
@@ -694,7 +694,7 @@ jobs:
       - name: Install Qt6
         uses: jurplel/install-qt-action@v4
         with:
-          version: '6.6.0'
+          version: '6.8.0'
           modules: 'qtwebengine'
 
       - name: Build ghostty
@@ -798,7 +798,7 @@ jobs:
           mkdir -p release-assets
 
           # Ubuntu tarballs
-          cp artifacts/prettymux-ubuntu-22.04-amd64/*.tar.gz release-assets/ || true
+          cp artifacts/prettymux-ubuntu-24.04-amd64/*.tar.gz release-assets/ || true
           cp artifacts/prettymux-ubuntu-24.04-amd64/*.tar.gz release-assets/ || true
 
           # Fedora RPM
