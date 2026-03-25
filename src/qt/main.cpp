@@ -34,6 +34,7 @@
 #include <QWidgetAction>
 #include <QPainter>
 #include <QFrame>
+#include <QRegularExpression>
 #include <QCloseEvent>
 #include <QJsonArray>
 #include <QSystemTrayIcon>
@@ -1522,21 +1523,30 @@ public slots:
         ).arg(t.overlay, t.fg, t.highlight));
 
         // URL autocomplete from history
-        auto* completerModel = new QStringListModel(urlHistory, urlBar);
-        auto* completer = new QCompleter(completerModel, urlBar);
-        completer->setCaseSensitivity(Qt::CaseInsensitive);
-        completer->setFilterMode(Qt::MatchContains);
-        completer->setMaxVisibleItems(8);
-        // Update model when history changes
-        connect(urlBar, &QLineEdit::returnPressed, urlBar, [completerModel, this]() {
-            completerModel->setStringList(urlHistory);
+        // Chrome-style inline autocomplete: fills the rest of the URL
+        // with the best match, selected so typing replaces it
+        connect(urlBar, &QLineEdit::textEdited, urlBar, [urlBar, this](const QString& text) {
+            if (text.isEmpty()) return;
+            // Find best match from history
+            for (const QString& entry : urlHistory) {
+                if (entry.startsWith(text, Qt::CaseInsensitive)) {
+                    // Fill inline completion
+                    urlBar->setText(entry);
+                    urlBar->setSelection(text.length(), entry.length() - text.length());
+                    return;
+                }
+            }
+            // Also try matching without protocol
+            for (const QString& entry : urlHistory) {
+                QString stripped = entry;
+                stripped.remove(QRegularExpression("^https?://"));
+                if (stripped.startsWith(text, Qt::CaseInsensitive)) {
+                    urlBar->setText(entry);
+                    urlBar->setSelection(text.length(), entry.length() - text.length());
+                    return;
+                }
+            }
         });
-        completer->popup()->setStyleSheet(QString(
-            "QListView { background: %1; color: %2; border: 1px solid %3; padding: 2px; }"
-            "QListView::item { padding: 4px 8px; }"
-            "QListView::item:selected { background: %4; }"
-        ).arg(t.surface, t.fg, t.overlay, t.overlay));
-        urlBar->setCompleter(completer);
 
         barLayout->addWidget(backBtn);
         barLayout->addWidget(fwdBtn);
@@ -3674,6 +3684,10 @@ protected:
                         browserTabs->removeTab(idx);
                         w->deleteLater();
                     }
+                    return;
+                }
+                if (event->key() == Qt::Key_T) {
+                    addBrowserTab("file:///home/pe/newnewrepos/w/yo/prettymux/src/qt/welcome.html");
                     return;
                 }
             }
