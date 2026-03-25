@@ -1,0 +1,21 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	dh_auto_configure -- \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DGHOSTTY_DIR=$(CURDIR)/ghostty
+
+override_dh_auto_build:
+	cd ghostty && zig build -Dapp-runtime=none -Doptimize=ReleaseFast || true
+	dh_auto_build
+
+override_dh_auto_install:
+	dh_auto_install
+	install -Dm755 src/qt/build/prettymux $(CURDIR)/debian/prettymux/usr/bin/prettymux
+	install -Dm644 ghostty/zig-out/lib/libghostty.so $(CURDIR)/debian/prettymux/usr/lib/prettymux/libghostty.so || true
+	install -Dm644 src/qt/welcome.html $(CURDIR)/debian/prettymux/usr/share/prettymux/welcome.html
+	install -Dm644 src/qt/prettymux-shell-integration.sh $(CURDIR)/debian/prettymux/usr/share/prettymux/shell-integration.sh
+	install -Dm644 packaging/prettymux.desktop $(CURDIR)/debian/prettymux/usr/share/applications/prettymux.desktop

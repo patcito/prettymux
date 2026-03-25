@@ -1,0 +1,16 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: prettymux
+Upstream-Contact: patcito <patcito@users.noreply.github.com>
+Source: https://github.com/patcito/prettymux
+
+Files: *
+Copyright: 2024-2026 patcito
+License: GPL-3
+
+License: GPL-3
+ This package is free software: you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation, version 3.
+ .
+ On Debian systems, the complete text of the GNU General Public License
+ version 3 can be found in /usr/share/common-licenses/GPL-3.

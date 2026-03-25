@@ -1,0 +1,853 @@
+name: CI + Packaging + Release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+
+env:
+  GHOSTTY_REPO: patcito/ghostty
+  GHOSTTY_BRANCH: linux-embedded-platform
+  ZIG_VERSION: '0.13.0'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Ubuntu 22.04 LTS
+  # ---------------------------------------------------------------------------
+  build-linux-ubuntu-lts:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout prettymux
+        uses: actions/checkout@v4
+
+      - name: Checkout ghostty fork
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.GHOSTTY_REPO }}
+          ref: ${{ env.GHOSTTY_BRANCH }}
+          path: ghostty
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qt6-base-dev qt6-webengine-dev libgl-dev cmake
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Build ghostty
+        run: |
+          cd ghostty
+          zig build -Dapp-runtime=none -Doptimize=ReleaseFast
+
+      - name: Build prettymux
+        run: |
+          cd src/qt
+          mkdir -p build && cd build
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGHOSTTY_DIR=${{ github.workspace }}/ghostty
+          make -j$(nproc)
+
+      - name: Package artifacts
+        run: |
+          mkdir -p dist
+          cp src/qt/build/prettymux dist/
+          cp src/qt/welcome.html dist/
+          cp src/qt/prettymux-shell-integration.sh dist/
+          cp ghostty/zig-out/lib/libghostty.so dist/ || true
+          tar czf prettymux-ubuntu-22.04-amd64.tar.gz -C dist .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: prettymux-ubuntu-22.04-amd64
+          path: prettymux-ubuntu-22.04-amd64.tar.gz
+
+  # ---------------------------------------------------------------------------
+  # Ubuntu 24.04 (current)
+  # ---------------------------------------------------------------------------
+  build-linux-ubuntu-current:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout prettymux
+        uses: actions/checkout@v4
+
+      - name: Checkout ghostty fork
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.GHOSTTY_REPO }}
+          ref: ${{ env.GHOSTTY_BRANCH }}
+          path: ghostty
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qt6-base-dev qt6-webengine-dev libgl-dev cmake
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Build ghostty
+        run: |
+          cd ghostty
+          zig build -Dapp-runtime=none -Doptimize=ReleaseFast
+
+      - name: Build prettymux
+        run: |
+          cd src/qt
+          mkdir -p build && cd build
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGHOSTTY_DIR=${{ github.workspace }}/ghostty
+          make -j$(nproc)
+
+      - name: Package artifacts
+        run: |
+          mkdir -p dist
+          cp src/qt/build/prettymux dist/
+          cp src/qt/welcome.html dist/
+          cp src/qt/prettymux-shell-integration.sh dist/
+          cp ghostty/zig-out/lib/libghostty.so dist/ || true
+          tar czf prettymux-ubuntu-24.04-amd64.tar.gz -C dist .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: prettymux-ubuntu-24.04-amd64
+          path: prettymux-ubuntu-24.04-amd64.tar.gz
+
+  # ---------------------------------------------------------------------------
+  # Fedora (RPM)
+  # ---------------------------------------------------------------------------
+  build-linux-fedora:
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    steps:
+      - name: Install base tools
+        run: dnf install -y git which
+
+      - name: Checkout prettymux
+        uses: actions/checkout@v4
+
+      - name: Checkout ghostty fork
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.GHOSTTY_REPO }}
+          ref: ${{ env.GHOSTTY_BRANCH }}
+          path: ghostty
+
+      - name: Install dependencies
+        run: |
+          dnf install -y \
+            qt6-qtbase-devel qt6-qtwebengine-devel mesa-libGL-devel \
+            cmake gcc-c++ xz tar
+
+      - name: Install Zig
+        run: |
+          curl -L https://ziglang.org/download/${{ env.ZIG_VERSION }}/zig-linux-x86_64-${{ env.ZIG_VERSION }}.tar.xz | tar -xJ
+          mv zig-linux-x86_64-${{ env.ZIG_VERSION }} /opt/zig
+          echo "/opt/zig" >> $GITHUB_PATH
+
+      - name: Build ghostty
+        run: |
+          cd ghostty
+          /opt/zig/zig build -Dapp-runtime=none -Doptimize=ReleaseFast
+
+      - name: Build prettymux
+        run: |
+          cd src/qt
+          mkdir -p build && cd build
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGHOSTTY_DIR=${{ github.workspace }}/ghostty
+          make -j$(nproc)
+
+      - name: Package artifacts
+        run: |
+          mkdir -p dist
+          cp src/qt/build/prettymux dist/
+          cp src/qt/welcome.html dist/
+          cp src/qt/prettymux-shell-integration.sh dist/
+          cp ghostty/zig-out/lib/libghostty.so dist/ || true
+
+      - name: Install nFPM
+        run: |
+          curl -sfL https://github.com/goreleaser/nfpm/releases/latest/download/nfpm_linux_amd64.tar.gz | tar xz -C /usr/local/bin nfpm
+
+      - name: Build RPM
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          if [[ ! "$VERSION" =~ ^[0-9] ]]; then VERSION="0.1.0"; fi
+          export VERSION
+          nfpm package -p rpm -f packaging/nfpm.yaml
+          mv *.rpm prettymux-${VERSION}-1.x86_64.rpm
+
+      - name: Upload RPM
+        uses: actions/upload-artifact@v4
+        with:
+          name: prettymux-fedora-rpm
+          path: '*.rpm'
+
+  # ---------------------------------------------------------------------------
+  # Debian package (.deb)
+  # ---------------------------------------------------------------------------
+  build-linux-deb:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout prettymux
+        uses: actions/checkout@v4
+
+      - name: Checkout ghostty fork
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.GHOSTTY_REPO }}
+          ref: ${{ env.GHOSTTY_BRANCH }}
+          path: ghostty
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qt6-base-dev qt6-webengine-dev libgl-dev cmake
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Build ghostty
+        run: |
+          cd ghostty
+          zig build -Dapp-runtime=none -Doptimize=ReleaseFast
+
+      - name: Build prettymux
+        run: |
+          cd src/qt
+          mkdir -p build && cd build
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGHOSTTY_DIR=${{ github.workspace }}/ghostty
+          make -j$(nproc)
+
+      - name: Package artifacts
+        run: |
+          mkdir -p dist
+          cp src/qt/build/prettymux dist/
+          cp src/qt/welcome.html dist/
+          cp src/qt/prettymux-shell-integration.sh dist/
+          cp ghostty/zig-out/lib/libghostty.so dist/ || true
+
+      - name: Install nFPM
+        run: |
+          curl -sfL https://github.com/goreleaser/nfpm/releases/latest/download/nfpm_linux_amd64.tar.gz | tar xz -C /usr/local/bin nfpm
+
+      - name: Build .deb
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          if [[ ! "$VERSION" =~ ^[0-9] ]]; then VERSION="0.1.0"; fi
+          export VERSION
+          nfpm package -p deb -f packaging/nfpm.yaml
+          mv *.deb prettymux_${VERSION}_amd64.deb
+
+      - name: Upload .deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: prettymux-deb
+          path: '*.deb'
+
+  # ---------------------------------------------------------------------------
+  # Snap
+  # ---------------------------------------------------------------------------
+  build-snap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout prettymux
+        uses: actions/checkout@v4
+
+      - name: Checkout ghostty fork
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.GHOSTTY_REPO }}
+          ref: ${{ env.GHOSTTY_BRANCH }}
+          path: ghostty
+
+      - name: Build snap
+        uses: snapcore/action-build@v1
+        id: snapcraft
+        # snapcraft.yaml installs deps, builds ghostty from ./ghostty, builds prettymux
+
+      - name: Upload snap
+        uses: actions/upload-artifact@v4
+        with:
+          name: prettymux-snap
+          path: ${{ steps.snapcraft.outputs.snap }}
+
+      - name: Publish to Snap Store
+        if: startsWith(github.ref, 'refs/tags/v') && env.SNAPCRAFT_STORE_CREDENTIALS != ''
+        uses: snapcore/action-publish@v1
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        with:
+          snap: ${{ steps.snapcraft.outputs.snap }}
+          release: edge
+
+  # ---------------------------------------------------------------------------
+  # Flatpak
+  # ---------------------------------------------------------------------------
+  build-flatpak:
+    runs-on: ubuntu-latest
+    container:
+      image: biber/flathub-builder:latest
+      options: --privileged
+    steps:
+      - name: Checkout prettymux
+        uses: actions/checkout@v4
+
+      - name: Checkout ghostty fork
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.GHOSTTY_REPO }}
+          ref: ${{ env.GHOSTTY_BRANCH }}
+          path: ghostty
+
+      - name: Build Flatpak
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          manifest-path: packaging/dev.prettymux.app.yml
+          bundle: prettymux.flatpak
+          cache-key: flatpak-builder-${{ github.sha }}
+        # Manifest installs zig, builds ghostty from ../ghostty, builds prettymux
+
+      - name: Upload Flatpak bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: prettymux-flatpak
+          path: prettymux.flatpak
+
+  # ---------------------------------------------------------------------------
+  # Arch Linux
+  # ---------------------------------------------------------------------------
+  build-archlinux:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install base tools
+        run: pacman -Syu --noconfirm base-devel git curl zstd
+
+      - name: Checkout prettymux
+        uses: actions/checkout@v4
+
+      - name: Checkout ghostty fork
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.GHOSTTY_REPO }}
+          ref: ${{ env.GHOSTTY_BRANCH }}
+          path: ghostty
+
+      - name: Install dependencies
+        run: pacman -S --noconfirm qt6-base qt6-webengine mesa cmake gcc xz
+
+      - name: Install Zig
+        run: |
+          curl -L https://ziglang.org/download/${{ env.ZIG_VERSION }}/zig-linux-x86_64-${{ env.ZIG_VERSION }}.tar.xz | tar -xJ -C /opt
+          ln -s /opt/zig-linux-x86_64-${{ env.ZIG_VERSION }}/zig /usr/local/bin/zig
+
+      - name: Build ghostty
+        run: |
+          cd ghostty
+          zig build -Dapp-runtime=none -Doptimize=ReleaseFast
+
+      - name: Build prettymux
+        run: |
+          cd src/qt
+          mkdir -p build && cd build
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGHOSTTY_DIR=$GITHUB_WORKSPACE/ghostty
+          make -j$(nproc)
+
+      - name: Create Arch package
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          [[ "$VERSION" =~ ^[0-9] ]] || VERSION="0.1.0"
+
+          PKGDIR="prettymux-pkg"
+          mkdir -p "$PKGDIR/usr/bin"
+          mkdir -p "$PKGDIR/usr/lib/prettymux"
+          mkdir -p "$PKGDIR/usr/share/prettymux"
+          mkdir -p "$PKGDIR/usr/share/applications"
+
+          install -Dm755 src/qt/build/prettymux "$PKGDIR/usr/bin/prettymux"
+          install -Dm644 ghostty/zig-out/lib/libghostty.so "$PKGDIR/usr/lib/prettymux/libghostty.so" || true
+          install -Dm644 src/qt/welcome.html "$PKGDIR/usr/share/prettymux/welcome.html"
+          install -Dm644 src/qt/prettymux-shell-integration.sh "$PKGDIR/usr/share/prettymux/shell-integration.sh"
+          install -Dm644 packaging/prettymux.desktop "$PKGDIR/usr/share/applications/prettymux.desktop"
+          install -Dm644 LICENSE "$PKGDIR/usr/share/licenses/prettymux/LICENSE"
+
+          cat > "$PKGDIR/.PKGINFO" <<EOF
+          pkgname = prettymux
+          pkgver = ${VERSION}-1
+          pkgdesc = GPU-accelerated terminal multiplexer
+          url = https://github.com/patcito/prettymux
+          builddate = $(date +%s)
+          packager = GitHub Actions <ci@prettymux.dev>
+          size = $(du -sb "$PKGDIR" | cut -f1)
+          arch = x86_64
+          license = GPL-3.0-only
+          depend = qt6-base
+          depend = qt6-webengine
+          depend = libgl
+          EOF
+
+          cd "$PKGDIR"
+          tar --zstd -cf ../prettymux-${VERSION}-1-x86_64.pkg.tar.zst .PKGINFO usr/
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: prettymux-archlinux
+          path: '*.pkg.tar.zst'
+
+      - name: Upload PKGBUILD
+        uses: actions/upload-artifact@v4
+        with:
+          name: prettymux-pkgbuild
+          path: packaging/PKGBUILD
+
+      - name: Publish to AUR
+        if: startsWith(github.ref, 'refs/tags/v') && env.AUR_SSH_PRIVATE_KEY != ''
+        uses: KSXGitHub/github-actions-deploy-aur@v3
+        with:
+          pkgname: prettymux
+          pkgbuild: packaging/PKGBUILD
+          commit_username: prettymux-bot
+          commit_email: prettymux-bot@users.noreply.github.com
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+
+  # ---------------------------------------------------------------------------
+  # Publish to PPA (Ubuntu)
+  # ---------------------------------------------------------------------------
+  publish-ppa:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout prettymux
+        uses: actions/checkout@v4
+
+      - name: Checkout ghostty fork
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.GHOSTTY_REPO }}
+          ref: ${{ env.GHOSTTY_BRANCH }}
+          path: ghostty
+
+      - name: Update debian changelog version
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          sed -i "1s/(.*)/($VERSION-1)/" packaging/debian/changelog
+          sed -i "1s/jammy/$(lsb_release -cs)/" packaging/debian/changelog
+
+      - name: Publish to PPA
+        if: env.GPG_PRIVATE_KEY != '' && env.LAUNCHPAD_SSH_PRIVATE_KEY != ''
+        uses: yuezk/publish-ppa-package@v2
+        with:
+          repository: prettymux
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg_passphrase: ${{ secrets.GPG_PASSPHRASE }}
+          launchpad_ssh_private_key: ${{ secrets.LAUNCHPAD_SSH_PRIVATE_KEY }}
+          ppa: ppa:patcito/prettymux
+          source_dir: .
+          debian_dir: packaging/debian
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          LAUNCHPAD_SSH_PRIVATE_KEY: ${{ secrets.LAUNCHPAD_SSH_PRIVATE_KEY }}
+
+  # ---------------------------------------------------------------------------
+  # AppImage
+  # ---------------------------------------------------------------------------
+  build-appimage:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout prettymux
+        uses: actions/checkout@v4
+
+      - name: Checkout ghostty fork
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.GHOSTTY_REPO }}
+          ref: ${{ env.GHOSTTY_BRANCH }}
+          path: ghostty
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qt6-base-dev qt6-webengine-dev libgl-dev cmake
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Build ghostty
+        run: |
+          cd ghostty
+          zig build -Dapp-runtime=none -Doptimize=ReleaseFast
+
+      - name: Build prettymux
+        run: |
+          cd src/qt
+          mkdir -p build && cd build
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGHOSTTY_DIR=${{ github.workspace }}/ghostty
+          make -j$(nproc)
+
+      - name: Package artifacts
+        run: |
+          mkdir -p dist
+          cp src/qt/build/prettymux dist/
+          cp src/qt/welcome.html dist/
+          cp src/qt/prettymux-shell-integration.sh dist/
+          cp ghostty/zig-out/lib/libghostty.so dist/ || true
+
+      - name: Build AppImage
+        uses: AppImageCrafters/build-appimage@v1
+        with:
+          recipe: packaging/AppImageBuilder.yml
+        env:
+          UPDATE_INFO: gh-releases-zsync|patcito|prettymux|latest|PrettyMux-*x86_64.AppImage.zsync
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: prettymux-appimage
+          path: '*.AppImage'
+
+  # ---------------------------------------------------------------------------
+  # Windows (x64)
+  # ---------------------------------------------------------------------------
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout prettymux
+        uses: actions/checkout@v4
+
+      - name: Checkout ghostty fork
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.GHOSTTY_REPO }}
+          ref: ${{ env.GHOSTTY_BRANCH }}
+          path: ghostty
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Install Qt6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.6.0'
+          modules: 'qtwebengine'
+          arch: 'win64_msvc2019_64'
+
+      - name: Build ghostty (best-effort)
+        # NOTE: Ghostty Windows support via embedded platform is experimental.
+        # This step may fail — the workflow continues regardless so we can
+        # still produce the prettymux binary for testing.
+        continue-on-error: true
+        run: |
+          cd ghostty
+          zig build -Dapp-runtime=none -Doptimize=ReleaseFast -Dtarget=x86_64-windows
+
+      - name: Build prettymux
+        shell: cmd
+        run: |
+          cd src\qt
+          mkdir build
+          cd build
+          cmake .. -G "Visual Studio 17 2022" -DCMAKE_BUILD_TYPE=Release -DGHOSTTY_DIR=${{ github.workspace }}\ghostty
+          cmake --build . --config Release
+
+      - name: Package with windeployqt
+        shell: cmd
+        run: |
+          mkdir dist
+          copy src\qt\build\Release\prettymux.exe dist\
+          copy src\qt\welcome.html dist\
+          copy src\qt\prettymux-shell-integration.sh dist\
+          if exist ghostty\zig-out\lib\ghostty.dll copy ghostty\zig-out\lib\ghostty.dll dist\
+          windeployqt --release dist\prettymux.exe
+          powershell Compress-Archive -Path dist\* -DestinationPath prettymux-windows-x64.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: prettymux-windows-x64
+          path: prettymux-windows-x64.zip
+
+  # ---------------------------------------------------------------------------
+  # macOS ARM64 (Apple Silicon)
+  # ---------------------------------------------------------------------------
+  build-macos:
+    runs-on: macos-14
+    steps:
+      - name: Checkout prettymux
+        uses: actions/checkout@v4
+
+      - name: Checkout ghostty fork
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.GHOSTTY_REPO }}
+          ref: ${{ env.GHOSTTY_BRANCH }}
+          path: ghostty
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Install Qt6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.6.0'
+          modules: 'qtwebengine'
+
+      - name: Build ghostty
+        run: |
+          cd ghostty
+          zig build -Dapp-runtime=none -Doptimize=ReleaseFast
+
+      - name: Build prettymux
+        run: |
+          cd src/qt
+          mkdir -p build && cd build
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGHOSTTY_DIR=${{ github.workspace }}/ghostty
+          make -j$(sysctl -n hw.ncpu)
+
+      - name: Create .app bundle and .dmg
+        run: |
+          APP_DIR="PrettyMux.app/Contents"
+          mkdir -p "$APP_DIR/MacOS" "$APP_DIR/Resources"
+
+          cp src/qt/build/prettymux "$APP_DIR/MacOS/PrettyMux"
+          cp src/qt/welcome.html "$APP_DIR/Resources/"
+          cp src/qt/prettymux-shell-integration.sh "$APP_DIR/Resources/"
+          cp ghostty/zig-out/lib/libghostty.dylib "$APP_DIR/MacOS/" || true
+
+          cat > "$APP_DIR/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key><string>PrettyMux</string>
+            <key>CFBundleIdentifier</key><string>dev.prettymux.app</string>
+            <key>CFBundleName</key><string>PrettyMux</string>
+            <key>CFBundleVersion</key><string>0.1.0</string>
+            <key>CFBundleShortVersionString</key><string>0.1.0</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          PLIST
+
+          macdeployqt PrettyMux.app
+
+          hdiutil create -volname PrettyMux -srcfolder PrettyMux.app \
+            -ov -format UDZO PrettyMux-arm64.dmg
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: prettymux-macos-arm64
+          path: PrettyMux-arm64.dmg
+
+  # ---------------------------------------------------------------------------
+  # macOS Intel (x86_64)
+  # ---------------------------------------------------------------------------
+  build-macos-intel:
+    runs-on: macos-13
+    steps:
+      - name: Checkout prettymux
+        uses: actions/checkout@v4
+
+      - name: Checkout ghostty fork
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.GHOSTTY_REPO }}
+          ref: ${{ env.GHOSTTY_BRANCH }}
+          path: ghostty
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Install Qt6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.6.0'
+          modules: 'qtwebengine'
+
+      - name: Build ghostty
+        run: |
+          cd ghostty
+          zig build -Dapp-runtime=none -Doptimize=ReleaseFast
+
+      - name: Build prettymux
+        run: |
+          cd src/qt
+          mkdir -p build && cd build
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGHOSTTY_DIR=${{ github.workspace }}/ghostty
+          make -j$(sysctl -n hw.ncpu)
+
+      - name: Create .app bundle and .dmg
+        run: |
+          APP_DIR="PrettyMux.app/Contents"
+          mkdir -p "$APP_DIR/MacOS" "$APP_DIR/Resources"
+
+          cp src/qt/build/prettymux "$APP_DIR/MacOS/PrettyMux"
+          cp src/qt/welcome.html "$APP_DIR/Resources/"
+          cp src/qt/prettymux-shell-integration.sh "$APP_DIR/Resources/"
+          cp ghostty/zig-out/lib/libghostty.dylib "$APP_DIR/MacOS/" || true
+
+          cat > "$APP_DIR/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key><string>PrettyMux</string>
+            <key>CFBundleIdentifier</key><string>dev.prettymux.app</string>
+            <key>CFBundleName</key><string>PrettyMux</string>
+            <key>CFBundleVersion</key><string>0.1.0</string>
+            <key>CFBundleShortVersionString</key><string>0.1.0</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          PLIST
+
+          macdeployqt PrettyMux.app
+
+          hdiutil create -volname PrettyMux -srcfolder PrettyMux.app \
+            -ov -format UDZO PrettyMux-x64.dmg
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: prettymux-macos-x64
+          path: PrettyMux-x64.dmg
+
+  # ---------------------------------------------------------------------------
+  # Release (runs on version tags only)
+  # ---------------------------------------------------------------------------
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - build-linux-ubuntu-lts
+      - build-linux-ubuntu-current
+      - build-linux-fedora
+      - build-linux-deb
+      - build-snap
+      - build-flatpak
+      - build-archlinux
+      - publish-ppa
+      - build-appimage
+      - build-windows
+      - build-macos
+      - build-macos-intel
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout (for git log)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PREV_TAG=$(git tag --sort=-v:refname | grep '^v' | sed -n '2p' || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            CHANGELOG=$(git log --pretty=format:"- %s (%h)" "$PREV_TAG"..HEAD)
+          else
+            CHANGELOG=$(git log --pretty=format:"- %s (%h)" -20)
+          fi
+          # Write to file for the release body
+          echo "$CHANGELOG" > changelog.txt
+          echo "Generated changelog with $(echo "$CHANGELOG" | wc -l) entries"
+
+      - name: Gather release assets
+        run: |
+          mkdir -p release-assets
+
+          # Ubuntu tarballs
+          cp artifacts/prettymux-ubuntu-22.04-amd64/*.tar.gz release-assets/ || true
+          cp artifacts/prettymux-ubuntu-24.04-amd64/*.tar.gz release-assets/ || true
+
+          # Fedora RPM
+          cp artifacts/prettymux-fedora-rpm/*.rpm release-assets/ || true
+
+          # Debian .deb
+          cp artifacts/prettymux-deb/*.deb release-assets/ || true
+
+          # Snap
+          cp artifacts/prettymux-snap/*.snap release-assets/ || true
+
+          # Flatpak
+          cp artifacts/prettymux-flatpak/*.flatpak release-assets/ || true
+
+          # Arch Linux
+          cp artifacts/prettymux-archlinux/*.pkg.tar.zst release-assets/ || true
+          # Package the PKGBUILD for AUR users
+          if [ -d artifacts/prettymux-pkgbuild ]; then
+            tar czf release-assets/prettymux-archlinux-PKGBUILD.tar.gz -C artifacts/prettymux-pkgbuild .
+          fi
+
+          # AppImage
+          cp artifacts/prettymux-appimage/*.AppImage release-assets/ || true
+
+          # Windows
+          cp artifacts/prettymux-windows-x64/*.zip release-assets/ || true
+
+          # macOS
+          cp artifacts/prettymux-macos-arm64/*.dmg release-assets/ || true
+          cp artifacts/prettymux-macos-x64/*.dmg release-assets/ || true
+
+          echo "Release assets:"
+          ls -lh release-assets/
+
+      - name: Detect pre-release
+        id: prerelease
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if echo "$TAG" | grep -qiE '(alpha|beta|rc)'; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: PrettyMux ${{ github.ref_name }}
+          body_path: changelog.txt
+          prerelease: ${{ steps.prerelease.outputs.is_prerelease }}
+          files: release-assets/*
+          fail_on_unmatched_files: false

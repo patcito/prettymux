@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=PrettyMux
+Comment=GPU-accelerated terminal multiplexer
+Exec=prettymux
+Icon=utilities-terminal
+Type=Application
+Categories=System;TerminalEmulator;
+Keywords=terminal;multiplexer;gpu;
+StartupNotify=true

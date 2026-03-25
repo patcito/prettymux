@@ -275,10 +275,22 @@ protected:
         if (!g_app) return;
 
         ghostty_surface_config_s config = ghostty_surface_config_new();
+#if defined(__linux__)
         config.platform_tag = GHOSTTY_PLATFORM_LINUX;
         config.platform.gtk.gtk_widget = (void*)this;
+#elif defined(__APPLE__)
+        config.platform_tag = GHOSTTY_PLATFORM_MACOS;
+        config.platform.macos.ns_view = (void*)this;
+#elif defined(_WIN32)
+        config.platform_tag = GHOSTTY_PLATFORM_WINDOWS;
+        config.platform.windows.hwnd = (void*)this;
+#endif
         config.scale_factor = devicePixelRatioF();
+#ifdef _WIN32
+        config.working_directory = m_startCwd.isEmpty() ? getenv("USERPROFILE") : m_startCwd.constData();
+#else
         config.working_directory = m_startCwd.isEmpty() ? getenv("HOME") : m_startCwd.constData();
+#endif
 
         // Pass env vars so child shells get prettymux integration silently
         static ghostty_env_var_s env_vars[3];
@@ -1338,8 +1350,24 @@ public:
         // Set env vars for shell integration
         qputenv("PRETTYMUX_SOCKET", socketPath.toUtf8());
         qputenv("PRETTYMUX", "1");
+#if defined(__linux__) || defined(__APPLE__)
         // BASH_ENV auto-sources our shell integration in every bash instance
-        qputenv("BASH_ENV", "/home/pe/newnewrepos/w/yo/prettymux/src/qt/prettymux-shell-integration.sh");
+        // Resolve path relative to the executable so it works in installed deployments
+        {
+            QString shellInteg = QCoreApplication::applicationDirPath() + "/prettymux-shell-integration.sh";
+            // On macOS .app bundles, the script lives in Resources/
+            if (!QFile::exists(shellInteg)) {
+                shellInteg = QCoreApplication::applicationDirPath() + "/../Resources/prettymux-shell-integration.sh";
+            }
+            // Fallback: check next to the source (development builds)
+            if (!QFile::exists(shellInteg)) {
+                shellInteg = QStringLiteral(__FILE__).section('/', 0, -2) + "/prettymux-shell-integration.sh";
+            }
+            if (QFile::exists(shellInteg)) {
+                qputenv("BASH_ENV", shellInteg.toUtf8());
+            }
+        }
+#endif
 
         // Try to restore previous session, or create fresh workspace
         QFile sessionFile(sessionPath());
@@ -1355,7 +1383,9 @@ public:
         connect(autoSaveTimer, &QTimer::timeout, this, &PrettyMuxWindow::saveSession);
         autoSaveTimer->start(30000);
 
+#ifdef __linux__
         // Port scanner (disable with PRETTYMUX_PORT_SCAN=0)
+        // Uses /proc/net/tcp which is Linux-specific
         QByteArray portScanEnv = qgetenv("PRETTYMUX_PORT_SCAN");
         portScanEnabled = (portScanEnv != "0");
         if (portScanEnabled) {
@@ -1363,6 +1393,7 @@ public:
             connect(portScanTimer, &QTimer::timeout, this, &PrettyMuxWindow::scanPorts);
             portScanTimer->start(5000);
         }
+#endif
     }
 
     void connectPane(PaneWidget* pane) {
@@ -2565,6 +2596,7 @@ public slots:
         }
 
         // Desktop notification for background tabs or inactive workspaces
+#ifdef __linux__
         QString t = title.isEmpty() ? "prettymux" : title;
 
         QProcess* proc = new QProcess(this);
@@ -2601,6 +2633,7 @@ public slots:
         });
 
         proc->start();
+#endif // __linux__ (notify-send)
     }
 
     Q_INVOKABLE void showBellFor(quint64 surfacePtr) {
@@ -2619,7 +2652,9 @@ public slots:
                 item->setForeground(QColor("#cdd6f4"));
             });
         }
+#ifdef __linux__
         QProcess::startDetached("notify-send", {"prettymux", "Bell", "--app-name=prettymux"});
+#endif
     }
 
     void toggleBrowser(bool show) {
@@ -2762,7 +2797,8 @@ public slots:
         refreshSidebarItem(activeWorkspace);
     }
 
-    // ── Port scanner ──
+    // ── Port scanner (Linux only — reads /proc/net/tcp) ──
+#ifdef __linux__
     void scanPorts() {
         QStringList ports;
         for (const QString& path : {QString("/proc/net/tcp"), QString("/proc/net/tcp6")}) {
@@ -2860,6 +2896,7 @@ public slots:
             }
         }
     }
+#endif // __linux__ (scanPorts)
 
     // ── Quick Notes toggle ──
     void toggleNotes() {
@@ -3839,13 +3876,16 @@ static bool action_cb(ghostty_app_t, ghostty_target_s target, ghostty_action_s a
 // ── Main ──
 
 int main(int argc, char* argv[]) {
+#ifdef __linux__
     // Force X11/XCB to get native window decorations on GNOME/Wayland
     if (!qEnvironmentVariableIsSet("QT_QPA_PLATFORM"))
         qputenv("QT_QPA_PLATFORM", "xcb");
+#endif
 
     // Pick up GNOME/GTK text scaling and font settings
     QApplication::setHighDpiScaleFactorRoundingPolicy(Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
 
+#ifdef __linux__
     // Read GNOME text-scaling-factor if QT_SCALE_FACTOR not already set
     if (!qEnvironmentVariableIsSet("QT_SCALE_FACTOR")) {
         FILE* fp = popen("gsettings get org.gnome.desktop.interface text-scaling-factor 2>/dev/null", "r");
@@ -3862,9 +3902,11 @@ int main(int argc, char* argv[]) {
             pclose(fp);
         }
     }
+#endif
 
     QApplication app(argc, argv);
 
+#ifdef __linux__
     // Read GNOME system font
     {
         FILE* fp = popen("gsettings get org.gnome.desktop.interface font-name 2>/dev/null", "r");
@@ -3887,6 +3929,7 @@ int main(int argc, char* argv[]) {
             pclose(fp);
         }
     }
+#endif
 
     // Load saved theme or detect system preference
     {
@@ -3898,6 +3941,7 @@ int main(int argc, char* argv[]) {
                 if (kThemes[i].name == name) { g_currentTheme = i; break; }
             }
         } else {
+#ifdef __linux__
             // Detect system preference via gsettings
             FILE* fp2 = popen("gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null", "r");
             if (fp2) {
@@ -3909,6 +3953,7 @@ int main(int argc, char* argv[]) {
                 }
                 pclose(fp2);
             }
+#endif
         }
     }
 

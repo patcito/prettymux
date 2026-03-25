@@ -1,0 +1,50 @@
+name: prettymux
+arch: amd64
+platform: linux
+version: ${VERSION:-0.1.0}
+maintainer: patcito
+description: GPU-accelerated terminal multiplexer
+homepage: https://github.com/patcito/prettymux
+license: GPL-3.0-only
+
+overrides:
+  deb:
+    depends:
+      - libqt6webenginewidgets6
+      - libqt6openglwidgets6
+      - libgl1
+  rpm:
+    depends:
+      - qt6-qtwebengine
+      - qt6-qtbase-gui
+      - mesa-libGL
+
+contents:
+  - src: dist/prettymux
+    dst: /usr/bin/prettymux
+    file_info:
+      mode: 0755
+
+  - src: dist/libghostty.so
+    dst: /usr/lib/prettymux/libghostty.so
+    file_info:
+      mode: 0644
+
+  - src: dist/welcome.html
+    dst: /usr/share/prettymux/welcome.html
+    file_info:
+      mode: 0644
+
+  - src: dist/prettymux-shell-integration.sh
+    dst: /usr/share/prettymux/shell-integration.sh
+    file_info:
+      mode: 0644
+
+  - src: packaging/prettymux.desktop
+    dst: /usr/share/applications/prettymux.desktop
+    file_info:
+      mode: 0644
+  - src: LICENSE
+    dst: /usr/share/licenses/prettymux/LICENSE
+    file_info:
+      mode: 0644
