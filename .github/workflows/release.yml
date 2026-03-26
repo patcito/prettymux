@@ -2,8 +2,13 @@ name: CI + Packaging + Release
 
 on:
   push:
-    branches: [main]
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      jobs:
+        description: 'Jobs to run (comma-separated: ubuntu,fedora,deb,arch,snap,flatpak,appimage,windows,macos,ppa — or "all")'
+        required: true
+        type: string
 
 env:
   GHOSTTY_REPO: patcito/ghostty
@@ -16,6 +21,7 @@ jobs:
   # Download prebuilt libghostty (shared by all Linux jobs)
   # ---------------------------------------------------------------------------
   fetch-libghostty:
+    if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'ubuntu') || contains(inputs.jobs, 'fedora') || contains(inputs.jobs, 'deb') || contains(inputs.jobs, 'arch') || contains(inputs.jobs, 'appimage') || contains(inputs.jobs, 'linux')
     runs-on: ubuntu-latest
     steps:
       - name: Download prebuilt libghostty
@@ -46,6 +52,7 @@ jobs:
   # Ubuntu 24.04 LTS
   # ---------------------------------------------------------------------------
   build-linux-ubuntu-lts:
+    if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'ubuntu') || contains(inputs.jobs, 'linux')
     needs: fetch-libghostty
     runs-on: ubuntu-24.04
     steps:
@@ -91,6 +98,7 @@ jobs:
   # Fedora (RPM)
   # ---------------------------------------------------------------------------
   build-linux-fedora:
+    if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'fedora') || contains(inputs.jobs, 'linux')
     needs: fetch-libghostty
     runs-on: ubuntu-latest
     container: fedora:latest
@@ -152,6 +160,7 @@ jobs:
   # Debian package (.deb)
   # ---------------------------------------------------------------------------
   build-linux-deb:
+    if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'deb') || contains(inputs.jobs, 'linux')
     needs: fetch-libghostty
     runs-on: ubuntu-24.04
     steps:
@@ -208,6 +217,7 @@ jobs:
   # Snap
   # ---------------------------------------------------------------------------
   build-snap:
+    if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'snap') || contains(inputs.jobs, 'linux')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout prettymux
@@ -244,6 +254,7 @@ jobs:
   # Flatpak
   # ---------------------------------------------------------------------------
   build-flatpak:
+    if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'flatpak') || contains(inputs.jobs, 'linux')
     runs-on: ubuntu-latest
     container:
       image: biber/flathub-builder:latest
@@ -276,6 +287,7 @@ jobs:
   # Arch Linux
   # ---------------------------------------------------------------------------
   build-archlinux:
+    if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'arch') || contains(inputs.jobs, 'linux')
     needs: fetch-libghostty
     runs-on: ubuntu-latest
     container: archlinux:latest
@@ -368,7 +380,7 @@ jobs:
   # Publish to PPA (Ubuntu)
   # ---------------------------------------------------------------------------
   publish-ppa:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'ppa'))
     runs-on: ubuntu-latest
     steps:
       - name: Checkout prettymux
@@ -406,6 +418,7 @@ jobs:
   # AppImage
   # ---------------------------------------------------------------------------
   build-appimage:
+    if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'appimage') || contains(inputs.jobs, 'linux')
     needs: fetch-libghostty
     runs-on: ubuntu-24.04
     steps:
@@ -457,6 +470,7 @@ jobs:
   # Windows (x64)
   # ---------------------------------------------------------------------------
   build-windows:
+    if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'windows')
     runs-on: windows-latest
     steps:
       - name: Checkout prettymux
@@ -518,6 +532,7 @@ jobs:
   # macOS ARM64 (Apple Silicon)
   # ---------------------------------------------------------------------------
   build-macos:
+    if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'macos')
     runs-on: macos-14
     steps:
       - name: Checkout prettymux
@@ -603,6 +618,7 @@ jobs:
   # macOS Intel (x86_64)
   # ---------------------------------------------------------------------------
   build-macos-intel:
+    if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'macos')
     runs-on: macos-13
     steps:
       - name: Checkout prettymux
