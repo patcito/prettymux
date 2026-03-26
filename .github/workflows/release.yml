@@ -8,7 +8,7 @@ on:
 env:
   GHOSTTY_REPO: patcito/ghostty
   GHOSTTY_BRANCH: linux-embedded-platform
-  ZIG_VERSION: '0.13.0'
+  ZIG_VERSION: '0.15.2'
 
 jobs:
   # ---------------------------------------------------------------------------
