@@ -8,94 +8,60 @@ on:
 env:
   GHOSTTY_REPO: patcito/ghostty
   GHOSTTY_BRANCH: linux-embedded-platform
+  GHOSTTY_RELEASE: linux-embedded-v0.1.0
   ZIG_VERSION: '0.15.2'
 
 jobs:
   # ---------------------------------------------------------------------------
+  # Download prebuilt libghostty (shared by all Linux jobs)
+  # ---------------------------------------------------------------------------
+  fetch-libghostty:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download prebuilt libghostty
+        run: |
+          gh release download ${{ env.GHOSTTY_RELEASE }} \
+            --repo ${{ env.GHOSTTY_REPO }} \
+            --pattern 'ghostty-linux-x86_64.tar.gz' \
+            --pattern 'ghostty-glad.tar.gz'
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Reconstruct ghostty directory layout
+        run: |
+          mkdir -p ghostty/zig-out ghostty/vendor
+          tar xzf ghostty-linux-x86_64.tar.gz -C ghostty/
+          mv ghostty/lib ghostty/zig-out/lib
+          tar xzf ghostty-glad.tar.gz -C ghostty/vendor/
+          echo "Layout:"
+          find ghostty -type f | head -20
+
+      - name: Upload ghostty tree
+        uses: actions/upload-artifact@v4
+        with:
+          name: ghostty-prebuilt
+          path: ghostty/
+
+  # ---------------------------------------------------------------------------
   # Ubuntu 24.04 LTS
   # ---------------------------------------------------------------------------
   build-linux-ubuntu-lts:
+    needs: fetch-libghostty
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout prettymux
         uses: actions/checkout@v4
 
-      - name: Checkout ghostty fork
-        uses: actions/checkout@v4
+      - name: Download prebuilt ghostty
+        uses: actions/download-artifact@v4
         with:
-          repository: ${{ env.GHOSTTY_REPO }}
-          ref: ${{ env.GHOSTTY_BRANCH }}
+          name: ghostty-prebuilt
           path: ghostty
 
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y qt6-base-dev qt6-webengine-dev libgl-dev cmake
-
-      - name: Install Zig
-        uses: mlugg/setup-zig@v2
-        with:
-          version: ${{ env.ZIG_VERSION }}
-
-      - name: Build ghostty
-        run: |
-          cd ghostty
-          zig build -Dapp-runtime=none -Doptimize=ReleaseFast
-
-      - name: Build prettymux
-        run: |
-          cd src/qt
-          mkdir -p build && cd build
-          cmake .. \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DGHOSTTY_DIR=${{ github.workspace }}/ghostty
-          make -j$(nproc)
-
-      - name: Package artifacts
-        run: |
-          mkdir -p dist
-          cp src/qt/build/prettymux dist/
-          cp src/qt/welcome.html dist/
-          cp src/qt/prettymux-shell-integration.sh dist/
-          cp ghostty/zig-out/lib/libghostty.so dist/ || true
-          tar czf prettymux-ubuntu-24.04-amd64.tar.gz -C dist .
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: prettymux-ubuntu-24.04-amd64
-          path: prettymux-ubuntu-24.04-amd64.tar.gz
-
-  # ---------------------------------------------------------------------------
-  # Ubuntu 24.04 (latest)
-  # ---------------------------------------------------------------------------
-  build-linux-ubuntu-current:
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout prettymux
-        uses: actions/checkout@v4
-
-      - name: Checkout ghostty fork
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ env.GHOSTTY_REPO }}
-          ref: ${{ env.GHOSTTY_BRANCH }}
-          path: ghostty
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y qt6-base-dev qt6-webengine-dev libgl-dev cmake
-
-      - name: Install Zig
-        uses: mlugg/setup-zig@v2
-        with:
-          version: ${{ env.ZIG_VERSION }}
-
-      - name: Build ghostty
-        run: |
-          cd ghostty
-          zig build -Dapp-runtime=none -Doptimize=ReleaseFast
 
       - name: Build prettymux
         run: |
@@ -125,38 +91,27 @@ jobs:
   # Fedora (RPM)
   # ---------------------------------------------------------------------------
   build-linux-fedora:
+    needs: fetch-libghostty
     runs-on: ubuntu-latest
     container: fedora:latest
     steps:
       - name: Install base tools
-        run: dnf install -y git which
+        run: dnf install -y git which tar
 
       - name: Checkout prettymux
         uses: actions/checkout@v4
 
-      - name: Checkout ghostty fork
-        uses: actions/checkout@v4
+      - name: Download prebuilt ghostty
+        uses: actions/download-artifact@v4
         with:
-          repository: ${{ env.GHOSTTY_REPO }}
-          ref: ${{ env.GHOSTTY_BRANCH }}
+          name: ghostty-prebuilt
           path: ghostty
 
       - name: Install dependencies
         run: |
           dnf install -y \
             qt6-qtbase-devel qt6-qtwebengine-devel mesa-libGL-devel \
-            cmake gcc-c++ xz tar
-
-      - name: Install Zig
-        run: |
-          curl -L https://ziglang.org/download/${{ env.ZIG_VERSION }}/zig-linux-x86_64-${{ env.ZIG_VERSION }}.tar.xz | tar -xJ
-          mv zig-linux-x86_64-${{ env.ZIG_VERSION }} /opt/zig
-          echo "/opt/zig" >> $GITHUB_PATH
-
-      - name: Build ghostty
-        run: |
-          cd ghostty
-          /opt/zig/zig build -Dapp-runtime=none -Doptimize=ReleaseFast
+            cmake gcc-c++
 
       - name: Build prettymux
         run: |
@@ -197,32 +152,22 @@ jobs:
   # Debian package (.deb)
   # ---------------------------------------------------------------------------
   build-linux-deb:
+    needs: fetch-libghostty
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout prettymux
         uses: actions/checkout@v4
 
-      - name: Checkout ghostty fork
-        uses: actions/checkout@v4
+      - name: Download prebuilt ghostty
+        uses: actions/download-artifact@v4
         with:
-          repository: ${{ env.GHOSTTY_REPO }}
-          ref: ${{ env.GHOSTTY_BRANCH }}
+          name: ghostty-prebuilt
           path: ghostty
 
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y qt6-base-dev qt6-webengine-dev libgl-dev cmake
-
-      - name: Install Zig
-        uses: mlugg/setup-zig@v2
-        with:
-          version: ${{ env.ZIG_VERSION }}
-
-      - name: Build ghostty
-        run: |
-          cd ghostty
-          zig build -Dapp-runtime=none -Doptimize=ReleaseFast
 
       - name: Build prettymux
         run: |
@@ -278,7 +223,7 @@ jobs:
       - name: Build snap
         uses: snapcore/action-build@v1
         id: snapcraft
-        # snapcraft.yaml installs deps, builds ghostty from ./ghostty, builds prettymux
+        # snapcraft.yaml handles full build inside the snap environment
 
       - name: Upload snap
         uses: actions/upload-artifact@v4
@@ -320,7 +265,6 @@ jobs:
           manifest-path: packaging/dev.prettymux.app.yml
           bundle: prettymux.flatpak
           cache-key: flatpak-builder-${{ github.sha }}
-        # Manifest installs zig, builds ghostty from ../ghostty, builds prettymux
 
       - name: Upload Flatpak bundle
         uses: actions/upload-artifact@v4
@@ -332,6 +276,7 @@ jobs:
   # Arch Linux
   # ---------------------------------------------------------------------------
   build-archlinux:
+    needs: fetch-libghostty
     runs-on: ubuntu-latest
     container: archlinux:latest
     steps:
@@ -341,25 +286,14 @@ jobs:
       - name: Checkout prettymux
         uses: actions/checkout@v4
 
-      - name: Checkout ghostty fork
-        uses: actions/checkout@v4
+      - name: Download prebuilt ghostty
+        uses: actions/download-artifact@v4
         with:
-          repository: ${{ env.GHOSTTY_REPO }}
-          ref: ${{ env.GHOSTTY_BRANCH }}
+          name: ghostty-prebuilt
           path: ghostty
 
       - name: Install dependencies
-        run: pacman -S --noconfirm qt6-base qt6-webengine mesa cmake gcc xz
-
-      - name: Install Zig
-        run: |
-          curl -L https://ziglang.org/download/${{ env.ZIG_VERSION }}/zig-linux-x86_64-${{ env.ZIG_VERSION }}.tar.xz | tar -xJ -C /opt
-          ln -s /opt/zig-linux-x86_64-${{ env.ZIG_VERSION }}/zig /usr/local/bin/zig
-
-      - name: Build ghostty
-        run: |
-          cd ghostty
-          zig build -Dapp-runtime=none -Doptimize=ReleaseFast
+        run: pacman -S --noconfirm qt6-base qt6-webengine mesa cmake gcc
 
       - name: Build prettymux
         run: |
@@ -472,32 +406,22 @@ jobs:
   # AppImage
   # ---------------------------------------------------------------------------
   build-appimage:
+    needs: fetch-libghostty
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout prettymux
         uses: actions/checkout@v4
 
-      - name: Checkout ghostty fork
-        uses: actions/checkout@v4
+      - name: Download prebuilt ghostty
+        uses: actions/download-artifact@v4
         with:
-          repository: ${{ env.GHOSTTY_REPO }}
-          ref: ${{ env.GHOSTTY_BRANCH }}
+          name: ghostty-prebuilt
           path: ghostty
 
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y qt6-base-dev qt6-webengine-dev libgl-dev cmake
-
-      - name: Install Zig
-        uses: mlugg/setup-zig@v2
-        with:
-          version: ${{ env.ZIG_VERSION }}
-
-      - name: Build ghostty
-        run: |
-          cd ghostty
-          zig build -Dapp-runtime=none -Doptimize=ReleaseFast
 
       - name: Build prettymux
         run: |
@@ -559,8 +483,6 @@ jobs:
 
       - name: Build ghostty (best-effort)
         # NOTE: Ghostty Windows support via embedded platform is experimental.
-        # This step may fail — the workflow continues regardless so we can
-        # still produce the prettymux binary for testing.
         continue-on-error: true
         run: |
           cd ghostty
@@ -619,7 +541,14 @@ jobs:
           version: '6.8.0'
           modules: 'qtwebengine'
 
+      - name: Cache ghostty build
+        uses: actions/cache@v4
+        id: ghostty-cache
+        with:
+          path: ghostty/zig-out
+          key: ghostty-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ghostty/.git/HEAD') }}
       - name: Build ghostty
+        if: steps.ghostty-cache.outputs.cache-hit != 'true'
         run: |
           cd ghostty
           zig build -Dapp-runtime=none -Doptimize=ReleaseFast
@@ -697,7 +626,14 @@ jobs:
           version: '6.8.0'
           modules: 'qtwebengine'
 
+      - name: Cache ghostty build
+        uses: actions/cache@v4
+        id: ghostty-cache
+        with:
+          path: ghostty/zig-out
+          key: ghostty-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ghostty/.git/HEAD') }}
       - name: Build ghostty
+        if: steps.ghostty-cache.outputs.cache-hit != 'true'
         run: |
           cd ghostty
           zig build -Dapp-runtime=none -Doptimize=ReleaseFast
@@ -755,7 +691,6 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs:
       - build-linux-ubuntu-lts
-      - build-linux-ubuntu-current
       - build-linux-fedora
       - build-linux-deb
       - build-snap
@@ -789,7 +724,6 @@ jobs:
           else
             CHANGELOG=$(git log --pretty=format:"- %s (%h)" -20)
           fi
-          # Write to file for the release body
           echo "$CHANGELOG" > changelog.txt
           echo "Generated changelog with $(echo "$CHANGELOG" | wc -l) entries"
 
@@ -798,7 +732,6 @@ jobs:
           mkdir -p release-assets
 
           # Ubuntu tarballs
-          cp artifacts/prettymux-ubuntu-24.04-amd64/*.tar.gz release-assets/ || true
           cp artifacts/prettymux-ubuntu-24.04-amd64/*.tar.gz release-assets/ || true
 
           # Fedora RPM
@@ -815,7 +748,6 @@ jobs:
 
           # Arch Linux
           cp artifacts/prettymux-archlinux/*.pkg.tar.zst release-assets/ || true
-          # Package the PKGBUILD for AUR users
           if [ -d artifacts/prettymux-pkgbuild ]; then
             tar czf release-assets/prettymux-archlinux-PKGBUILD.tar.gz -C artifacts/prettymux-pkgbuild .
           fi

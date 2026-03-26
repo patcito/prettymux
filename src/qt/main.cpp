@@ -50,6 +50,8 @@
 #include <QDropEvent>
 #include <QDragEnterEvent>
 #include <QScrollArea>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -1310,7 +1312,7 @@ public:
         });
 
         // Welcome tab
-        addBrowserTab("file:///home/pe/newnewrepos/w/yo/prettymux/src/qt/welcome.html");
+        addBrowserTab("https://prettymux-web.vercel.app/?prettymux=t");
 
         mainSplitter->addWidget(browserTabs);
 
@@ -1382,6 +1384,65 @@ public:
         auto* autoSaveTimer = new QTimer(this);
         connect(autoSaveTimer, &QTimer::timeout, this, &PrettyMuxWindow::saveSession);
         autoSaveTimer->start(30000);
+
+        // First-run welcome dialog
+        {
+            QString flagFile = QDir::homePath() + "/.config/prettymux/.welcome-shown";
+            if (!QFile::exists(flagFile)) {
+                QDir().mkpath(QDir::homePath() + "/.config/prettymux");
+                QTimer::singleShot(500, this, [this, flagFile]() {
+                    auto* dlg = new QDialog(this);
+                    dlg->setWindowTitle("Welcome to prettymux");
+                    dlg->setFixedSize(420, 280);
+                    dlg->setStyleSheet(QString(
+                        "QDialog { background: %1; color: %2; }"
+                        "QLabel { color: %2; }"
+                        "QPushButton { background: #cba6f7; color: #1e1e2e; border: none; border-radius: 6px; padding: 8px 20px; font-weight: bold; }"
+                        "QPushButton:hover { background: #b4befe; }"
+                    ).arg(currentTheme().bg, currentTheme().fg));
+
+                    auto* layout = new QVBoxLayout(dlg);
+                    layout->setSpacing(16);
+                    layout->setContentsMargins(32, 28, 32, 24);
+
+                    auto* title = new QLabel("<h2 style='margin:0'>Welcome to <span style=\"color:#cba6f7\">prettymux</span></h2>");
+                    title->setAlignment(Qt::AlignCenter);
+                    layout->addWidget(title);
+
+                    auto* desc = new QLabel(
+                        "GPU-accelerated terminal multiplexer with\n"
+                        "ghostty + Chromium in one window.\n\n"
+                        "Press <b>Ctrl+Shift+K</b> to see all shortcuts.\n"
+                        "Visit the website for docs and updates:"
+                    );
+                    desc->setWordWrap(true);
+                    desc->setAlignment(Qt::AlignCenter);
+                    layout->addWidget(desc);
+
+                    auto* link = new QLabel("<a href='https://prettymux-web.vercel.app' style='color:#cba6f7;font-size:13px'>prettymux-web.vercel.app</a>");
+                    link->setOpenExternalLinks(false);
+                    link->setAlignment(Qt::AlignCenter);
+                    connect(link, &QLabel::linkActivated, this, [this](const QString& url) {
+                        addBrowserTab(url);
+                    });
+                    layout->addWidget(link);
+
+                    layout->addStretch();
+
+                    auto* btn = new QPushButton("Get Started");
+                    btn->setCursor(Qt::PointingHandCursor);
+                    connect(btn, &QPushButton::clicked, dlg, &QDialog::accept);
+                    layout->addWidget(btn, 0, Qt::AlignCenter);
+
+                    dlg->exec();
+                    dlg->deleteLater();
+
+                    // Mark as shown
+                    QFile f(flagFile);
+                    if (f.open(QIODevice::WriteOnly)) { f.write("1"); f.close(); }
+                });
+            }
+        }
 
 #ifdef __linux__
         // Port scanner (disable with PRETTYMUX_PORT_SCAN=0)
@@ -3524,7 +3585,7 @@ public slots:
             addBrowserTab(tab["url"].toString());
         }
         if (browserTabs->count() == 0)
-            addBrowserTab("file:///home/pe/newnewrepos/w/yo/prettymux/src/qt/welcome.html");
+            addBrowserTab("https://prettymux-web.vercel.app/?prettymux=t");
 
         // Restore workspaces
         QJsonArray wsArr = root["workspaces"].toArray();
@@ -3655,7 +3716,7 @@ protected:
                 }
                 if (action == "pane.tab.new") { addTabInFocusedPane(); return; }
                 if (action == "browser.toggle") { browserTabs->setVisible(!browserTabs->isVisible()); return; }
-                if (action == "browser.new") { addBrowserTab("file:///home/pe/newnewrepos/w/yo/prettymux/src/qt/welcome.html"); return; }
+                if (action == "browser.new") { addBrowserTab("https://prettymux-web.vercel.app/?prettymux=t"); return; }
                 if (action == "devtools.docked") { openDevTools(false); return; }
                 if (action == "devtools.window") { openDevTools(true); return; }
                 if (action == "shortcuts.show") { showShortcutOverlay(); return; }
@@ -3724,7 +3785,7 @@ protected:
                     return;
                 }
                 if (event->key() == Qt::Key_T) {
-                    addBrowserTab("file:///home/pe/newnewrepos/w/yo/prettymux/src/qt/welcome.html");
+                    addBrowserTab("https://prettymux-web.vercel.app/?prettymux=t");
                     return;
                 }
             }
