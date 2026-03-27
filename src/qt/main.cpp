@@ -51,6 +51,7 @@
 #include <QDragEnterEvent>
 #include <QScrollArea>
 #include <QDialog>
+#include <QCheckBox>
 #include <QDialogButtonBox>
 #include <cstdio>
 #include <cstring>
@@ -108,6 +109,7 @@ public:
             {"devtools.window", QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_J), "Inspector window"},
             {"shortcuts.show", QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_K), "Shortcuts overlay"},
             {"search.show", QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S), "Search palette"},
+            {"pane.close", QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_X), "Close pane"},
             {"pane.zoom", QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Z), "Zoom pane"},
             {"terminal.search", QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F), "Terminal search"},
             {"broadcast.toggle", QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Return), "Broadcast mode"},
@@ -544,10 +546,12 @@ public:
     PaneWidget* paneWidget;
     int dragTabIndex = -1;
     QPoint dragStartPos;
+    bool dragging = false;
 
     TabDragFilter(PaneWidget* pw);
     bool eventFilter(QObject* obj, QEvent* event) override;
     void startCrossPaneDrag(QTabBar* tabBar);
+    void startPaneDrag(QTabBar* tabBar);
 };
 
 // ── PaneWidget: a single pane with tab bar, each tab is one ghostty terminal ──
@@ -817,7 +821,6 @@ protected:
         PaneWidget* source = reinterpret_cast<PaneWidget*>(sourcePtr);
         if (!source || source == this) return;
         if (tabIdx < 0 || tabIdx >= (int)source->terminals.size()) return;
-        if (source->terminals.size() <= 1) return; // don't remove last tab
 
         GhosttyWidget* term = source->terminals[tabIdx];
         QString tabName = source->tabs->tabText(tabIdx);
@@ -831,10 +834,15 @@ protected:
         term->setFocus();
 
         event->acceptProposedAction();
+
+        // If source pane is now empty, request its removal
+        if (source->terminals.empty())
+            emit source->paneEmpty(source);
     }
 
 signals:
     void splitRequested(PaneWidget* source, Qt::Orientation orientation);
+    void paneEmpty(PaneWidget* source);
 };
 
 // ── TabDragFilter implementation ──
@@ -850,20 +858,33 @@ bool TabDragFilter::eventFilter(QObject* obj, QEvent* event) {
         if (me->button() == Qt::LeftButton) {
             dragTabIndex = tabBar->tabAt(me->position().toPoint());
             dragStartPos = me->position().toPoint();
+            dragging = true;
         }
     } else if (event->type() == QEvent::MouseMove) {
         auto* me = static_cast<QMouseEvent*>(event);
-        if (dragTabIndex >= 0 && (me->buttons() & Qt::LeftButton)) {
+        if (dragging && (me->buttons() & Qt::LeftButton)) {
             if ((me->position().toPoint() - dragStartPos).manhattanLength() > QApplication::startDragDistance()) {
-                int y = me->position().toPoint().y();
-                if (y < -20 || y > tabBar->height() + 20) {
-                    startCrossPaneDrag(tabBar);
+                if (dragTabIndex >= 0) {
+                    QPoint pos = me->position().toPoint();
+                    bool verticalExit = (pos.y() < -20 || pos.y() > tabBar->height() + 20);
+                    // Also trigger when cursor passes beyond the last/first tab edge
+                    int firstLeft = tabBar->count() > 0 ? tabBar->tabRect(0).left() : 0;
+                    int lastRight = tabBar->count() > 0 ? tabBar->tabRect(tabBar->count() - 1).right() : tabBar->width();
+                    bool horizontalExit = (pos.x() < firstLeft - 20 || pos.x() > lastRight + 20);
+                    if (verticalExit || horizontalExit) {
+                        startCrossPaneDrag(tabBar);
+                        return true;
+                    }
+                } else {
+                    // Pane drag: started from empty tab bar space
+                    startPaneDrag(tabBar);
                     return true;
                 }
             }
         }
     } else if (event->type() == QEvent::MouseButtonRelease) {
         dragTabIndex = -1;
+        dragging = false;
     }
     return false;
 }
@@ -889,6 +910,28 @@ void TabDragFilter::startCrossPaneDrag(QTabBar* tabBar) {
 
     drag->exec(Qt::MoveAction);
     dragTabIndex = -1;
+}
+
+void TabDragFilter::startPaneDrag(QTabBar* tabBar) {
+    QDrag* drag = new QDrag(tabBar);
+    QMimeData* mime = new QMimeData();
+    QByteArray data;
+    QDataStream stream(&data, QIODevice::WriteOnly);
+    stream << (quint64)paneWidget;
+    mime->setData("application/x-prettymux-pane", data);
+    drag->setMimeData(mime);
+
+    QPixmap pixmap(160, 30);
+    pixmap.fill(QColor(currentTheme().overlay));
+    QPainter p(&pixmap);
+    p.setPen(QColor(currentTheme().fg));
+    p.drawText(pixmap.rect(), Qt::AlignCenter,
+        QString("Pane (%1 tabs)").arg(paneWidget->terminals.size()));
+    p.end();
+    drag->setPixmap(pixmap);
+
+    drag->exec(Qt::MoveAction);
+    dragging = false;
 }
 
 // ── Workspace: vertical sidebar tab, contains panes arranged in splitters ──
@@ -1229,6 +1272,12 @@ public:
                 workspaces[row].userRenamed = true;
             }
         });
+
+        // Accept drops on workspace sidebar for cross-workspace DnD
+        tabList->setAcceptDrops(true);
+        tabList->viewport()->setAcceptDrops(true);
+        tabList->viewport()->installEventFilter(this);
+
         sidebarLayout->addWidget(tabList);
 
         // ── Toolbar ──
@@ -1385,7 +1434,7 @@ public:
         connect(autoSaveTimer, &QTimer::timeout, this, &PrettyMuxWindow::saveSession);
         autoSaveTimer->start(30000);
 
-        // First-run welcome dialog
+        // Welcome dialog — shows every launch until user checks "Don't show again"
         {
             QString flagFile = QDir::homePath() + "/.config/prettymux/.welcome-shown";
             if (!QFile::exists(flagFile)) {
@@ -1393,33 +1442,39 @@ public:
                 QTimer::singleShot(500, this, [this, flagFile]() {
                     auto* dlg = new QDialog(this);
                     dlg->setWindowTitle("Welcome to prettymux");
-                    dlg->setFixedSize(420, 280);
+                    dlg->setFixedSize(420, 320);
                     dlg->setStyleSheet(QString(
                         "QDialog { background: %1; color: %2; }"
                         "QLabel { color: %2; }"
+                        "QCheckBox { color: %2; font-size: 13px; spacing: 8px; }"
+                        "QCheckBox::indicator { width: 18px; height: 18px; border: 2px solid %3; border-radius: 4px; background: transparent; }"
+                        "QCheckBox::indicator:checked { background: #cba6f7; border-color: #cba6f7; }"
                         "QPushButton { background: #cba6f7; color: #1e1e2e; border: none; border-radius: 6px; padding: 8px 20px; font-weight: bold; }"
                         "QPushButton:hover { background: #b4befe; }"
-                    ).arg(currentTheme().bg, currentTheme().fg));
+                    ).arg(currentTheme().bg, currentTheme().fg, currentTheme().muted));
 
                     auto* layout = new QVBoxLayout(dlg);
                     layout->setSpacing(16);
                     layout->setContentsMargins(32, 28, 32, 24);
 
                     auto* title = new QLabel("<h2 style='margin:0'>Welcome to <span style=\"color:#cba6f7\">prettymux</span></h2>");
+                    title->setTextFormat(Qt::RichText);
                     title->setAlignment(Qt::AlignCenter);
                     layout->addWidget(title);
 
                     auto* desc = new QLabel(
-                        "GPU-accelerated terminal multiplexer with\n"
-                        "ghostty + Chromium in one window.\n\n"
-                        "Press <b>Ctrl+Shift+K</b> to see all shortcuts.\n"
+                        "GPU-accelerated terminal multiplexer with<br>"
+                        "ghostty + Chromium in one window.<br><br>"
+                        "Press <b>Ctrl+Shift+K</b> to see all shortcuts.<br>"
                         "Visit the website for docs and updates:"
                     );
+                    desc->setTextFormat(Qt::RichText);
                     desc->setWordWrap(true);
                     desc->setAlignment(Qt::AlignCenter);
                     layout->addWidget(desc);
 
                     auto* link = new QLabel("<a href='https://prettymux-web.vercel.app' style='color:#cba6f7;font-size:13px'>prettymux-web.vercel.app</a>");
+                    link->setTextFormat(Qt::RichText);
                     link->setOpenExternalLinks(false);
                     link->setAlignment(Qt::AlignCenter);
                     connect(link, &QLabel::linkActivated, this, [this](const QString& url) {
@@ -1429,6 +1484,10 @@ public:
 
                     layout->addStretch();
 
+                    auto* checkBox = new QCheckBox("Don't show this again");
+                    checkBox->setCursor(Qt::PointingHandCursor);
+                    layout->addWidget(checkBox, 0, Qt::AlignCenter);
+
                     auto* btn = new QPushButton("Get Started");
                     btn->setCursor(Qt::PointingHandCursor);
                     connect(btn, &QPushButton::clicked, dlg, &QDialog::accept);
@@ -1437,9 +1496,11 @@ public:
                     dlg->exec();
                     dlg->deleteLater();
 
-                    // Mark as shown
-                    QFile f(flagFile);
-                    if (f.open(QIODevice::WriteOnly)) { f.write("1"); f.close(); }
+                    // Only suppress future popups if checkbox was checked
+                    if (checkBox->isChecked()) {
+                        QFile f(flagFile);
+                        if (f.open(QIODevice::WriteOnly)) { f.write("1"); f.close(); }
+                    }
                 });
             }
         }
@@ -1459,6 +1520,7 @@ public:
 
     void connectPane(PaneWidget* pane) {
         connect(pane, &PaneWidget::splitRequested, this, &PrettyMuxWindow::handlePaneSplit);
+        connect(pane, &PaneWidget::paneEmpty, this, &PrettyMuxWindow::closePane);
     }
 
     void handlePaneSplit(PaneWidget* source, Qt::Orientation orientation) {
@@ -1520,6 +1582,193 @@ public:
         newSplitter->setSizes({half, half});
 
         newPane->allTerminals()[0]->setFocus();
+    }
+
+    // ── Cross-workspace DnD ──
+
+    void moveTabToWorkspace(PaneWidget* sourcePane, int tabIdx, int targetWsIdx) {
+        if (targetWsIdx < 0 || targetWsIdx >= (int)workspaces.size()) return;
+        if (!sourcePane || tabIdx < 0 || tabIdx >= (int)sourcePane->terminals.size()) return;
+
+        // Don't move to same workspace
+        for (int wi = 0; wi < (int)workspaces.size(); wi++) {
+            for (auto* p : workspaces[wi].panes) {
+                if (p == sourcePane && wi == targetWsIdx) return;
+            }
+        }
+
+        GhosttyWidget* term = sourcePane->terminals[tabIdx];
+        QString tabName = sourcePane->tabs->tabText(tabIdx);
+
+        // Remove from source pane
+        sourcePane->tabs->removeTab(tabIdx);
+        sourcePane->terminals.erase(sourcePane->terminals.begin() + tabIdx);
+        if (sourcePane->terminals.empty()) sourcePane->addNewTab();
+
+        // Add to first pane of target workspace
+        PaneWidget* targetPane = workspaces[targetWsIdx].panes.empty() ? nullptr : workspaces[targetWsIdx].panes[0];
+        if (!targetPane) return;
+        targetPane->terminals.push_back(term);
+        targetPane->tabs->addTab(term, tabName);
+        targetPane->tabs->setCurrentIndex(targetPane->terminals.size() - 1);
+
+        // Switch to target workspace
+        tabList->setCurrentRow(targetWsIdx);
+        term->setFocus();
+    }
+
+    void movePaneToWorkspace(PaneWidget* pane, int targetWsIdx) {
+        if (targetWsIdx < 0 || targetWsIdx >= (int)workspaces.size()) return;
+        if (!pane) return;
+
+        int sourceWsIdx = -1;
+        for (int wi = 0; wi < (int)workspaces.size(); wi++) {
+            for (auto* p : workspaces[wi].panes) {
+                if (p == pane) { sourceWsIdx = wi; break; }
+            }
+            if (sourceWsIdx >= 0) break;
+        }
+        if (sourceWsIdx < 0 || sourceWsIdx == targetWsIdx) return;
+
+        removePaneFromWorkspace(pane, sourceWsIdx);
+        addPaneToWorkspace(pane, targetWsIdx);
+
+        tabList->setCurrentRow(targetWsIdx);
+        if (!pane->terminals.empty()) {
+            int ci = pane->tabs->currentIndex();
+            if (ci >= 0 && ci < (int)pane->terminals.size())
+                pane->terminals[ci]->setFocus();
+        }
+    }
+
+    void removePaneFromWorkspace(PaneWidget* pane, int wsIdx) {
+        if (wsIdx < 0 || wsIdx >= (int)workspaces.size()) return;
+        Workspace& ws = workspaces[wsIdx];
+
+        auto it = std::find(ws.panes.begin(), ws.panes.end(), pane);
+        if (it == ws.panes.end()) return;
+        ws.panes.erase(it);
+
+        if (ws.container == (QWidget*)pane) {
+            // Pane is the sole container — replace with a new pane
+            auto* newPane = new PaneWidget();
+            connectPane(newPane);
+            ws.panes.push_back(newPane);
+
+            int stackIdx = terminalStack->indexOf(ws.container);
+            pane->setParent(nullptr);
+            terminalStack->removeWidget(ws.container);
+            ws.container = newPane;
+            terminalStack->insertWidget(stackIdx, newPane);
+            if (activeWorkspace == wsIdx)
+                terminalStack->setCurrentWidget(newPane);
+            return;
+        }
+
+        QSplitter* parentSplitter = qobject_cast<QSplitter*>(pane->parentWidget());
+        if (!parentSplitter) return;
+        pane->setParent(nullptr);
+
+        // Collapse splitter if only one child remains
+        if (parentSplitter->count() == 1) {
+            QWidget* remaining = parentSplitter->widget(0);
+            QSplitter* grandparent = qobject_cast<QSplitter*>(parentSplitter->parentWidget());
+            if (grandparent) {
+                int idx = grandparent->indexOf(parentSplitter);
+                remaining->setParent(nullptr);
+                grandparent->insertWidget(idx, remaining);
+                parentSplitter->deleteLater();
+            } else {
+                // parentSplitter is ws.container
+                remaining->setParent(nullptr);
+                int stackIdx = terminalStack->indexOf(parentSplitter);
+                terminalStack->removeWidget(parentSplitter);
+                terminalStack->insertWidget(stackIdx, remaining);
+                ws.container = remaining;
+                if (activeWorkspace == wsIdx)
+                    terminalStack->setCurrentWidget(remaining);
+                parentSplitter->deleteLater();
+            }
+        }
+    }
+
+    void addPaneToWorkspace(PaneWidget* pane, int wsIdx) {
+        if (wsIdx < 0 || wsIdx >= (int)workspaces.size()) return;
+        Workspace& ws = workspaces[wsIdx];
+        ws.panes.push_back(pane);
+
+        auto* existingSplitter = qobject_cast<QSplitter*>(ws.container);
+        if (existingSplitter) {
+            existingSplitter->addWidget(pane);
+            int total = existingSplitter->orientation() == Qt::Horizontal
+                ? existingSplitter->width() : existingSplitter->height();
+            int each = qMax(total / existingSplitter->count(), 100);
+            QList<int> sizes;
+            for (int i = 0; i < existingSplitter->count(); i++)
+                sizes << each;
+            existingSplitter->setSizes(sizes);
+        } else {
+            // Container is a single pane — wrap in horizontal splitter
+            auto* splitter = new QSplitter(Qt::Horizontal);
+            splitter->setStyleSheet(QString("QSplitter::handle { background: %1; width: 3px; }").arg(currentTheme().highlight));
+            connectSplitterOverlay(splitter);
+
+            QWidget* oldContainer = ws.container;
+            int stackIdx = terminalStack->indexOf(oldContainer);
+            oldContainer->setParent(nullptr);
+            splitter->addWidget(oldContainer);
+            splitter->addWidget(pane);
+
+            terminalStack->removeWidget(oldContainer);
+            terminalStack->insertWidget(stackIdx, splitter);
+            ws.container = splitter;
+            if (activeWorkspace == wsIdx)
+                terminalStack->setCurrentWidget(splitter);
+
+            int half = qMax(splitter->width() / 2, 100);
+            splitter->setSizes({half, half});
+        }
+
+        pane->show();
+    }
+
+    void closePane(PaneWidget* pane) {
+        if (!pane) return;
+        int wsIdx = -1;
+        for (int wi = 0; wi < (int)workspaces.size(); wi++) {
+            for (auto* p : workspaces[wi].panes) {
+                if (p == pane) { wsIdx = wi; break; }
+            }
+            if (wsIdx >= 0) break;
+        }
+        if (wsIdx < 0) return;
+
+        removePaneFromWorkspace(pane, wsIdx);
+        pane->deleteLater();
+
+        // Focus a remaining pane
+        Workspace& ws = workspaces[wsIdx];
+        if (!ws.panes.empty()) {
+            auto* p = ws.panes[0];
+            int ci = p->tabs->currentIndex();
+            if (ci >= 0 && ci < (int)p->terminals.size())
+                p->terminals[ci]->setFocus();
+        }
+    }
+
+    void closeFocusedPane() {
+        if (activeWorkspace < 0 || activeWorkspace >= (int)workspaces.size()) return;
+        Workspace& ws = workspaces[activeWorkspace];
+
+        PaneWidget* focused = nullptr;
+        for (auto* pane : ws.panes) {
+            if (pane->isAncestorOf(QApplication::focusWidget())) {
+                focused = pane;
+                break;
+            }
+        }
+        if (!focused) return;
+        closePane(focused);
     }
 
 public slots:
@@ -2139,6 +2388,7 @@ public slots:
 
         addSection(leftCol, "Panes & Tabs");
         addRow(leftCol, "New terminal tab", "pane.tab.new");
+        addRow(leftCol, "Close pane", "pane.close");
         addRow(leftCol, "Zoom pane", "pane.zoom");
 
         addSection(leftCol, "Power Features");
@@ -3614,21 +3864,17 @@ public slots:
 
             // Restore panes (first pane already created by addWorkspace)
             QJsonArray panesArr = wsObj["panes"].toArray();
+            int wsIdx = (int)workspaces.size() - 1;
             for (int pi = 0; pi < panesArr.size(); pi++) {
                 QJsonObject paneObj = panesArr[pi].toObject();
                 PaneWidget* pane;
                 if (pi == 0) {
                     pane = ws.panes[0];
                 } else {
-                    // Split to create new pane
+                    // Create new pane and add to workspace (handles splitter wrapping)
                     pane = new PaneWidget();
                     connectPane(pane);
-                    ws.panes.push_back(pane);
-                    // Add to splitter
-                    auto* splitter = qobject_cast<QSplitter*>(ws.container);
-                    if (splitter) {
-                        splitter->addWidget(pane);
-                    }
+                    addPaneToWorkspace(pane, wsIdx);
                 }
 
                 // Restore tabs in this pane
@@ -3684,6 +3930,69 @@ protected:
         event->accept();
     }
 
+    bool eventFilter(QObject* obj, QEvent* event) override {
+        if (obj == tabList->viewport()) {
+            if (event->type() == QEvent::DragEnter) {
+                auto* de = static_cast<QDragEnterEvent*>(event);
+                if (de->mimeData()->hasFormat("application/x-prettymux-tab") ||
+                    de->mimeData()->hasFormat("application/x-prettymux-pane")) {
+                    de->acceptProposedAction();
+                    return true;
+                }
+            }
+            if (event->type() == QEvent::DragMove) {
+                auto* de = static_cast<QDragMoveEvent*>(event);
+                if (de->mimeData()->hasFormat("application/x-prettymux-tab") ||
+                    de->mimeData()->hasFormat("application/x-prettymux-pane")) {
+                    de->acceptProposedAction();
+                    // Highlight hovered workspace item
+                    auto* item = tabList->itemAt(de->position().toPoint());
+                    if (item) {
+                        for (int i = 0; i < tabList->count(); i++)
+                            tabList->item(i)->setBackground(Qt::transparent);
+                        item->setBackground(QColor(137, 180, 250, 40));
+                    }
+                    return true;
+                }
+            }
+            if (event->type() == QEvent::DragLeave) {
+                // Clear highlights
+                for (int i = 0; i < tabList->count(); i++)
+                    tabList->item(i)->setBackground(Qt::transparent);
+                return false;
+            }
+            if (event->type() == QEvent::Drop) {
+                auto* de = static_cast<QDropEvent*>(event);
+                // Clear highlights
+                for (int i = 0; i < tabList->count(); i++)
+                    tabList->item(i)->setBackground(Qt::transparent);
+
+                auto* item = tabList->itemAt(de->position().toPoint());
+                if (!item) return true;
+                int targetWs = tabList->row(item);
+
+                if (de->mimeData()->hasFormat("application/x-prettymux-pane")) {
+                    QByteArray data = de->mimeData()->data("application/x-prettymux-pane");
+                    QDataStream stream(&data, QIODevice::ReadOnly);
+                    quint64 panePtr;
+                    stream >> panePtr;
+                    movePaneToWorkspace(reinterpret_cast<PaneWidget*>(panePtr), targetWs);
+                    de->acceptProposedAction();
+                } else if (de->mimeData()->hasFormat("application/x-prettymux-tab")) {
+                    QByteArray data = de->mimeData()->data("application/x-prettymux-tab");
+                    QDataStream stream(&data, QIODevice::ReadOnly);
+                    quint64 sourcePtr;
+                    int tabIdx;
+                    stream >> sourcePtr >> tabIdx;
+                    moveTabToWorkspace(reinterpret_cast<PaneWidget*>(sourcePtr), tabIdx, targetWs);
+                    de->acceptProposedAction();
+                }
+                return true;
+            }
+        }
+        return QMainWindow::eventFilter(obj, event);
+    }
+
     void keyPressEvent(QKeyEvent* event) override {
         // Dispatch configurable shortcuts via ShortcutManager
         if (g_shortcuts) {
@@ -3721,6 +4030,7 @@ protected:
                 if (action == "devtools.window") { openDevTools(true); return; }
                 if (action == "shortcuts.show") { showShortcutOverlay(); return; }
                 if (action == "search.show") { showSearchOverlay(); return; }
+                if (action == "pane.close") { closeFocusedPane(); return; }
                 if (action == "pane.zoom") { toggleZoom(); return; }
                 if (action == "terminal.search") { triggerSearch(); return; }
                 if (action == "broadcast.toggle") { toggleBroadcast(); return; }
