@@ -83,7 +83,7 @@ jobs:
         run: |
           mkdir -p dist
           cp src/qt/build/prettymux dist/
-          cp src/qt/welcome.html dist/
+
           cp src/qt/prettymux-shell-integration.sh dist/
           cp ghostty/zig-out/lib/libghostty.so dist/ || true
           tar czf prettymux-ubuntu-24.04-amd64.tar.gz -C dist .
@@ -149,7 +149,9 @@ jobs:
 
       - name: Install nFPM
         run: |
-          curl -sfL https://github.com/goreleaser/nfpm/releases/latest/download/nfpm_linux_amd64.tar.gz | tar xz -C /usr/local/bin nfpm
+          NFPM_VERSION=$(curl -s https://api.github.com/repos/goreleaser/nfpm/releases/latest | grep tag_name | cut -d'"' -f4 | sed 's/^v//')
+          curl -sL -o /tmp/nfpm.rpm "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm-${NFPM_VERSION}-1.x86_64.rpm"
+          dnf install -y /tmp/nfpm.rpm
 
       - name: Build RPM
         run: |
@@ -200,13 +202,14 @@ jobs:
         run: |
           mkdir -p dist
           cp src/qt/build/prettymux dist/
-          cp src/qt/welcome.html dist/
           cp src/qt/prettymux-shell-integration.sh dist/
           cp ghostty/zig-out/lib/libghostty.so dist/ || true
 
       - name: Install nFPM
         run: |
-          curl -sfL https://github.com/goreleaser/nfpm/releases/latest/download/nfpm_linux_amd64.tar.gz | tar xz -C /usr/local/bin nfpm
+          NFPM_VERSION=$(curl -s https://api.github.com/repos/goreleaser/nfpm/releases/latest | grep tag_name | cut -d'"' -f4 | sed 's/^v//')
+          curl -sL -o /tmp/nfpm.deb "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_amd64.deb"
+          sudo dpkg -i /tmp/nfpm.deb
 
       - name: Build .deb
         run: |
@@ -264,19 +267,16 @@ jobs:
   # ---------------------------------------------------------------------------
   build-flatpak:
     if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'flatpak') || contains(inputs.jobs, 'linux')
+    needs: fetch-libghostty
     runs-on: ubuntu-latest
-    container:
-      image: biber/flathub-builder:latest
-      options: --privileged
     steps:
       - name: Checkout prettymux
         uses: actions/checkout@v4
 
-      - name: Checkout ghostty fork
-        uses: actions/checkout@v4
+      - name: Download prebuilt ghostty
+        uses: actions/download-artifact@v4
         with:
-          repository: ${{ env.GHOSTTY_REPO }}
-          ref: ${{ env.GHOSTTY_BRANCH }}
+          name: ghostty-prebuilt
           path: ghostty
 
       - name: Build Flatpak
@@ -338,7 +338,7 @@ jobs:
 
           install -Dm755 src/qt/build/prettymux "$PKGDIR/usr/bin/prettymux"
           install -Dm644 ghostty/zig-out/lib/libghostty.so "$PKGDIR/usr/lib/prettymux/libghostty.so" || true
-          install -Dm644 src/qt/welcome.html "$PKGDIR/usr/share/prettymux/welcome.html"
+
           install -Dm644 src/qt/prettymux-shell-integration.sh "$PKGDIR/usr/share/prettymux/shell-integration.sh"
           install -Dm644 packaging/prettymux.desktop "$PKGDIR/usr/share/applications/prettymux.desktop"
           install -Dm644 LICENSE "$PKGDIR/usr/share/licenses/prettymux/LICENSE"
@@ -466,7 +466,7 @@ jobs:
         run: |
           mkdir -p dist
           cp src/qt/build/prettymux dist/
-          cp src/qt/welcome.html dist/
+
           cp src/qt/prettymux-shell-integration.sh dist/
           cp ghostty/zig-out/lib/libghostty.so dist/ || true
 
@@ -533,7 +533,7 @@ jobs:
         run: |
           mkdir dist
           copy src\qt\build\Release\prettymux.exe dist\
-          copy src\qt\welcome.html dist\
+
           copy src\qt\prettymux-shell-integration.sh dist\
           if exist ghostty\zig-out\lib\ghostty.dll copy ghostty\zig-out\lib\ghostty.dll dist\
           windeployqt --release dist\prettymux.exe
@@ -600,7 +600,7 @@ jobs:
           mkdir -p "$APP_DIR/MacOS" "$APP_DIR/Resources"
 
           cp src/qt/build/prettymux "$APP_DIR/MacOS/PrettyMux"
-          cp src/qt/welcome.html "$APP_DIR/Resources/"
+
           cp src/qt/prettymux-shell-integration.sh "$APP_DIR/Resources/"
           cp ghostty/zig-out/lib/libghostty.dylib "$APP_DIR/MacOS/" || true
 
@@ -686,7 +686,7 @@ jobs:
           mkdir -p "$APP_DIR/MacOS" "$APP_DIR/Resources"
 
           cp src/qt/build/prettymux "$APP_DIR/MacOS/PrettyMux"
-          cp src/qt/welcome.html "$APP_DIR/Resources/"
+
           cp src/qt/prettymux-shell-integration.sh "$APP_DIR/Resources/"
           cp ghostty/zig-out/lib/libghostty.dylib "$APP_DIR/MacOS/" || true
 
