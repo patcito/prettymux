@@ -408,7 +408,7 @@ jobs:
 
       - name: Publish to PPA
         if: env.GPG_PRIVATE_KEY != ''
-        uses: yuezk/publish-ppa-package@v2
+        uses: yuezk/publish-ppa-package@main
         with:
           repository: patcito/prettymux
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
