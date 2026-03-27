@@ -524,7 +524,7 @@ jobs:
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.7.3'
-          modules: 'qtwebengine'
+          modules: 'qtwebengine qtwebchannel qtpositioning'
           arch: 'win64_msvc2022_64'
 
       - name: Build prettymux
@@ -569,6 +569,9 @@ jobs:
           ref: ${{ env.GHOSTTY_BRANCH }}
           path: ghostty
 
+      - name: Select Xcode 16
+        run: sudo xcode-select -s /Applications/Xcode_16.0.app
+
       - name: Install Zig
         uses: mlugg/setup-zig@v2
         with:
@@ -578,17 +581,16 @@ jobs:
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.7.3'
-          modules: 'qtwebengine'
+          modules: 'qtwebengine qtwebchannel qtpositioning'
 
       - name: Cache ghostty build
         uses: actions/cache@v4
         id: ghostty-cache
         with:
           path: ghostty/zig-out
-          key: ghostty-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ghostty/.git/HEAD') }}
+          key: ghostty-macos-arm64-${{ hashFiles('ghostty/.git/HEAD') }}
       - name: Build ghostty
         if: steps.ghostty-cache.outputs.cache-hit != 'true'
-        continue-on-error: true
         run: |
           cd ghostty
           zig build -Dapp-runtime=none -Doptimize=ReleaseFast
@@ -656,6 +658,9 @@ jobs:
           ref: ${{ env.GHOSTTY_BRANCH }}
           path: ghostty
 
+      - name: Select Xcode 16
+        run: sudo xcode-select -s /Applications/Xcode_16.0.app
+
       - name: Install Zig
         uses: mlugg/setup-zig@v2
         with:
@@ -665,20 +670,19 @@ jobs:
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.7.3'
-          modules: 'qtwebengine'
+          modules: 'qtwebengine qtwebchannel qtpositioning'
 
       - name: Cache ghostty build
         uses: actions/cache@v4
         id: ghostty-cache
         with:
           path: ghostty/zig-out
-          key: ghostty-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ghostty/.git/HEAD') }}
+          key: ghostty-macos-intel-${{ hashFiles('ghostty/.git/HEAD') }}
       - name: Build ghostty
         if: steps.ghostty-cache.outputs.cache-hit != 'true'
-        continue-on-error: true
         run: |
           cd ghostty
-          zig build -Dapp-runtime=none -Doptimize=ReleaseFast
+          zig build -Dapp-runtime=none -Doptimize=ReleaseFast -Dtarget=x86_64-macos
 
       - name: Build prettymux
         run: |
