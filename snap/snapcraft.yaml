@@ -9,8 +9,8 @@ description: |
   and shell integration.
 confinement: classic
 grade: devel
-architectures:
-  - build-on: amd64
+platforms:
+  amd64:
 
 apps:
   prettymux:
@@ -23,30 +23,22 @@ parts:
   ghostty:
     plugin: nil
     source: ./ghostty
-    build-packages:
-      - xz-utils
     override-build: |
-      # Install zig
-      curl -L https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz | tar -xJ
-      export PATH="$PWD/zig-linux-x86_64-0.13.0:$PATH"
-      zig build -Dapp-runtime=none -Doptimize=ReleaseFast
-      mkdir -p $CRAFT_PART_INSTALL/usr/lib/prettymux
-      cp zig-out/lib/libghostty.so $CRAFT_PART_INSTALL/usr/lib/prettymux/ || true
-      # Keep include and lib dirs for prettymux build
+      # Download prebuilt libghostty
+      curl -L -o ghostty-linux-x86_64.tar.gz \
+        https://github.com/patcito/ghostty/releases/download/linux-embedded-v0.1.0/ghostty-linux-x86_64.tar.gz
+      curl -L -o ghostty-glad.tar.gz \
+        https://github.com/patcito/ghostty/releases/download/linux-embedded-v0.1.0/ghostty-glad.tar.gz
       mkdir -p $CRAFT_PART_INSTALL/ghostty
-      cp -r include $CRAFT_PART_INSTALL/ghostty/
-      cp -r zig-out $CRAFT_PART_INSTALL/ghostty/
-      cp -r vendor $CRAFT_PART_INSTALL/ghostty/
+      tar xzf ghostty-linux-x86_64.tar.gz -C $CRAFT_PART_INSTALL/ghostty
+      tar xzf ghostty-glad.tar.gz -C $CRAFT_PART_INSTALL/ghostty
+      mkdir -p $CRAFT_PART_INSTALL/usr/lib/prettymux
+      cp $CRAFT_PART_INSTALL/ghostty/zig-out/lib/libghostty.so $CRAFT_PART_INSTALL/usr/lib/prettymux/
 
   prettymux:
     after: [ghostty]
-    plugin: cmake
+    plugin: nil
     source: .
-    source-subdir: src/qt
-    cmake-parameters:
-      - -DCMAKE_BUILD_TYPE=Release
-      - -DCMAKE_INSTALL_PREFIX=/usr
-      - -DGHOSTTY_DIR=$CRAFT_STAGE/ghostty
     build-packages:
       - qt6-base-dev
       - qt6-webengine-dev
@@ -66,8 +58,6 @@ parts:
       make -j$(nproc)
       mkdir -p $CRAFT_PART_INSTALL/usr/bin
       cp prettymux $CRAFT_PART_INSTALL/usr/bin/
-      mkdir -p $CRAFT_PART_INSTALL/usr/share/prettymux
-      cp $CRAFT_PART_SRC/src/qt/welcome.html $CRAFT_PART_INSTALL/usr/share/prettymux/
-      cp $CRAFT_PART_SRC/src/qt/prettymux-shell-integration.sh $CRAFT_PART_INSTALL/usr/share/prettymux/shell-integration.sh
+      cp $CRAFT_PART_SRC/src/qt/prettymux-shell-integration.sh $CRAFT_PART_INSTALL/usr/bin/
       mkdir -p $CRAFT_PART_INSTALL/usr/share/applications
       cp $CRAFT_PART_SRC/packaging/prettymux.desktop $CRAFT_PART_INSTALL/usr/share/applications/
