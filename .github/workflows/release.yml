@@ -393,26 +393,34 @@ jobs:
           ref: ${{ env.GHOSTTY_BRANCH }}
           path: ghostty
 
-      - name: Update debian changelog version
+      - name: Create source tarball
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          sed -i "1s/(.*)/($VERSION-1)/" packaging/debian/changelog
-          sed -i "1s/jammy/$(lsb_release -cs)/" packaging/debian/changelog
+          # Default version for workflow_dispatch (no tag)
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
+            VERSION="0.1.0~git$(date +%Y%m%d)"
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          tar czf prettymux-${VERSION}.tar.gz \
+            --transform "s,^,prettymux-${VERSION}/," \
+            --exclude='.git' --exclude='ghostty' --exclude='build' \
+            src/ packaging/ CMakeLists.txt LICENSE CLAUDE.md
 
       - name: Publish to PPA
-        if: env.GPG_PRIVATE_KEY != '' && env.LAUNCHPAD_SSH_PRIVATE_KEY != ''
+        if: env.GPG_PRIVATE_KEY != ''
         uses: yuezk/publish-ppa-package@v2
         with:
-          repository: prettymux
+          repository: patcito/prettymux
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           gpg_passphrase: ${{ secrets.GPG_PASSPHRASE }}
-          launchpad_ssh_private_key: ${{ secrets.LAUNCHPAD_SSH_PRIVATE_KEY }}
-          ppa: ppa:patcito/prettymux
-          source_dir: .
+          tarball: prettymux-${{ env.VERSION }}.tar.gz
           debian_dir: packaging/debian
+          deb_email: patcito@gmail.com
+          deb_fullname: Patrick Aljord
+          series: noble
+          keep_changelog: true
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
-          LAUNCHPAD_SSH_PRIVATE_KEY: ${{ secrets.LAUNCHPAD_SSH_PRIVATE_KEY }}
 
   # ---------------------------------------------------------------------------
   # AppImage
