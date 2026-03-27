@@ -115,6 +115,9 @@ jobs:
           name: ghostty-prebuilt
           path: ghostty
 
+      - name: Verify ghostty layout
+        run: find ghostty -type f | head -20
+
       - name: Install dependencies
         run: |
           dnf install -y \
@@ -134,7 +137,6 @@ jobs:
         run: |
           mkdir -p dist
           cp src/qt/build/prettymux dist/
-          cp src/qt/welcome.html dist/
           cp src/qt/prettymux-shell-integration.sh dist/
           cp ghostty/zig-out/lib/libghostty.so dist/ || true
 

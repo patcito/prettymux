@@ -29,9 +29,11 @@ parts:
         https://github.com/patcito/ghostty/releases/download/linux-embedded-v0.1.0/ghostty-linux-x86_64.tar.gz
       curl -L -o ghostty-glad.tar.gz \
         https://github.com/patcito/ghostty/releases/download/linux-embedded-v0.1.0/ghostty-glad.tar.gz
-      mkdir -p $CRAFT_PART_INSTALL/ghostty
-      tar xzf ghostty-linux-x86_64.tar.gz -C $CRAFT_PART_INSTALL/ghostty
-      tar xzf ghostty-glad.tar.gz -C $CRAFT_PART_INSTALL/ghostty
+      # Reconstruct expected layout: zig-out/lib/, include/, vendor/glad/
+      mkdir -p $CRAFT_PART_INSTALL/ghostty/zig-out $CRAFT_PART_INSTALL/ghostty/vendor
+      tar xzf ghostty-linux-x86_64.tar.gz -C $CRAFT_PART_INSTALL/ghostty/
+      mv $CRAFT_PART_INSTALL/ghostty/lib $CRAFT_PART_INSTALL/ghostty/zig-out/lib
+      tar xzf ghostty-glad.tar.gz -C $CRAFT_PART_INSTALL/ghostty/vendor/
       mkdir -p $CRAFT_PART_INSTALL/usr/lib/prettymux
       cp $CRAFT_PART_INSTALL/ghostty/zig-out/lib/libghostty.so $CRAFT_PART_INSTALL/usr/lib/prettymux/
 
