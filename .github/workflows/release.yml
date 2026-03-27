@@ -462,13 +462,16 @@ jobs:
             -DGHOSTTY_DIR=${{ github.workspace }}/ghostty
           make -j$(nproc)
 
-      - name: Package artifacts
+      - name: Prepare AppDir
         run: |
-          mkdir -p dist
-          cp src/qt/build/prettymux dist/
-
-          cp src/qt/prettymux-shell-integration.sh dist/
-          cp ghostty/zig-out/lib/libghostty.so dist/ || true
+          mkdir -p AppDir/usr/bin
+          mkdir -p AppDir/usr/lib/prettymux
+          mkdir -p AppDir/usr/share/prettymux
+          mkdir -p AppDir/usr/share/applications
+          cp src/qt/build/prettymux AppDir/usr/bin/
+          cp ghostty/zig-out/lib/libghostty.so AppDir/usr/lib/prettymux/ || true
+          cp src/qt/prettymux-shell-integration.sh AppDir/usr/share/prettymux/shell-integration.sh
+          cp packaging/prettymux.desktop AppDir/usr/share/applications/prettymux.desktop
 
       - name: Build AppImage
         uses: AppImageCrafters/build-appimage@v1
