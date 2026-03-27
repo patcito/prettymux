@@ -502,17 +502,23 @@ jobs:
       - name: Checkout prettymux
         uses: actions/checkout@v4
 
-      - name: Checkout ghostty fork
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ env.GHOSTTY_REPO }}
-          ref: ${{ env.GHOSTTY_BRANCH }}
-          path: ghostty
-
-      - name: Install Zig
-        uses: mlugg/setup-zig@v2
-        with:
-          version: ${{ env.ZIG_VERSION }}
+      - name: Download prebuilt ghostty
+        shell: bash
+        run: |
+          mkdir -p ghostty/zig-out ghostty/vendor
+          gh release download ${{ env.GHOSTTY_RELEASE }} \
+            --repo ${{ env.GHOSTTY_REPO }} \
+            --pattern 'ghostty-windows-x86_64.tar.gz' \
+            --pattern 'ghostty-glad.tar.gz'
+          tar xzf ghostty-windows-x86_64.tar.gz -C ghostty/
+          mv ghostty/ghostty.dll ghostty/zig-out/lib/ghostty.dll || true
+          mv ghostty/ghostty.lib ghostty/zig-out/lib/ghostty.lib || true
+          # If lib dir was created by tar already, just ensure structure
+          mkdir -p ghostty/zig-out/lib
+          [ -f ghostty/lib/ghostty.dll ] && mv ghostty/lib/* ghostty/zig-out/lib/ || true
+          tar xzf ghostty-glad.tar.gz -C ghostty/vendor/
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Install Qt6
         uses: jurplel/install-qt-action@v4
@@ -520,13 +526,6 @@ jobs:
           version: '6.7.3'
           modules: 'qtwebengine'
           arch: 'win64_msvc2022_64'
-
-      - name: Build ghostty (best-effort)
-        # NOTE: Ghostty Windows support via embedded platform is experimental.
-        continue-on-error: true
-        run: |
-          cd ghostty
-          zig build -Dapp-runtime=none -Doptimize=ReleaseFast -Dtarget=x86_64-windows
 
       - name: Build prettymux
         shell: cmd
@@ -542,9 +541,8 @@ jobs:
         run: |
           mkdir dist
           copy src\qt\build\Release\prettymux.exe dist\
-
           copy src\qt\prettymux-shell-integration.sh dist\
-          if exist ghostty\zig-out\lib\ghostty.dll copy ghostty\zig-out\lib\ghostty.dll dist\
+          copy ghostty\zig-out\lib\ghostty.dll dist\
           windeployqt --release dist\prettymux.exe
           powershell Compress-Archive -Path dist\* -DestinationPath prettymux-windows-x64.zip
 
