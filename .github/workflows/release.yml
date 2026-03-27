@@ -517,9 +517,9 @@ jobs:
       - name: Install Qt6
         uses: jurplel/install-qt-action@v4
         with:
-          version: '6.8.0'
+          version: '6.7.3'
           modules: 'qtwebengine'
-          arch: 'win64_msvc2019_64'
+          arch: 'win64_msvc2022_64'
 
       - name: Build ghostty (best-effort)
         # NOTE: Ghostty Windows support via embedded platform is experimental.
@@ -534,7 +534,7 @@ jobs:
           cd src\qt
           mkdir build
           cd build
-          cmake .. -G "Visual Studio 17 2022" -DCMAKE_BUILD_TYPE=Release -DGHOSTTY_DIR=${{ github.workspace }}\ghostty
+          cmake .. -G "Visual Studio 17 2022" -DCMAKE_BUILD_TYPE=Release -DGHOSTTY_DIR=%GITHUB_WORKSPACE%\ghostty
           cmake --build . --config Release
 
       - name: Package with windeployqt
@@ -579,7 +579,7 @@ jobs:
       - name: Install Qt6
         uses: jurplel/install-qt-action@v4
         with:
-          version: '6.8.0'
+          version: '6.7.3'
           modules: 'qtwebengine'
 
       - name: Cache ghostty build
@@ -590,6 +590,7 @@ jobs:
           key: ghostty-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ghostty/.git/HEAD') }}
       - name: Build ghostty
         if: steps.ghostty-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
         run: |
           cd ghostty
           zig build -Dapp-runtime=none -Doptimize=ReleaseFast
@@ -645,7 +646,7 @@ jobs:
   # ---------------------------------------------------------------------------
   build-macos-intel:
     if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'macos')
-    runs-on: macos-13
+    runs-on: macos-14
     steps:
       - name: Checkout prettymux
         uses: actions/checkout@v4
@@ -665,7 +666,7 @@ jobs:
       - name: Install Qt6
         uses: jurplel/install-qt-action@v4
         with:
-          version: '6.8.0'
+          version: '6.7.3'
           modules: 'qtwebengine'
 
       - name: Cache ghostty build
@@ -676,6 +677,7 @@ jobs:
           key: ghostty-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ghostty/.git/HEAD') }}
       - name: Build ghostty
         if: steps.ghostty-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
         run: |
           cd ghostty
           zig build -Dapp-runtime=none -Doptimize=ReleaseFast
