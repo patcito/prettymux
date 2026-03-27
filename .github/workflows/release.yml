@@ -116,7 +116,12 @@ jobs:
           path: ghostty
 
       - name: Verify ghostty layout
-        run: find ghostty -type f | head -20
+        run: |
+          echo "pwd: $(pwd)"
+          echo "GITHUB_WORKSPACE: $GITHUB_WORKSPACE"
+          ls -la ghostty/vendor/glad/src/ || echo "glad not found at relative path"
+          ls -la $GITHUB_WORKSPACE/ghostty/vendor/glad/src/ || echo "glad not found at GITHUB_WORKSPACE path"
+          find ghostty -type f | head -20
 
       - name: Install dependencies
         run: |
@@ -126,11 +131,13 @@ jobs:
 
       - name: Build prettymux
         run: |
+          echo "pwd: $(pwd)"
+          ls -la ghostty/vendor/glad/src/gl.c || echo "gl.c not found"
           cd src/qt
           mkdir -p build && cd build
           cmake .. \
             -DCMAKE_BUILD_TYPE=Release \
-            -DGHOSTTY_DIR=${{ github.workspace }}/ghostty
+            -DGHOSTTY_DIR=$(cd $GITHUB_WORKSPACE && pwd)/ghostty
           make -j$(nproc)
 
       - name: Package artifacts
