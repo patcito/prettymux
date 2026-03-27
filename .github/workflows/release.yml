@@ -404,7 +404,7 @@ jobs:
           tar czf prettymux-${VERSION}.tar.gz \
             --transform "s,^,prettymux-${VERSION}/," \
             --exclude='.git' --exclude='ghostty' --exclude='build' \
-            src/ packaging/ CMakeLists.txt LICENSE CLAUDE.md
+            src/ packaging/ LICENSE
 
       - name: Publish to PPA
         if: env.GPG_PRIVATE_KEY != ''
