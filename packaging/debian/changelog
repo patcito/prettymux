@@ -1,5 +1,9 @@
-prettymux (0.1.0-1) jammy; urgency=medium
+prettymux (0.1.1-1) jammy; urgency=medium
 
-  * Initial release.
+  * Drag-and-drop tabs/panes between panes and workspaces
+  * Close pane shortcut (Ctrl+Shift+X)
+  * Fix session restore for multiple panes
+  * Welcome dialog with "Don't show again" checkbox
+  * Use prebuilt libghostty
 
- -- patcito <patcito@users.noreply.github.com>  Tue, 25 Mar 2026 00:00:00 +0000
+ -- patcito <patcito@gmail.com>  Thu, 27 Mar 2026 00:00:00 +0000
