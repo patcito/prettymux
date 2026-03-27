@@ -395,12 +395,18 @@ jobs:
       - name: Checkout prettymux
         uses: actions/checkout@v4
 
-      - name: Checkout ghostty fork
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ env.GHOSTTY_REPO }}
-          ref: ${{ env.GHOSTTY_BRANCH }}
-          path: ghostty
+      - name: Download prebuilt ghostty
+        run: |
+          mkdir -p ghostty/zig-out ghostty/vendor
+          gh release download ${{ env.GHOSTTY_RELEASE }} \
+            --repo ${{ env.GHOSTTY_REPO }} \
+            --pattern 'ghostty-linux-x86_64.tar.gz' \
+            --pattern 'ghostty-glad.tar.gz'
+          tar xzf ghostty-linux-x86_64.tar.gz -C ghostty/
+          mv ghostty/lib ghostty/zig-out/lib
+          tar xzf ghostty-glad.tar.gz -C ghostty/vendor/
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Create source tarball
         run: |
@@ -412,8 +418,8 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           tar czf prettymux-${VERSION}.tar.gz \
             --transform "s,^,prettymux-${VERSION}/," \
-            --exclude='.git' --exclude='ghostty' --exclude='build' \
-            src/ packaging/ LICENSE
+            --exclude='.git' --exclude='build' \
+            src/ packaging/ ghostty/ LICENSE
 
       - name: Publish to PPA
         if: env.GPG_PRIVATE_KEY != ''
