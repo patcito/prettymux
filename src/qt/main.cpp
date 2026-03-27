@@ -58,6 +58,11 @@
 #include <vector>
 #include <algorithm>
 
+#ifdef _WIN32
+#include <BaseTsd.h>
+typedef SSIZE_T ssize_t;
+#endif
+
 extern "C" {
 #include "ghostty.h"
 }
