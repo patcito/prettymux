@@ -189,7 +189,8 @@ void session_save(GtkWindow *window, GtkWidget *browser_notebook,
 
 void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
                      GtkWidget *terminal_stack, GtkWidget *workspace_list,
-                     ghostty_app_t ghostty_app)
+                     ghostty_app_t ghostty_app,
+                     SessionAddBrowserTabFunc add_browser_tab_func)
 {
     char *path = session_path();
     if (!g_file_test(path, G_FILE_TEST_EXISTS)) {
@@ -245,6 +246,20 @@ void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
                 g_ptr_array_add(history, g_strdup(entry));
         }
         browser_tab_set_url_history(history);
+    }
+
+    /* Restore browser tabs */
+    if (json_object_has_member(obj, "browserTabs") && add_browser_tab_func) {
+        JsonArray *bt_arr = json_object_get_array_member(obj, "browserTabs");
+        guint bt_len = json_array_get_length(bt_arr);
+        guint bi;
+        for (bi = 0; bi < bt_len; bi++) {
+            JsonObject *bt_obj = json_array_get_object_element(bt_arr, bi);
+            const char *url = json_object_get_string_member_with_default(
+                bt_obj, "url", "");
+            if (url && url[0])
+                add_browser_tab_func(url);
+        }
     }
 
     /* Restore workspaces with full pane structure */

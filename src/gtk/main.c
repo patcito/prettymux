@@ -1101,7 +1101,8 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
 
     if (session_exists()) {
         session_restore(GTK_WINDOW(window), ui.browser_notebook,
-                        ui.terminal_stack, ui.workspace_list, g_ghostty_app);
+                        ui.terminal_stack, ui.workspace_list, g_ghostty_app,
+                        add_browser_tab);
     }
     // Always ensure at least one browser tab exists
     if (gtk_notebook_get_n_pages(GTK_NOTEBOOK(ui.browser_notebook)) == 0) {
