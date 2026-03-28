@@ -59,7 +59,18 @@ void theme_apply(void) {
         ".has-activity { color: %s; }"
         ".resize-overlay { background-color: alpha(%s, 0.92); color: %s;"
         "  border: 1px solid %s; border-radius: 6px; padding: 6px 14px;"
-        "  font-size: 12px; font-family: monospace; }",
+        "  font-size: 12px; font-family: monospace; }"
+        ".terminal-status { font-size: 10px; font-family: monospace;"
+        "  color: %s; padding: 1px 4px; }"
+        "@keyframes tab-blink {"
+        "  0%%, 100%% { border-color: transparent; }"
+        "  50%% { border-color: %s; }"
+        "}"
+        ".tab-blink {"
+        "  animation: tab-blink 0.5s ease-in-out 4;"
+        "  border: 2px solid transparent;"
+        "  border-radius: 4px;"
+        "}",
         t->bg, t->fg,
         t->surface,
         t->overlay,
@@ -75,7 +86,9 @@ void theme_apply(void) {
         t->fg,
         t->highlight,
         t->green,
-        t->overlay, t->fg, t->muted
+        t->overlay, t->fg, t->muted,
+        t->subtext,
+        t->accent
     );
 
     if (!css_provider) {

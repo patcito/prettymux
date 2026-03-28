@@ -33,6 +33,7 @@ static guint signals[N_SIGNALS];
 struct _GhosttyTerminal {
     GtkWidget parent_instance;
 
+    GtkWidget         *vbox;       /* Vertical box: gl_area + status bar */
     GtkGLArea         *gl_area;
     ghostty_surface_t  surface;
     guint              tick_source_id;
@@ -53,6 +54,11 @@ struct _GhosttyTerminal {
     /* Progress bar (OSC 9;4) */
     int                progress_state;   /* -1=none, 0=remove, 1=set, 2=error, 3=indeterminate, 4=pause */
     int                progress_percent; /* 0-100, or -1 when no progress */
+
+    /* Status bar */
+    GtkWidget         *status_bar;      /* GtkBox at bottom */
+    GtkWidget         *status_cwd;      /* GtkLabel: full CWD path */
+    GtkWidget         *status_git;      /* GtkLabel: git branch */
 };
 
 G_DEFINE_FINAL_TYPE(GhosttyTerminal, ghostty_terminal, GTK_TYPE_WIDGET)
@@ -485,10 +491,14 @@ ghostty_terminal_dispose(GObject *object)
 
     g_clear_object(&self->im_context);
 
-    /* Remove the child GtkGLArea from the widget tree */
-    if (self->gl_area) {
-        gtk_widget_unparent(GTK_WIDGET(self->gl_area));
+    /* Remove the child vbox (contains gl_area + status bar) from the widget tree */
+    if (self->vbox) {
+        gtk_widget_unparent(self->vbox);
+        self->vbox = NULL;
         self->gl_area = NULL;
+        self->status_bar = NULL;
+        self->status_cwd = NULL;
+        self->status_git = NULL;
     }
 
     G_OBJECT_CLASS(ghostty_terminal_parent_class)->dispose(object);
@@ -517,7 +527,7 @@ ghostty_terminal_class_init(GhosttyTerminalClass *klass)
     object_class->dispose = ghostty_terminal_dispose;
     object_class->finalize = ghostty_terminal_finalize;
 
-    /* Layout: the GtkGLArea fills the entire widget */
+    /* Layout: the vbox fills the entire widget */
     gtk_widget_class_set_layout_manager_type(widget_class, GTK_TYPE_BIN_LAYOUT);
 
     /* Signals */
@@ -578,6 +588,12 @@ ghostty_terminal_init(GhosttyTerminal *self)
     self->progress_state = -1;
     self->progress_percent = -1;
 
+    /* ── Create the vertical box container ── */
+
+    self->vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_set_hexpand(self->vbox, TRUE);
+    gtk_widget_set_vexpand(self->vbox, TRUE);
+    gtk_widget_set_parent(self->vbox, GTK_WIDGET(self));
 
     /* ── Create the GtkGLArea child ── */
 
@@ -588,7 +604,27 @@ ghostty_terminal_init(GhosttyTerminal *self)
     gtk_widget_set_hexpand(GTK_WIDGET(self->gl_area), TRUE);
     gtk_widget_set_vexpand(GTK_WIDGET(self->gl_area), TRUE);
     gtk_widget_set_focusable(GTK_WIDGET(self->gl_area), TRUE);
-    gtk_widget_set_parent(GTK_WIDGET(self->gl_area), GTK_WIDGET(self));
+    gtk_box_append(GTK_BOX(self->vbox), GTK_WIDGET(self->gl_area));
+
+    /* ── Create status bar ── */
+
+    self->status_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_add_css_class(self->status_bar, "terminal-status");
+    gtk_widget_set_size_request(self->status_bar, -1, 20);
+    gtk_widget_set_margin_start(self->status_bar, 4);
+    gtk_widget_set_margin_end(self->status_bar, 4);
+
+    self->status_cwd = gtk_label_new("");
+    gtk_label_set_xalign(GTK_LABEL(self->status_cwd), 0);
+    gtk_widget_set_hexpand(self->status_cwd, TRUE);
+    gtk_label_set_ellipsize(GTK_LABEL(self->status_cwd), PANGO_ELLIPSIZE_MIDDLE);
+    gtk_box_append(GTK_BOX(self->status_bar), self->status_cwd);
+
+    self->status_git = gtk_label_new("");
+    gtk_label_set_xalign(GTK_LABEL(self->status_git), 1);
+    gtk_box_append(GTK_BOX(self->status_bar), self->status_git);
+
+    gtk_box_append(GTK_BOX(self->vbox), self->status_bar);
 
     g_signal_connect(self->gl_area, "realize", G_CALLBACK(on_gl_realize), self);
     g_signal_connect(self->gl_area, "render", G_CALLBACK(on_gl_render), self);
@@ -797,4 +833,22 @@ ghostty_terminal_get_progress_state(GhosttyTerminal *self)
 {
     g_return_val_if_fail(GHOSTTY_IS_TERMINAL(self), -1);
     return self->progress_state;
+}
+
+/* ── Status bar ──────────────────────────────────────────────── */
+
+void
+ghostty_terminal_set_status(GhosttyTerminal *self,
+                            const char *cwd,
+                            const char *git_branch)
+{
+    g_return_if_fail(GHOSTTY_IS_TERMINAL(self));
+
+    if (self->status_cwd)
+        gtk_label_set_text(GTK_LABEL(self->status_cwd),
+                           (cwd && cwd[0]) ? cwd : "");
+
+    if (self->status_git)
+        gtk_label_set_text(GTK_LABEL(self->status_git),
+                           (git_branch && git_branch[0]) ? git_branch : "");
 }

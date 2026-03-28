@@ -44,16 +44,38 @@ static struct {
 
 // ── Notification system ──
 
-static GPtrArray *g_notifications = NULL;   /* GPtrArray of g_strdup'd strings */
+typedef struct {
+    char *text;
+    int   workspace_idx;
+    GtkNotebook *pane_notebook;   /* may become stale; checked before use */
+    int   tab_idx;
+} NotificationEntry;
+
+static void notification_entry_free(gpointer data) {
+    NotificationEntry *e = data;
+    g_free(e->text);
+    g_free(e);
+}
+
+static GPtrArray *g_notifications = NULL;
 
 static void notifications_init(void) {
     if (!g_notifications)
-        g_notifications = g_ptr_array_new_with_free_func(g_free);
+        g_notifications = g_ptr_array_new_with_free_func(notification_entry_free);
 }
 
-static void notifications_add(const char *msg) {
+static void notifications_add_full(const char *msg, int ws_idx,
+                                   GtkNotebook *pane, int tab_idx) {
     notifications_init();
-    g_ptr_array_add(g_notifications, g_strdup(msg));
+    NotificationEntry *e = g_new0(NotificationEntry, 1);
+    e->text = g_strdup(msg);
+    e->workspace_idx = ws_idx;
+    e->pane_notebook = pane;
+    e->tab_idx = tab_idx;
+    g_ptr_array_add(g_notifications, e);
+    /* Cap at 50 */
+    while (g_notifications->len > 50)
+        g_ptr_array_remove_index(g_notifications, 0);
 }
 
 static void notifications_clear(void) {
@@ -78,56 +100,124 @@ static void bell_button_update(void) {
     }
 }
 
-/* Clear all notifications popover action */
+/* ── Notification click-to-navigate ── */
+
+/*
+ * Data passed to notification row click handlers so we can navigate
+ * to the correct workspace / pane / tab.
+ */
+typedef struct {
+    int  workspace_idx;
+    GtkNotebook *pane_notebook;
+    int  tab_idx;
+    GtkWidget *popover;      /* so we can close the popover */
+} NotifNavData;
+
 static void
-on_notif_clear_all_activate(GSimpleAction *action, GVariant *param,
-                            gpointer user_data)
+on_notif_row_clicked(GtkButton *btn, gpointer user_data)
 {
-    (void)action; (void)param; (void)user_data;
-    notifications_clear();
-    bell_button_update();
+    (void)btn;
+    NotifNavData *nav = user_data;
+
+    /* Navigate to workspace */
+    if (nav->workspace_idx >= 0 && workspaces &&
+        nav->workspace_idx < (int)workspaces->len) {
+        workspace_switch(nav->workspace_idx,
+                         ui.terminal_stack, ui.workspace_list);
+    }
+
+    /* Navigate to tab in the pane notebook */
+    if (nav->pane_notebook && GTK_IS_NOTEBOOK(nav->pane_notebook) &&
+        nav->tab_idx >= 0 &&
+        nav->tab_idx < gtk_notebook_get_n_pages(nav->pane_notebook)) {
+        gtk_notebook_set_current_page(nav->pane_notebook, nav->tab_idx);
+        GtkWidget *page = gtk_notebook_get_nth_page(nav->pane_notebook,
+                                                     nav->tab_idx);
+        if (page) {
+            GtkWidget *child = gtk_widget_get_first_child(page);
+            if (child)
+                gtk_widget_grab_focus(child);
+            else
+                gtk_widget_grab_focus(page);
+        }
+    }
+
+    /* Bring window to front */
+    if (g_main_window)
+        gtk_window_present(g_main_window);
+
+    /* Close the popover */
+    if (nav->popover && GTK_IS_POPOVER(nav->popover))
+        gtk_popover_popdown(GTK_POPOVER(nav->popover));
 }
 
-/* Bell button clicked: show notification popover */
+/* Bell button clicked: show notification popover with clickable rows */
 static void
 on_bell_button_clicked(GtkButton *btn, gpointer user_data)
 {
     (void)user_data;
     GtkWidget *widget = GTK_WIDGET(btn);
 
-    GMenu *section = g_menu_new();
-
     notifications_init();
+
+    /* Build a custom popover with clickable rows instead of a GMenu */
+    GtkWidget *popover = gtk_popover_new();
+    gtk_widget_set_parent(popover, widget);
+
+    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    gtk_widget_set_margin_start(vbox, 4);
+    gtk_widget_set_margin_end(vbox, 4);
+    gtk_widget_set_margin_top(vbox, 4);
+    gtk_widget_set_margin_bottom(vbox, 4);
+    gtk_widget_set_size_request(vbox, 280, -1);
+
     if (g_notifications->len == 0) {
-        g_menu_append(section, "No notifications", NULL);
+        GtkWidget *lbl = gtk_label_new("No notifications");
+        gtk_widget_set_margin_top(lbl, 8);
+        gtk_widget_set_margin_bottom(lbl, 8);
+        gtk_box_append(GTK_BOX(vbox), lbl);
     } else {
         guint i;
-        for (i = 0; i < g_notifications->len; i++) {
-            const char *msg = g_ptr_array_index(g_notifications, i);
-            g_menu_append(section, msg, NULL);
+        /* Show most recent first */
+        for (i = g_notifications->len; i > 0; i--) {
+            NotificationEntry *e = g_ptr_array_index(g_notifications, i - 1);
+            GtkWidget *row_btn = gtk_button_new_with_label(e->text);
+            gtk_widget_set_hexpand(row_btn, TRUE);
+            gtk_button_set_has_frame(GTK_BUTTON(row_btn), FALSE);
+
+            NotifNavData *nav = g_new0(NotifNavData, 1);
+            nav->workspace_idx = e->workspace_idx;
+            nav->pane_notebook = e->pane_notebook;
+            nav->tab_idx = e->tab_idx;
+            nav->popover = popover;
+            g_object_set_data_full(G_OBJECT(row_btn), "notif-nav-data",
+                                   nav, g_free);
+
+            g_signal_connect(row_btn, "clicked",
+                             G_CALLBACK(on_notif_row_clicked), nav);
+            gtk_box_append(GTK_BOX(vbox), row_btn);
         }
+
+        /* Separator + Clear All */
+        GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+        gtk_widget_set_margin_top(sep, 4);
+        gtk_widget_set_margin_bottom(sep, 4);
+        gtk_box_append(GTK_BOX(vbox), sep);
+
+        GtkWidget *clear_btn = gtk_button_new_with_label("Clear All");
+        gtk_widget_set_hexpand(clear_btn, TRUE);
+        g_signal_connect_swapped(clear_btn, "clicked",
+                                 G_CALLBACK(notifications_clear), NULL);
+        g_signal_connect_swapped(clear_btn, "clicked",
+                                 G_CALLBACK(bell_button_update), NULL);
+        g_signal_connect_swapped(clear_btn, "clicked",
+                                 G_CALLBACK(gtk_popover_popdown),
+                                 popover);
+        gtk_box_append(GTK_BOX(vbox), clear_btn);
     }
 
-    GMenu *menu = g_menu_new();
-    g_menu_append_section(menu, NULL, G_MENU_MODEL(section));
-    g_menu_append(menu, "Clear All", "notif.clear-all");
-
-    /* Action group for clear-all */
-    GSimpleActionGroup *ag = g_simple_action_group_new();
-    GSimpleAction *act_clear = g_simple_action_new("clear-all", NULL);
-    g_signal_connect(act_clear, "activate",
-                     G_CALLBACK(on_notif_clear_all_activate), NULL);
-    g_action_map_add_action(G_ACTION_MAP(ag), G_ACTION(act_clear));
-    gtk_widget_insert_action_group(widget, "notif", G_ACTION_GROUP(ag));
-
-    GtkWidget *popover = gtk_popover_menu_new_from_model(G_MENU_MODEL(menu));
-    gtk_widget_set_parent(popover, widget);
+    gtk_popover_set_child(GTK_POPOVER(popover), vbox);
     gtk_popover_popup(GTK_POPOVER(popover));
-
-    g_object_unref(section);
-    g_object_unref(menu);
-    g_object_unref(act_clear);
-    g_object_unref(ag);
 }
 
 // ── Ghostty callbacks ──
@@ -475,12 +565,14 @@ typedef struct {
     GhosttyTerminal *terminal;
     Workspace       *workspace;
     int              workspace_idx;
+    GtkNotebook     *pane_notebook;
+    int              tab_idx;
 } SurfaceLookup;
 
 static SurfaceLookup
 find_terminal_for_surface(ghostty_surface_t surface)
 {
-    SurfaceLookup result = { NULL, NULL, -1 };
+    SurfaceLookup result = { NULL, NULL, -1, NULL, -1 };
     if (!surface || !workspaces)
         return result;
 
@@ -492,6 +584,23 @@ find_terminal_for_surface(ghostty_surface_t surface)
                 result.terminal = term;
                 result.workspace = ws;
                 result.workspace_idx = (int)wi;
+
+                /* Find which pane notebook and tab index this terminal is in */
+                if (ws->pane_notebooks) {
+                    guint pi;
+                    for (pi = 0; pi < ws->pane_notebooks->len; pi++) {
+                        GtkNotebook *nb = g_ptr_array_index(ws->pane_notebooks, pi);
+                        int n_pages = gtk_notebook_get_n_pages(nb);
+                        int pg;
+                        for (pg = 0; pg < n_pages; pg++) {
+                            if (gtk_notebook_get_nth_page(nb, pg) == GTK_WIDGET(term)) {
+                                result.pane_notebook = nb;
+                                result.tab_idx = pg;
+                                return result;
+                            }
+                        }
+                    }
+                }
                 return result;
             }
         }
@@ -847,6 +956,10 @@ static bool action_cb(ghostty_app_t app, ghostty_target_s target,
                 snprintf(loc.workspace->cwd, sizeof(loc.workspace->cwd),
                          "%s", action.action.pwd.pwd);
                 workspace_detect_git(loc.workspace);
+                /* Update the terminal status bar with CWD + git branch */
+                ghostty_terminal_set_status(loc.terminal,
+                                            action.action.pwd.pwd,
+                                            loc.workspace->git_branch);
             }
         }
         return true;
@@ -877,29 +990,47 @@ static bool action_cb(ghostty_app_t app, ghostty_target_s target,
 
             /* Desktop notification for long-running commands (>3s) */
             if (secs > 3.0) {
-                char body[128];
+                char body[256];
+                const char *ws_name = loc.workspace ? loc.workspace->name : "?";
+                const char *term_title = ghostty_terminal_get_title(loc.terminal);
+                if (!term_title || !term_title[0])
+                    term_title = "Terminal";
+
                 if (action.action.command_finished.exit_code == 0)
                     snprintf(body, sizeof(body),
-                             "Command completed in %.1fs", secs);
+                             "Command finished in %s/%s (%.1fs)",
+                             ws_name, term_title, secs);
                 else
                     snprintf(body, sizeof(body),
-                             "Command failed (exit %d) after %.1fs",
-                             action.action.command_finished.exit_code, secs);
+                             "Command failed (exit %d) in %s/%s (%.1fs)",
+                             action.action.command_finished.exit_code,
+                             ws_name, term_title, secs);
 
                 GNotification *n = g_notification_new("prettymux");
                 g_notification_set_body(n, body);
-                GApplication *a = g_application_get_default();
-                if (a) g_application_send_notification(a, NULL, n);
+
+                /* Set default action with navigation target */
+                GApplication *ga = g_application_get_default();
+                if (ga) {
+                    g_notification_set_default_action_and_target(n,
+                        "app.navigate-to-terminal", "(iii)",
+                        loc.workspace_idx,
+                        loc.tab_idx,
+                        0);
+                    g_application_send_notification(ga, NULL, n);
+                }
                 g_object_unref(n);
 
                 /* Add to in-app notification system */
                 {
-                    const char *term_title = ghostty_terminal_get_title(loc.terminal);
                     char notif_msg[256];
                     snprintf(notif_msg, sizeof(notif_msg),
-                             "Command finished in %s",
-                             (term_title && term_title[0]) ? term_title : "Terminal");
-                    notifications_add(notif_msg);
+                             "Command finished in %s/%s",
+                             ws_name, term_title);
+                    notifications_add_full(notif_msg,
+                                           loc.workspace_idx,
+                                           loc.pane_notebook,
+                                           loc.tab_idx);
                     bell_button_update();
                 }
             }
@@ -912,28 +1043,47 @@ static bool action_cb(ghostty_app_t app, ghostty_target_s target,
         if (loc.terminal)
             ghostty_terminal_notify_bell(loc.terminal);
 
-        /* Add to notification system */
+        /* Add to notification system with navigation info */
         {
+            const char *ws_name = loc.workspace ? loc.workspace->name : "?";
             const char *term_title = loc.terminal
                 ? ghostty_terminal_get_title(loc.terminal) : NULL;
+            if (!term_title || !term_title[0])
+                term_title = "Terminal";
             char notif_msg[256];
-            snprintf(notif_msg, sizeof(notif_msg), "Bell in %s",
-                     (term_title && term_title[0]) ? term_title : "Terminal");
-            notifications_add(notif_msg);
+            snprintf(notif_msg, sizeof(notif_msg), "Bell in %s/%s",
+                     ws_name, term_title);
+            notifications_add_full(notif_msg,
+                                   loc.workspace_idx,
+                                   loc.pane_notebook,
+                                   loc.tab_idx);
             bell_button_update();
         }
 
         /* Desktop notification if not the active workspace */
         if (loc.workspace_idx >= 0 && loc.workspace_idx != current_workspace) {
-            GError *bell_err = NULL;
-            GSubprocess *bell_proc = g_subprocess_new(
-                G_SUBPROCESS_FLAGS_NONE, &bell_err,
-                "notify-send", "prettymux", "Bell",
-                "--app-name=prettymux", NULL);
-            if (bell_proc)
-                g_object_unref(bell_proc);
-            else if (bell_err)
-                g_error_free(bell_err);
+            const char *ws_name = loc.workspace ? loc.workspace->name : "?";
+            const char *term_title = loc.terminal
+                ? ghostty_terminal_get_title(loc.terminal) : NULL;
+            if (!term_title || !term_title[0])
+                term_title = "Terminal";
+
+            char body[256];
+            snprintf(body, sizeof(body), "Bell in %s/%s", ws_name, term_title);
+
+            GNotification *n = g_notification_new("prettymux");
+            g_notification_set_body(n, body);
+
+            GApplication *ga = g_application_get_default();
+            if (ga) {
+                g_notification_set_default_action_and_target(n,
+                    "app.navigate-to-terminal", "(iii)",
+                    loc.workspace_idx,
+                    loc.tab_idx,
+                    0);
+                g_application_send_notification(ga, NULL, n);
+            }
+            g_object_unref(n);
         }
         return true;
     }
@@ -1188,6 +1338,53 @@ show_welcome_dialog(GtkWindow *parent)
     adw_dialog_present(dlg, GTK_WIDGET(parent));
 }
 
+/* ── GApplication action: navigate to a specific terminal from notification click ── */
+
+static void
+on_navigate_to_terminal(GSimpleAction *action_obj, GVariant *parameter,
+                        gpointer user_data)
+{
+    (void)action_obj;
+    (void)user_data;
+
+    if (!parameter)
+        return;
+
+    int ws_idx = 0, tab_idx = 0, pane_idx = 0;
+    g_variant_get(parameter, "(iii)", &ws_idx, &tab_idx, &pane_idx);
+
+    /* Switch to the workspace */
+    if (ws_idx >= 0 && workspaces && ws_idx < (int)workspaces->len) {
+        workspace_switch(ws_idx, ui.terminal_stack, ui.workspace_list);
+
+        Workspace *ws = g_ptr_array_index(workspaces, ws_idx);
+        /* Find the pane notebook (use pane_idx or fallback to first) */
+        GtkNotebook *nb = NULL;
+        if (ws->pane_notebooks && pane_idx >= 0 &&
+            pane_idx < (int)ws->pane_notebooks->len)
+            nb = g_ptr_array_index(ws->pane_notebooks, pane_idx);
+        else if (ws->pane_notebooks && ws->pane_notebooks->len > 0)
+            nb = g_ptr_array_index(ws->pane_notebooks, 0);
+
+        if (nb && tab_idx >= 0 &&
+            tab_idx < gtk_notebook_get_n_pages(nb)) {
+            gtk_notebook_set_current_page(nb, tab_idx);
+            GtkWidget *page = gtk_notebook_get_nth_page(nb, tab_idx);
+            if (page) {
+                GtkWidget *child = gtk_widget_get_first_child(page);
+                if (child)
+                    gtk_widget_grab_focus(child);
+                else
+                    gtk_widget_grab_focus(page);
+            }
+        }
+    }
+
+    /* Bring window to front */
+    if (g_main_window)
+        gtk_window_present(g_main_window);
+}
+
 static void on_activate(GtkApplication *app, gpointer user_data) {
     (void)user_data;
 
@@ -1208,6 +1405,17 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
 
     g_ghostty_app = ghostty_app_new(&rc, config);
     if (!g_ghostty_app) { fprintf(stderr, "ghostty_app_new failed\n"); return; }
+
+    // Register GApplication action for notification click navigation
+    {
+        GSimpleAction *nav_action = g_simple_action_new(
+            "navigate-to-terminal",
+            G_VARIANT_TYPE("(iii)"));
+        g_signal_connect(nav_action, "activate",
+                         G_CALLBACK(on_navigate_to_terminal), NULL);
+        g_action_map_add_action(G_ACTION_MAP(app), G_ACTION(nav_action));
+        g_object_unref(nav_action);
+    }
 
     // Theme
     theme_apply();
@@ -1335,7 +1543,7 @@ int main(int argc, char *argv[]) {
     // be available in all environments. Disable it for now.
     g_setenv("WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS", "1", FALSE);
 
-    AdwApplication *app = adw_application_new(NULL, G_APPLICATION_FLAGS_NONE);
+    AdwApplication *app = adw_application_new("com.prettymux.app", G_APPLICATION_FLAGS_NONE);
     g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
     int status = g_application_run(G_APPLICATION(app), argc, argv);
     g_object_unref(app);

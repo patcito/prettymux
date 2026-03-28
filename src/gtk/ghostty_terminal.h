@@ -100,6 +100,14 @@ int  ghostty_terminal_get_progress_percent(GhosttyTerminal *self);
 int  ghostty_terminal_get_progress_state(GhosttyTerminal *self);
 
 /*
+ * Status bar: thin bar below the terminal showing CWD + git branch.
+ * Called when CWD or git branch changes.
+ */
+void ghostty_terminal_set_status(GhosttyTerminal *self,
+                                 const char *cwd,
+                                 const char *git_branch);
+
+/*
  * Signals:
  *   "title-changed"      (GhosttyTerminal *self, const char *title)
  *   "pwd-changed"        (GhosttyTerminal *self, const char *cwd)

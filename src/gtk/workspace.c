@@ -84,8 +84,14 @@ static int workspace_index_of(Workspace *ws) {
 gboolean
 workspace_has_activity(Workspace *ws)
 {
-    /* Stub: no activity tracking yet. */
-    (void)ws;
+    if (!ws || !ws->terminals)
+        return FALSE;
+    guint i;
+    for (i = 0; i < ws->terminals->len; i++) {
+        GhosttyTerminal *term = g_ptr_array_index(ws->terminals, i);
+        if (ghostty_terminal_has_activity(term))
+            return TRUE;
+    }
     return FALSE;
 }
 
@@ -94,8 +100,35 @@ workspace_has_activity(Workspace *ws)
 void
 workspace_refresh_tab_labels(Workspace *ws)
 {
-    /* Stub: tab labels are updated via title-changed signals. */
-    (void)ws;
+    if (!ws || !ws->pane_notebooks)
+        return;
+    guint pi;
+    for (pi = 0; pi < ws->pane_notebooks->len; pi++) {
+        GtkNotebook *nb = g_ptr_array_index(ws->pane_notebooks, pi);
+        int n_pages = gtk_notebook_get_n_pages(nb);
+        int i;
+        for (i = 0; i < n_pages; i++) {
+            GtkWidget *page = gtk_notebook_get_nth_page(nb, i);
+            if (!GHOSTTY_IS_TERMINAL(page))
+                continue;
+            GhosttyTerminal *term = GHOSTTY_TERMINAL(page);
+            GtkWidget *tab_widget = gtk_notebook_get_tab_label(nb, page);
+            if (!tab_widget)
+                continue;
+            /* The tab widget is a GtkBox containing a GtkLabel */
+            GtkWidget *inner = gtk_widget_get_first_child(tab_widget);
+            if (!GTK_IS_LABEL(inner))
+                continue;
+            if (g_object_get_data(G_OBJECT(inner), "user-renamed"))
+                continue;
+            const char *title = ghostty_terminal_get_title(term);
+            char buf[128];
+            build_tab_label_text(term, title, buf, sizeof(buf));
+            gtk_label_set_text(GTK_LABEL(inner), buf);
+            gtk_widget_set_tooltip_text(inner,
+                                        (title && title[0]) ? title : "Terminal");
+        }
+    }
 }
 
 /* ── Sidebar label refresh ──────────────────────────────────────── */
@@ -168,6 +201,16 @@ on_git_branch_read(GObject *source, GAsyncResult *result, gpointer user_data)
     }
 
     workspace_refresh_sidebar_label(ws);
+
+    /* Update status bar on all terminals in this workspace */
+    if (ws->terminals) {
+        guint i;
+        for (i = 0; i < ws->terminals->len; i++) {
+            GhosttyTerminal *term = g_ptr_array_index(ws->terminals, i);
+            const char *cwd = ghostty_terminal_get_cwd(term);
+            ghostty_terminal_set_status(term, cwd, ws->git_branch);
+        }
+    }
 }
 
 void workspace_detect_git(Workspace *ws) {
@@ -197,11 +240,33 @@ void workspace_detect_git(Workspace *ws) {
 
 /* ── Tab title changed signal handler ───────────────────────────── */
 
+/*
+ * shorten_path: extract last directory component with "..." prefix.
+ * e.g. "/home/user/projects/myapp" -> ".../myapp"
+ * Writes into buf of size bufsz.  Returns buf.
+ */
+static const char *
+shorten_path(const char *path, char *buf, size_t bufsz)
+{
+    if (!path || !path[0]) {
+        snprintf(buf, bufsz, "Terminal");
+        return buf;
+    }
+    const char *last_slash = strrchr(path, '/');
+    if (last_slash && last_slash[1]) {
+        snprintf(buf, bufsz, ".../%s", last_slash + 1);
+    } else {
+        snprintf(buf, bufsz, "%.28s", path);
+    }
+    return buf;
+}
+
 static void
 build_tab_label_text(GhosttyTerminal *term, const char *title, char *buf, size_t bufsz)
 {
-    char short_title[32];
-    snprintf(short_title, sizeof(short_title), "%.28s", title ? title : "Terminal");
+    /* Shorten the title (typically CWD-based) to last directory component */
+    char short_title[64];
+    shorten_path(title, short_title, sizeof(short_title));
 
     /* Activity indicator (green dot prefix) */
     const char *activity_prefix = "";
@@ -246,6 +311,10 @@ static void on_title_changed(GhosttyTerminal *term, const char *title, gpointer 
     char buf[128];
     build_tab_label_text(term, title, buf, sizeof(buf));
     gtk_label_set_text(GTK_LABEL(label_ptr), buf);
+
+    /* Set tooltip with full path so user can hover to see it */
+    gtk_widget_set_tooltip_text(GTK_WIDGET(label_ptr),
+                                (title && title[0]) ? title : "Terminal");
 }
 
 /* ── Feature 4: Double-click to rename (tab labels + sidebar rows) ─ */
@@ -830,6 +899,18 @@ void workspace_remove(int index, GtkWidget *terminal_stack, GtkWidget *workspace
     g_free(ws);
 }
 
+/* ── Tab blink timeout callback ─────────────────────────────────── */
+
+static gboolean
+tab_blink_timeout_cb(gpointer user_data)
+{
+    GtkWidget *widget = GTK_WIDGET(user_data);
+    if (GTK_IS_WIDGET(widget))
+        gtk_widget_remove_css_class(widget, "tab-blink");
+    g_object_unref(widget);
+    return G_SOURCE_REMOVE;
+}
+
 void workspace_switch(int index, GtkWidget *terminal_stack, GtkWidget *workspace_list) {
     if (!workspaces || index < 0 || index >= (int)workspaces->len)
         return;
@@ -856,6 +937,30 @@ void workspace_switch(int index, GtkWidget *terminal_stack, GtkWidget *workspace
                     ghostty_terminal_clear_activity(GHOSTTY_TERMINAL(page));
             }
         }
+
+        /* Feature 4: Blink tabs that have activity */
+        if (ws->pane_notebooks) {
+            guint pi;
+            for (pi = 0; pi < ws->pane_notebooks->len; pi++) {
+                GtkNotebook *nb = g_ptr_array_index(ws->pane_notebooks, pi);
+                int n_pages = gtk_notebook_get_n_pages(nb);
+                int ti;
+                for (ti = 0; ti < n_pages; ti++) {
+                    GtkWidget *page = gtk_notebook_get_nth_page(nb, ti);
+                    if (!GHOSTTY_IS_TERMINAL(page))
+                        continue;
+                    if (!ghostty_terminal_has_activity(GHOSTTY_TERMINAL(page)))
+                        continue;
+                    GtkWidget *tab_widget = gtk_notebook_get_tab_label(nb, page);
+                    if (!tab_widget)
+                        continue;
+                    gtk_widget_add_css_class(tab_widget, "tab-blink");
+                    g_object_ref(tab_widget);
+                    g_timeout_add(2000, tab_blink_timeout_cb, tab_widget);
+                }
+            }
+        }
+
         workspace_refresh_tab_labels(ws);
         workspace_refresh_sidebar_label(ws);
     }
