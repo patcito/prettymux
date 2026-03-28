@@ -6,6 +6,7 @@
 
 GPtrArray *workspaces = NULL;
 int current_workspace = 0;
+static gboolean rename_in_progress = FALSE;
 
 /* Idle callback: set a GtkPaned position to 50% of its allocated size. */
 static gboolean set_paned_half(gpointer data) {
@@ -235,6 +236,13 @@ build_tab_label_text(GhosttyTerminal *term, const char *title, char *buf, size_t
 }
 
 static void on_title_changed(GhosttyTerminal *term, const char *title, gpointer label_ptr) {
+    /* Skip if rename is in progress or label was destroyed/unparented */
+    if (rename_in_progress) return;
+    if (!GTK_IS_LABEL(label_ptr)) return;
+    if (!gtk_widget_get_parent(GTK_WIDGET(label_ptr))) return;
+    /* Skip if user manually renamed this tab */
+    if (g_object_get_data(G_OBJECT(label_ptr), "user-renamed")) return;
+
     char buf[128];
     build_tab_label_text(term, title, buf, sizeof(buf));
     gtk_label_set_text(GTK_LABEL(label_ptr), buf);
@@ -256,8 +264,6 @@ typedef struct {
     gboolean is_workspace_row;   /* TRUE if this is a workspace sidebar rename */
 } RenameData;
 
-static gboolean rename_in_progress = FALSE;
-
 static void
 finish_rename(GtkEntry *entry, RenameData *rd)
 {
@@ -269,6 +275,10 @@ finish_rename(GtkEntry *entry, RenameData *rd)
     const char *new_text = gtk_entry_buffer_get_text(buf);
     if (new_text && new_text[0]) {
         gtk_label_set_text(GTK_LABEL(rd->label), new_text);
+        /* Mark as user-renamed so ghostty title changes don't overwrite */
+        if (!rd->is_workspace_row)
+            g_object_set_data(G_OBJECT(rd->label), "user-renamed",
+                              GINT_TO_POINTER(1));
         if (rd->is_workspace_row && rd->workspace) {
             snprintf(rd->workspace->name, sizeof(rd->workspace->name),
                      "%.60s", new_text);
