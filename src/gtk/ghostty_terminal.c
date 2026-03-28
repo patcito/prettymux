@@ -213,43 +213,57 @@ on_key_pressed(GtkEventControllerKey *controller,
                GdkModifierType        state,
                gpointer               user_data)
 {
-    (void)controller;
     GhosttyTerminal *self = GHOSTTY_TERMINAL(user_data);
 
     if (!self->surface)
         return FALSE;
 
-    /* Let IME have first crack */
-    if (gtk_im_context_filter_keypress(self->im_context,
-            gtk_event_controller_get_current_event(GTK_EVENT_CONTROLLER(controller))))
-        return TRUE;
+    /* Get the actual text produced by this key event from GDK,
+     * matching how Qt uses event->text().toUtf8(). */
+    GdkEvent *event = gtk_event_controller_get_current_event(
+        GTK_EVENT_CONTROLLER(controller));
+    char text_buf[32] = {0};
+    const char *key_text = NULL;
 
-    ghostty_input_key_s ke = {0};
-    ke.action = GHOSTTY_ACTION_PRESS;
-    ke.keycode = keycode; /* XKB hardware keycode from GDK */
-    ke.mods = translate_mods(state);
-    ke.composing = false;
-
-    /* For plain keys (no Ctrl/Alt/Super), send text */
-    if (!(state & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK))) {
-        gunichar uc = gdk_keyval_to_unicode(keyval);
-        if (uc >= 0x20 && uc != 0) {
-            char buf[8];
-            int len = g_unichar_to_utf8(uc, buf);
-            buf[len] = '\0';
-            ke.text = buf;
+    if (event && gdk_event_get_event_type(event) == GDK_KEY_PRESS) {
+        guint kv = gdk_key_event_get_keyval(event);
+        gunichar uc = gdk_keyval_to_unicode(kv);
+        if (uc >= 0x20 && uc != 0 &&
+            !(state & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK))) {
+            int len = g_unichar_to_utf8(uc, text_buf);
+            text_buf[len] = '\0';
+            key_text = text_buf;
         }
     }
 
-    /* Always set unshifted_codepoint */
+    /* For IME composition (CJK etc.), let IME handle it.
+     * But skip IME for ordinary ASCII to avoid ghostty_surface_text paste path. */
+    if (!key_text || (unsigned char)key_text[0] > 0x7f) {
+        if (gtk_im_context_filter_keypress(self->im_context, event))
+            return TRUE;
+    }
+
+    ghostty_input_key_s ke = {0};
+    ke.action = GHOSTTY_ACTION_PRESS;
+    ke.keycode = keycode;
+    ke.mods = translate_mods(state);
+    ke.composing = false;
+    ke.text = key_text;
+
+    /* Set unshifted_codepoint */
     guint lower = gdk_keyval_to_lower(keyval);
     gunichar cp = gdk_keyval_to_unicode(lower);
     ke.unshifted_codepoint = (cp < 0x110000) ? cp : 0;
 
+    /* Set consumed_mods: modifiers consumed by the keyboard layout
+     * (e.g. Shift for uppercase). Ghostty uses this to strip mods
+     * from text events. */
+    if (event && gdk_event_get_event_type(event) == GDK_KEY_PRESS) {
+        GdkModifierType consumed = gdk_key_event_get_consumed_modifiers(event);
+        ke.consumed_mods = translate_mods(consumed);
+    }
+
     ghostty_surface_key(self->surface, ke);
-    /* Immediate tick + render so cursor position updates without lag */
-    if (g_ghostty_app)
-        ghostty_app_tick(g_ghostty_app);
     gtk_gl_area_queue_render(self->gl_area);
     return TRUE;
 }
@@ -280,13 +294,29 @@ on_key_released(GtkEventControllerKey *controller,
 static void
 on_im_commit(GtkIMContext *im, const char *text, gpointer user_data)
 {
+    (void)im;
     GhosttyTerminal *self = GHOSTTY_TERMINAL(user_data);
-    if (self->surface && text && *text) {
-        ghostty_surface_text(self->surface, text, strlen(text));
-        if (g_ghostty_app)
-            ghostty_app_tick(g_ghostty_app);
-        gtk_gl_area_queue_render(self->gl_area);
-    }
+    if (!self->surface || !text || !*text)
+        return;
+
+    /* Send committed text as a synthetic key event (keycode=0),
+     * NOT as ghostty_surface_text which is the paste API.
+     * This matches ghostty's native GTK apprt behavior. */
+    ghostty_input_key_s ke = {0};
+    ke.action = GHOSTTY_ACTION_PRESS;
+    ke.keycode = 0;
+    ke.mods = GHOSTTY_MODS_NONE;
+    ke.text = text;
+    ke.composing = false;
+    ke.unshifted_codepoint = 0;
+    ghostty_surface_key(self->surface, ke);
+
+    /* Also send release */
+    ke.action = GHOSTTY_ACTION_RELEASE;
+    ke.text = NULL;
+    ghostty_surface_key(self->surface, ke);
+
+    gtk_gl_area_queue_render(self->gl_area);
 }
 
 static void
