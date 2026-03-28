@@ -6,6 +6,8 @@
 #include <json-glib/json-glib.h>
 #include <string.h>
 
+static gboolean session_restore_cwds_cb(gpointer data);
+
 static char *session_path(void) {
     char *dir = g_build_filename(g_get_home_dir(), ".prettymux", "sessions", NULL);
     g_mkdir_with_parents(dir, 0755);
@@ -332,18 +334,23 @@ void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
                                 ws, nb, ghostty_app);
                         }
 
-                        /* Set tab names */
+                        /* Set tab names + restore CWD */
                         for (ti = 0; ti < n_tabs; ti++) {
                             JsonObject *tab_obj =
                                 json_array_get_object_element(tabs_arr, ti);
                             const char *tab_name =
                                 json_object_get_string_member_with_default(
                                     tab_obj, "name", "Terminal");
+                            const char *saved_cwd =
+                                json_object_get_string_member_with_default(
+                                    tab_obj, "cwd", "");
 
                             int page_idx = (int)ti;
                             if (page_idx < gtk_notebook_get_n_pages(nb)) {
                                 GtkWidget *child =
                                     gtk_notebook_get_nth_page(nb, page_idx);
+
+                                /* Set tab name */
                                 GtkWidget *tab_w =
                                     gtk_notebook_get_tab_label(nb, child);
                                 if (tab_w) {
@@ -352,6 +359,16 @@ void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
                                     if (GTK_IS_LABEL(inner))
                                         gtk_label_set_text(
                                             GTK_LABEL(inner), tab_name);
+                                }
+
+                                /* Restore CWD: type cd command after delay */
+                                if (saved_cwd[0] && GHOSTTY_IS_TERMINAL(child)) {
+                                    char *cmd = g_strdup_printf(
+                                        "cd '%s' && clear\n",
+                                        saved_cwd);
+                                    /* Store cmd on the widget, type it after 800ms */
+                                    g_object_set_data_full(G_OBJECT(child),
+                                        "restore-cwd", cmd, g_free);
                                 }
                             }
                         }
@@ -376,4 +393,47 @@ void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
         workspace_switch(aw, terminal_stack, workspace_list);
 
     g_object_unref(parser);
+
+    /* After 800ms, type 'cd <path> && clear' into terminals that had a saved CWD */
+    g_timeout_add(800, session_restore_cwds_cb, NULL);
+}
+
+static gboolean
+session_restore_cwds_cb(gpointer data)
+{
+    (void)data;
+    if (!workspaces) return G_SOURCE_REMOVE;
+
+    for (guint wi = 0; wi < workspaces->len; wi++) {
+        Workspace *ws = g_ptr_array_index(workspaces, wi);
+        if (!ws || !ws->pane_notebooks) continue;
+
+        for (guint pi = 0; pi < ws->pane_notebooks->len; pi++) {
+            GtkNotebook *nb = g_ptr_array_index(ws->pane_notebooks, pi);
+            if (!GTK_IS_NOTEBOOK(nb)) continue;
+
+            int n = gtk_notebook_get_n_pages(nb);
+            for (int ti = 0; ti < n; ti++) {
+                GtkWidget *child = gtk_notebook_get_nth_page(nb, ti);
+                if (!child || !GHOSTTY_IS_TERMINAL(child)) continue;
+
+                const char *cmd = g_object_get_data(G_OBJECT(child), "restore-cwd");
+                if (!cmd || !cmd[0]) continue;
+
+                ghostty_surface_t surface =
+                    ghostty_terminal_get_surface(GHOSTTY_TERMINAL(child));
+                if (surface) {
+                    /* Use ghostty_surface_key with text to type the command */
+                    ghostty_input_key_s ke = {0};
+                    ke.action = GHOSTTY_ACTION_PRESS;
+                    ke.keycode = 0;
+                    ke.text = cmd;
+                    ghostty_surface_key(surface, ke);
+                }
+                /* Clear the restore data */
+                g_object_set_data(G_OBJECT(child), "restore-cwd", NULL);
+            }
+        }
+    }
+    return G_SOURCE_REMOVE;
 }

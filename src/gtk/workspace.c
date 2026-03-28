@@ -138,47 +138,81 @@ workspace_refresh_tab_labels(Workspace *ws)
 
 /* ── Sidebar label refresh ──────────────────────────────────────── */
 
+/* Shorten a path for display: "~/foo/.../last" or just "last" if tight */
+static void shorten_cwd_for_sidebar(const char *cwd, char *buf, size_t bufsz) {
+    if (!cwd || !cwd[0]) { buf[0] = '\0'; return; }
+
+    const char *home = g_get_home_dir();
+    size_t homelen = home ? strlen(home) : 0;
+    const char *display = cwd;
+    char tilde_path[256];
+
+    /* Replace $HOME with ~ */
+    if (home && homelen > 0 && strncmp(cwd, home, homelen) == 0) {
+        snprintf(tilde_path, sizeof(tilde_path), "~%s", cwd + homelen);
+        display = tilde_path;
+    }
+
+    /* Find last component */
+    const char *last_slash = strrchr(display, '/');
+    const char *last = last_slash ? last_slash + 1 : display;
+    if (!*last && last_slash > display) {
+        /* Trailing slash — back up one more */
+        const char *p = last_slash - 1;
+        while (p > display && *p != '/') p--;
+        if (*p == '/') p++;
+        last = p;
+    }
+
+    /* If path is short enough, show it all */
+    if (strlen(display) <= bufsz - 1) {
+        snprintf(buf, bufsz, "%s", display);
+    } else {
+        /* Show "~/.../last" */
+        snprintf(buf, bufsz, "~/.../%.20s", last);
+    }
+}
+
 void workspace_refresh_sidebar_label(Workspace *ws) {
     if (!ws || !ws->sidebar_label) return;
-    /* Guard: skip if the label has been removed from its parent (during rename) */
     if (!GTK_IS_LABEL(ws->sidebar_label) ||
         g_object_get_data(G_OBJECT(ws->sidebar_label), "rename-in-progress") ||
         !gtk_widget_get_parent(ws->sidebar_label))
         return;
-    char buf[512];
+
     gboolean has_act = workspace_has_activity(ws);
+    char buf[256];
 
-    /* Build the first line: [activity dot] name [branch] */
-    char line1[256];
-    if (ws->git_branch[0]) {
-        if (has_act)
-            snprintf(line1, sizeof(line1), "\342\227\217 %s [%s]",
-                     ws->name, ws->git_branch);
-        else
-            snprintf(line1, sizeof(line1), "%s [%s]",
-                     ws->name, ws->git_branch);
-    } else {
-        if (has_act)
-            snprintf(line1, sizeof(line1), "\342\227\217 %s", ws->name);
-        else
-            snprintf(line1, sizeof(line1), "%s", ws->name);
-    }
+    /* Activity dot + workspace name */
+    const char *dot = has_act ? "\342\227\217 " : "";
 
-    /* Build optional second line: notification or port info */
-    if (ws->notification[0]) {
-        char *escaped_line1 = g_markup_escape_text(line1, -1);
-        char *escaped_note  = g_markup_escape_text(ws->notification, -1);
-        snprintf(buf, sizeof(buf),
-                 "%s\n<small><i>%s</i></small>",
-                 escaped_line1, escaped_note);
-        g_free(escaped_line1);
-        g_free(escaped_note);
+    /* Git branch suffix */
+    char branch[64] = "";
+    if (ws->git_branch[0])
+        snprintf(branch, sizeof(branch), " [%s]", ws->git_branch);
+
+    /* Compact CWD */
+    char short_cwd[32];
+    shorten_cwd_for_sidebar(ws->cwd, short_cwd, sizeof(short_cwd));
+
+    /* Build label: "● Name [branch]\n~/.../dir" */
+    if (short_cwd[0]) {
+        char *esc_line1 = g_markup_escape_text(
+            g_strdup_printf("%s%s%s", dot, ws->name, branch), -1);
+        char *esc_cwd = g_markup_escape_text(short_cwd, -1);
+        snprintf(buf, sizeof(buf), "%s\n<small>%s</small>", esc_line1, esc_cwd);
+        g_free(esc_line1);
+        g_free(esc_cwd);
         gtk_label_set_markup(GTK_LABEL(ws->sidebar_label), buf);
     } else {
-        gtk_label_set_text(GTK_LABEL(ws->sidebar_label), line1);
+        snprintf(buf, sizeof(buf), "%s%s%s", dot, ws->name, branch);
+        gtk_label_set_text(GTK_LABEL(ws->sidebar_label), buf);
     }
 
-    /* Apply or remove the "has-activity" CSS class on the label */
+    /* Tooltip: full CWD path */
+    if (ws->cwd[0])
+        gtk_widget_set_tooltip_text(ws->sidebar_label, ws->cwd);
+
     if (has_act)
         gtk_widget_add_css_class(ws->sidebar_label, "has-activity");
     else
@@ -807,6 +841,9 @@ static GtkWidget *create_workspace_row(Workspace *ws, int ws_idx) {
         ws->name, NULL, ws, TRUE, &inner_label);
     gtk_widget_add_css_class(box, "sidebar-row");
     ws->sidebar_label = inner_label;
+    /* Prevent sidebar from expanding — ellipsize long paths */
+    gtk_label_set_ellipsize(GTK_LABEL(inner_label), PANGO_ELLIPSIZE_MIDDLE);
+    gtk_label_set_max_width_chars(GTK_LABEL(inner_label), 22);
 
     /* Set up drop target for workspace DnD */
     setup_ws_sidebar_drop_target(box, ws_idx);
