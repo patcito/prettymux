@@ -101,6 +101,10 @@ workspace_refresh_tab_labels(Workspace *ws)
 
 void workspace_refresh_sidebar_label(Workspace *ws) {
     if (!ws || !ws->sidebar_label) return;
+    /* Guard: skip if the label has been removed from its parent (during rename) */
+    if (!GTK_IS_LABEL(ws->sidebar_label) ||
+        !gtk_widget_get_parent(ws->sidebar_label))
+        return;
     char buf[512];
     gboolean has_act = workspace_has_activity(ws);
 
@@ -272,6 +276,7 @@ finish_rename(GtkEntry *entry, RenameData *rd)
 
     gtk_box_remove(GTK_BOX(parent), entry_widget);
     gtk_box_append(GTK_BOX(parent), rd->label);
+    g_object_unref(rd->label); /* Balance the ref from on_label_double_click */
     gtk_widget_set_visible(rd->label, TRUE);
 }
 
@@ -304,7 +309,9 @@ on_label_double_click(GtkGestureClick *gesture, int n_press,
     GtkWidget *parent = rd->event_box;
     const char *current_text = gtk_label_get_text(GTK_LABEL(rd->label));
 
-    /* Hide label, insert entry */
+    /* Hide label, insert entry.
+     * Ref the label so it survives removal from the box. */
+    g_object_ref(rd->label);
     gtk_box_remove(GTK_BOX(parent), rd->label);
 
     GtkWidget *entry = gtk_entry_new();
