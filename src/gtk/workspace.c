@@ -1421,36 +1421,38 @@ workspace_close_pane(Workspace *ws, GtkNotebook *pane)
     /* Remove the pane from pane_notebooks */
     g_ptr_array_remove(ws->pane_notebooks, pane);
 
-    /* Ref sibling so it survives reparenting. Remove the closing pane first
-     * (set its side to NULL), then remove sibling, then destroy the paned
-     * and re-attach sibling to grandparent. This avoids focus-tracking
-     * crashes from setting both children to NULL simultaneously. */
+    /* Determine which side of grandparent holds parent_paned */
+    gboolean is_start_in_gp = FALSE;
+    if (GTK_IS_PANED(grandparent))
+        is_start_in_gp = (gtk_paned_get_start_child(GTK_PANED(grandparent))
+                          == GTK_WIDGET(parent_paned));
+
+    /* Ref sibling so it survives reparenting */
     g_object_ref(sibling);
 
-    /* Detach: remove the pane being closed, then the sibling */
-    if (start == pane_widget) {
-        gtk_paned_set_start_child(parent_paned, NULL);
-        gtk_paned_set_end_child(parent_paned, NULL);
-    } else {
-        gtk_paned_set_end_child(parent_paned, NULL);
-        gtk_paned_set_start_child(parent_paned, NULL);
-    }
+    /* Detach both children from parent_paned */
+    gtk_paned_set_start_child(parent_paned, NULL);
+    gtk_paned_set_end_child(parent_paned, NULL);
 
-    /* Replace the paned with the sibling in its grandparent */
+    /* Now remove the (empty) parent_paned from its grandparent
+     * and replace it with the sibling */
     if (GTK_IS_PANED(grandparent)) {
-        GtkWidget *gp_start = gtk_paned_get_start_child(GTK_PANED(grandparent));
-        if (gp_start == GTK_WIDGET(parent_paned)) {
+        /* Remove the empty paned from grandparent */
+        if (is_start_in_gp)
+            gtk_paned_set_start_child(GTK_PANED(grandparent), NULL);
+        else
+            gtk_paned_set_end_child(GTK_PANED(grandparent), NULL);
+
+        /* Insert sibling in its place */
+        if (is_start_in_gp)
             gtk_paned_set_start_child(GTK_PANED(grandparent), sibling);
-        } else {
+        else
             gtk_paned_set_end_child(GTK_PANED(grandparent), sibling);
-        }
+
     } else if (GTK_IS_STACK(grandparent)) {
         int ws_idx = workspace_index_of(ws);
 
-        /* Remove the old paned from the stack */
-        g_object_ref(GTK_WIDGET(parent_paned));
         gtk_stack_remove(GTK_STACK(grandparent), GTK_WIDGET(parent_paned));
-        g_object_unref(GTK_WIDGET(parent_paned));
 
         char stack_name[32];
         snprintf(stack_name, sizeof(stack_name), "ws-%d",
