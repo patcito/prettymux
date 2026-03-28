@@ -256,9 +256,15 @@ typedef struct {
     gboolean is_workspace_row;   /* TRUE if this is a workspace sidebar rename */
 } RenameData;
 
+static gboolean rename_in_progress = FALSE;
+
 static void
 finish_rename(GtkEntry *entry, RenameData *rd)
 {
+    /* Guard: finish_rename can be called twice (activate + focus-leave) */
+    if (!rename_in_progress) return;
+    rename_in_progress = FALSE;
+
     GtkEntryBuffer *buf = gtk_entry_get_buffer(GTK_ENTRY(entry));
     const char *new_text = gtk_entry_buffer_get_text(buf);
     if (new_text && new_text[0]) {
@@ -266,11 +272,10 @@ finish_rename(GtkEntry *entry, RenameData *rd)
         if (rd->is_workspace_row && rd->workspace) {
             snprintf(rd->workspace->name, sizeof(rd->workspace->name),
                      "%.60s", new_text);
-            workspace_refresh_sidebar_label(rd->workspace);
         }
     }
 
-    /* Remove the entry and show the label again */
+    /* Remove the entry, re-add the label */
     GtkWidget *entry_widget = GTK_WIDGET(entry);
     GtkWidget *parent = rd->event_box;
 
@@ -278,6 +283,10 @@ finish_rename(GtkEntry *entry, RenameData *rd)
     gtk_box_append(GTK_BOX(parent), rd->label);
     g_object_unref(rd->label); /* Balance the ref from on_label_double_click */
     gtk_widget_set_visible(rd->label, TRUE);
+
+    /* Now safe to refresh sidebar */
+    if (rd->is_workspace_row && rd->workspace)
+        workspace_refresh_sidebar_label(rd->workspace);
 }
 
 static void
@@ -311,6 +320,7 @@ on_label_double_click(GtkGestureClick *gesture, int n_press,
 
     /* Hide label, insert entry.
      * Ref the label so it survives removal from the box. */
+    rename_in_progress = TRUE;
     g_object_ref(rd->label);
     gtk_box_remove(GTK_BOX(parent), rd->label);
 
