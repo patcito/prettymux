@@ -527,6 +527,28 @@ static gboolean on_key_pressed(GtkEventControllerKey *ctrl, guint keyval,
         return TRUE;
     }
 
+    /* ── Ctrl+Tab / Ctrl+Shift+Tab: cycle terminal tabs ── */
+    if (lower == GDK_KEY_Tab && (mods == GDK_CONTROL_MASK ||
+                                  mods == (GDK_CONTROL_MASK | GDK_SHIFT_MASK))) {
+        Workspace *ws = workspace_get_current();
+        if (ws) {
+            GtkNotebook *nb = workspace_get_focused_pane(ws);
+            if (nb) {
+                int n = gtk_notebook_get_n_pages(nb);
+                if (n > 1) {
+                    int cur = gtk_notebook_get_current_page(nb);
+                    int next;
+                    if (mods & GDK_SHIFT_MASK)
+                        next = (cur - 1 + n) % n;
+                    else
+                        next = (cur + 1) % n;
+                    gtk_notebook_set_current_page(nb, next);
+                }
+            }
+        }
+        return TRUE;
+    }
+
     /* ── Ctrl+W (no shift): close current browser tab ── */
     if (mods == GDK_CONTROL_MASK && lower == GDK_KEY_w) {
         if (gtk_widget_get_visible(ui.browser_notebook)) {

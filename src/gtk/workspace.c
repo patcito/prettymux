@@ -488,6 +488,37 @@ on_label_double_click(GtkGestureClick *gesture, int n_press,
  * Returns a GtkBox containing a GtkLabel with a gesture controller.
  * *out_label receives the inner GtkLabel pointer (for title-changed).
  */
+/* Close button (X) on tab label */
+static void
+on_tab_close_clicked(GtkButton *btn, gpointer user_data)
+{
+    (void)user_data;
+    GtkWidget *terminal = g_object_get_data(G_OBJECT(btn), "terminal-widget");
+    Workspace *ws = g_object_get_data(G_OBJECT(btn), "workspace");
+    if (!terminal || !ws) return;
+
+    /* Find which notebook contains this terminal */
+    GtkWidget *parent = gtk_widget_get_parent(terminal);
+    if (!GTK_IS_NOTEBOOK(parent)) return;
+    GtkNotebook *nb = GTK_NOTEBOOK(parent);
+
+    int n = gtk_notebook_get_n_pages(nb);
+    if (n <= 1 && ws->pane_notebooks && ws->pane_notebooks->len <= 1)
+        return; /* Don't close the last tab in the last pane */
+
+    int page = gtk_notebook_page_num(nb, terminal);
+    if (page < 0) return;
+
+    g_ptr_array_remove(ws->terminals, terminal);
+    gtk_notebook_remove_page(nb, page);
+
+    /* If notebook is now empty and there are other panes, close the pane */
+    if (gtk_notebook_get_n_pages(nb) == 0 &&
+        ws->pane_notebooks && ws->pane_notebooks->len > 1) {
+        workspace_close_pane(ws, nb);
+    }
+}
+
 static GtkWidget *
 create_editable_tab_label(const char *text, GtkWidget *terminal,
                           Workspace *ws, gboolean is_workspace_row,
@@ -513,6 +544,19 @@ create_editable_tab_label(const char *text, GtkWidget *terminal,
     g_signal_connect(click, "pressed",
                      G_CALLBACK(on_label_double_click), rd);
     gtk_widget_add_controller(box, GTK_EVENT_CONTROLLER(click));
+
+    /* Add close button (X) for terminal tabs, not sidebar rows */
+    if (!is_workspace_row && terminal) {
+        GtkWidget *close_btn = gtk_button_new_from_icon_name("window-close-symbolic");
+        gtk_button_set_has_frame(GTK_BUTTON(close_btn), FALSE);
+        gtk_widget_set_valign(close_btn, GTK_ALIGN_CENTER);
+        gtk_widget_set_margin_start(close_btn, 4);
+        g_object_set_data(G_OBJECT(close_btn), "terminal-widget", terminal);
+        g_object_set_data(G_OBJECT(close_btn), "workspace", ws);
+        g_signal_connect(close_btn, "clicked",
+                         G_CALLBACK(on_tab_close_clicked), NULL);
+        gtk_box_append(GTK_BOX(box), close_btn);
+    }
 
     if (out_label)
         *out_label = label;
