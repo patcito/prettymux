@@ -287,6 +287,11 @@ browser_tab_init(BrowserTab *self)
     self->web_view = WEBKIT_WEB_VIEW(webkit_web_view_new());
     gtk_widget_set_vexpand(GTK_WIDGET(self->web_view), TRUE);
     gtk_widget_set_hexpand(GTK_WIDGET(self->web_view), TRUE);
+
+    /* Enable developer tools (Web Inspector) */
+    WebKitSettings *settings = webkit_web_view_get_settings(self->web_view);
+    webkit_settings_set_enable_developer_extras(settings, TRUE);
+
     gtk_box_append(GTK_BOX(self), GTK_WIDGET(self->web_view));
 
     /* --- connect signals --- */

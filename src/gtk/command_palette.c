@@ -432,7 +432,7 @@ static void inject_palette_css(void) {
         "  border: 1px solid alpha(%s, 0.2);"
         "  border-radius: 10px;"
         "  padding: 12px 16px;"
-        "  font-size: 15px;"
+        "  font-size: 22px;"
         "  font-family: 'IBM Plex Mono', 'JetBrains Mono', monospace;"
         "}"
         ".palette-search:focus {"
@@ -440,22 +440,22 @@ static void inject_palette_css(void) {
         "  outline: none;"
         "}"
         ".palette-title {"
-        "  font-size: 11px;"
+        "  font-size: 14px;"
         "  font-weight: 600;"
         "  letter-spacing: 1.5px;"
         "  color: %s;"
         "}"
         ".palette-row {"
-        "  padding: 8px 16px;"
+        "  padding: 10px 20px;"
         "}"
         ".palette-badge {"
-        "  font-size: 9px;"
+        "  font-size: 13px;"
         "  font-weight: 700;"
         "  font-family: 'IBM Plex Mono', monospace;"
         "  letter-spacing: 0.5px;"
-        "  padding: 2px 6px;"
+        "  padding: 3px 8px;"
         "  border-radius: 4px;"
-        "  min-width: 28px;"
+        "  min-width: 36px;"
         "}"
         ".palette-badge-ws {"
         "  background-color: alpha(%s, 0.15);"
@@ -470,12 +470,12 @@ static void inject_palette_css(void) {
         "  color: %s;"
         "}"
         ".palette-name {"
-        "  font-size: 13px;"
+        "  font-size: 18px;"
         "  font-weight: 500;"
         "  color: %s;"
         "}"
         ".palette-detail {"
-        "  font-size: 11px;"
+        "  font-size: 14px;"
         "  color: %s;"
         "  font-family: 'IBM Plex Mono', monospace;"
         "}"
@@ -490,7 +490,7 @@ static void inject_palette_css(void) {
         "  background-color: alpha(%s, 0.08);"
         "}"
         ".palette-hint {"
-        "  font-size: 11px;"
+        "  font-size: 13px;"
         "  color: %s;"
         "  font-family: 'IBM Plex Mono', monospace;"
         "}",
@@ -541,7 +541,7 @@ command_palette_init(CommandPalette *self)
     /* ── Card ── */
     self->card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_widget_add_css_class(self->card, "palette-card");
-    gtk_widget_set_size_request(self->card, 560, -1);
+    gtk_widget_set_size_request(self->card, 680, -1);
     gtk_widget_set_halign(self->card, GTK_ALIGN_CENTER);
     gtk_widget_set_valign(self->card, GTK_ALIGN_START);
     gtk_widget_set_margin_top(self->card, 100);

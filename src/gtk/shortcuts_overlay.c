@@ -45,31 +45,44 @@ inject_css(void)
         "  color: %s;"
         "  letter-spacing: 1px;"
         "}"
+        ".shortcuts-search {"
+        "  background: alpha(%s, 0.5);"
+        "  color: %s;"
+        "  border: 1px solid alpha(%s, 0.2);"
+        "  border-radius: 10px;"
+        "  padding: 10px 14px;"
+        "  font-size: 16px;"
+        "  font-family: 'SF Mono', 'JetBrains Mono', monospace;"
+        "  margin-bottom: 16px;"
+        "}"
+        ".shortcuts-search:focus {"
+        "  border-color: %s;"
+        "}"
         ".shortcuts-section {"
-        "  font-size: 11px;"
+        "  font-size: 14px;"
         "  font-weight: 600;"
         "  letter-spacing: 1.5px;"
         "  color: %s;"
-        "  margin-top: 16px;"
-        "  margin-bottom: 6px;"
+        "  margin-top: 20px;"
+        "  margin-bottom: 8px;"
         "}"
         ".shortcut-row {"
-        "  padding: 5px 0px;"
+        "  padding: 6px 0px;"
         "}"
         ".shortcut-label {"
-        "  font-size: 13px;"
+        "  font-size: 16px;"
         "  color: %s;"
         "}"
         ".key-badge {"
         "  background-color: alpha(%s, 0.6);"
         "  border: 1px solid alpha(%s, 0.15);"
         "  border-radius: 6px;"
-        "  padding: 2px 8px;"
-        "  font-size: 11px;"
+        "  padding: 3px 10px;"
+        "  font-size: 14px;"
         "  font-weight: 500;"
         "  font-family: 'SF Mono', 'JetBrains Mono', 'Fira Code', monospace;"
         "  color: %s;"
-        "  min-height: 20px;"
+        "  min-height: 24px;"
         "}"
         ".shortcuts-divider {"
         "  background-color: alpha(%s, 0.2);"
@@ -96,6 +109,8 @@ inject_css(void)
         t->fg,                 /* card border */
         t->fg,                 /* title color */
         t->subtext,            /* subtitle */
+        t->overlay, t->fg, t->fg, /* search: bg, text, border */
+        t->accent,             /* search focus */
         t->accent,             /* section header */
         t->fg,                 /* shortcut label */
         t->overlay,            /* key badge bg */
@@ -303,6 +318,52 @@ categorize(const char *action)
     return 4; /* tools: search, shortcuts, history, theme, notes, terminal, copy, paste */
 }
 
+/* ── Search filter for shortcuts ───────────────────────────────── */
+
+static void
+filter_column_rows(GtkWidget *col, const char *query)
+{
+    for (GtkWidget *child = gtk_widget_get_first_child(col);
+         child; child = gtk_widget_get_next_sibling(child)) {
+        /* Section headers: always show */
+        if (gtk_widget_has_css_class(child, "shortcuts-section")) {
+            gtk_widget_set_visible(child, TRUE);
+            continue;
+        }
+        /* Shortcut rows: match label text against query */
+        if (!gtk_widget_has_css_class(child, "shortcut-row")) continue;
+
+        gboolean match = (!query || !*query);
+        if (!match) {
+            /* Check the label child for text match */
+            for (GtkWidget *w = gtk_widget_get_first_child(child);
+                 w; w = gtk_widget_get_next_sibling(w)) {
+                if (GTK_IS_LABEL(w)) {
+                    const char *text = gtk_label_get_text(GTK_LABEL(w));
+                    if (text && strcasestr(text, query)) { match = TRUE; break; }
+                }
+            }
+        }
+        gtk_widget_set_visible(child, match);
+    }
+}
+
+static void
+on_shortcuts_search_changed(GtkSearchEntry *entry, gpointer user_data)
+{
+    (void)user_data;
+    const char *query = gtk_editable_get_text(GTK_EDITABLE(entry));
+    GtkWidget *columns = g_object_get_data(G_OBJECT(entry), "columns");
+    if (!columns) return;
+
+    /* Iterate each column in the HBox */
+    for (GtkWidget *col = gtk_widget_get_first_child(columns);
+         col; col = gtk_widget_get_next_sibling(col)) {
+        if (GTK_IS_BOX(col))
+            filter_column_rows(col, query);
+    }
+}
+
 /* ── Public API ────────────────────────────────────────────────── */
 
 void
@@ -348,6 +409,13 @@ shortcuts_overlay_toggle(GtkOverlay *overlay)
     GtkWidget *subtitle = gtk_label_new("PRETTYMUX");
     gtk_widget_add_css_class(subtitle, "shortcuts-subtitle");
     gtk_box_append(GTK_BOX(header), subtitle);
+
+    /* ── Search entry ── */
+    GtkWidget *search = gtk_search_entry_new();
+    gtk_widget_add_css_class(search, "shortcuts-search");
+    gtk_widget_set_margin_start(search, 8);
+    gtk_widget_set_margin_end(search, 8);
+    gtk_box_append(GTK_BOX(card), search);
 
     /* ── Three-column layout ── */
     GtkWidget *columns = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
@@ -430,5 +498,10 @@ shortcuts_overlay_toggle(GtkOverlay *overlay)
     gtk_widget_set_focusable(backdrop, TRUE);
     gtk_overlay_add_overlay(overlay, backdrop);
     gtk_widget_set_visible(backdrop, TRUE);
-    gtk_widget_grab_focus(backdrop);
+    gtk_widget_grab_focus(search);
+
+    /* Wire search filtering: on text change, show/hide shortcut-row widgets */
+    g_object_set_data(G_OBJECT(search), "columns", columns);
+    g_signal_connect(search, "search-changed",
+                     G_CALLBACK(on_shortcuts_search_changed), NULL);
 }
