@@ -1,0 +1,87 @@
+/*
+ * ghostty_terminal.h - GObject widget wrapping ghostty's embedded C API
+ *
+ * A GtkWidget subclass (composite widget containing a GtkGLArea) that
+ * creates and manages a ghostty terminal surface with OpenGL rendering.
+ */
+#pragma once
+
+#include <gtk/gtk.h>
+#include "ghostty.h"
+
+G_BEGIN_DECLS
+
+#define GHOSTTY_TYPE_TERMINAL (ghostty_terminal_get_type())
+G_DECLARE_FINAL_TYPE(GhosttyTerminal, ghostty_terminal, GHOSTTY, TERMINAL, GtkWidget)
+
+/* The global ghostty app handle, defined in main.c */
+extern ghostty_app_t g_ghostty_app;
+
+/*
+ * ghostty_terminal_new:
+ * @start_cwd: (nullable): initial working directory for the shell, or NULL
+ *             for the user's home directory.
+ *
+ * Returns: a new #GhosttyTerminal widget.
+ */
+GtkWidget *ghostty_terminal_new(const char *start_cwd);
+
+/*
+ * ghostty_terminal_get_surface:
+ *
+ * Returns the underlying ghostty_surface_t handle, or NULL if the surface
+ * has not been realized yet.
+ */
+ghostty_surface_t ghostty_terminal_get_surface(GhosttyTerminal *self);
+
+/*
+ * ghostty_terminal_get_title:
+ *
+ * Returns the most recently reported terminal title, or NULL.
+ * The string is owned by the widget.
+ */
+const char *ghostty_terminal_get_title(GhosttyTerminal *self);
+
+/*
+ * ghostty_terminal_get_cwd:
+ *
+ * Returns the most recently reported working directory, or NULL.
+ * The string is owned by the widget.
+ */
+const char *ghostty_terminal_get_cwd(GhosttyTerminal *self);
+
+/*
+ * ghostty_terminal_get_exit_code:
+ *
+ * Returns the exit code of the child process once it has exited,
+ * or -1 if the process is still running.
+ */
+int ghostty_terminal_get_exit_code(GhosttyTerminal *self);
+
+/*
+ * ghostty_terminal_set_title:
+ * ghostty_terminal_set_cwd:
+ *
+ * Called from the global action callback to push state into the widget
+ * and emit the corresponding signal.
+ */
+void ghostty_terminal_set_title(GhosttyTerminal *self, const char *title);
+void ghostty_terminal_set_cwd(GhosttyTerminal *self, const char *cwd);
+void ghostty_terminal_notify_bell(GhosttyTerminal *self);
+void ghostty_terminal_notify_command_finished(GhosttyTerminal *self,
+                                              int exit_code,
+                                              uint64_t duration_ns);
+void ghostty_terminal_notify_child_exited(GhosttyTerminal *self,
+                                          uint32_t exit_code);
+
+/*
+ * Signals:
+ *   "title-changed"      (GhosttyTerminal *self, const char *title)
+ *   "pwd-changed"        (GhosttyTerminal *self, const char *cwd)
+ *   "command-finished"   (GhosttyTerminal *self, int exit_code, guint64 duration_ns)
+ *   "bell"               (GhosttyTerminal *self)
+ *   "process-exited"     (GhosttyTerminal *self, int exit_code)
+ *   "close-requested"    (GhosttyTerminal *self)
+ */
+
+G_END_DECLS

@@ -1,0 +1,3 @@
+option('ghostty_dir', type: 'string',
+  value: '/home/pe/newnewrepos/w/yo/ghostty',
+  description: 'Path to ghostty source directory')

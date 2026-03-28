@@ -72,7 +72,7 @@ export default smithers((ctx) => (
           {`You are working on PrettyMux at ${PROJECT_DIR}.
 Build with: ${BUILD_CMD}
 
-This is a Qt6 C++ app. Main source: src/qt/main.cpp
+This is a GTK4 app. Main source: src/qt/main.cpp
 It has workspaces with PaneWidgets, each pane has tabs with GhosttyWidget terminals.
 Read src/qt/main.cpp FIRST to understand the full codebase.
 
@@ -316,7 +316,7 @@ Implement PHASE 3: Quality of Life
    Add resize handles on edges. Add a close button that returns the view to tabs.
    Use Qt::WA_TranslucentBackground for a modern look with rounded corners.
    On Wayland, Qt handles always-on-top natively via xdg-toplevel.
-   Move the QWebEngineView from the tab into the PiP window.
+   Move the WebKit view from the tab into the PiP window.
    Store the original tab index so it can be restored.
    When PiP window closes (closeEvent), move the view back into browserTabs.
    Allow resizing the PiP window by dragging edges.

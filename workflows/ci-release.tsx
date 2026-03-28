@@ -65,8 +65,8 @@ export default smithers((ctx) => (
         <Sequence>
         <Task id="impl1" output={implResult} agent={coder} retries={2}>
           {`You are working on PrettyMux at ${PROJECT_DIR}.
-This is a Qt6 C++ app built with CMake. Source: src/qt/main.cpp
-It depends on: Qt6 (Widgets, WebEngineWidgets, OpenGLWidgets), libghostty, GLAD
+This is a GTK4 app built with CMake. Source: src/qt/main.cpp
+It depends on: GTK4, libadwaita, WebKitGTK, libghostty, GLAD
 
 The ghostty fork is at https://github.com/patcito/ghostty branch linux-embedded-platform
 The prettymux repo is at https://github.com/patcito/prettymux
@@ -186,7 +186,7 @@ Check:
 7. packaging/dev.prettymux.app.yml exists for Flatpak
 8. Jobs upload artifacts
 9. Workflow triggers on push to main and version tags
-10. Correct Qt6 package names per distro
+10. Correct GTK4 package names per distro
 
 If ALL pass: { approved: true, issues: [], summary: "Phase 1 looks good" }
 If ANY issue: { approved: false, issues: ["..."], summary: "Found N issues" }`}

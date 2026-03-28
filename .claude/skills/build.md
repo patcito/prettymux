@@ -2,25 +2,25 @@
 
 ## Prerequisites
 
-- Qt6 (Widgets, WebEngineWidgets, OpenGLWidgets)
-- CMake 3.16+
-- C++17 compiler
+- GTK4, libadwaita, WebKitGTK 6.0, json-glib
+- Meson + Ninja
+- C17 compiler
 - ghostty fork (branch `linux-embedded-platform` from `patcito/ghostty`)
 - GLAD (vendored in ghostty at `vendor/glad/`)
 
 ### Install deps (Ubuntu/Debian)
 ```bash
-sudo apt-get install -y qt6-base-dev qt6-webengine-dev libgl-dev cmake g++
+sudo apt-get install -y libgtk-4-dev libadwaita-1-dev libwebkitgtk-6.0-dev libjson-glib-dev meson ninja-build
 ```
 
 ### Install deps (Fedora)
 ```bash
-sudo dnf install -y qt6-qtbase-devel qt6-qtwebengine-devel mesa-libGL-devel cmake gcc-c++
+sudo dnf install -y gtk4-devel libadwaita-devel webkitgtk6.0-devel json-glib-devel meson ninja-build
 ```
 
 ### Install deps (Arch)
 ```bash
-sudo pacman -S qt6-base qt6-webengine mesa cmake gcc make
+sudo pacman -S gtk4 libadwaita webkit2gtk-6.0 json-glib meson ninja
 ```
 
 ## Build ghostty (libghostty.so)
@@ -40,26 +40,25 @@ https://github.com/patcito/ghostty/releases/tag/linux-embedded-v0.1.0
 ## Build prettymux
 
 ```bash
-cd src/qt
-mkdir -p build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release -DGHOSTTY_DIR=/path/to/ghostty
-make -j$(nproc)
+cd src/gtk
+meson setup builddir -Dghostty_dir=/path/to/ghostty
+ninja -C builddir
 ```
 
-The `GHOSTTY_DIR` should point to the ghostty directory containing:
+The `ghostty_dir` should point to the ghostty directory containing:
 - `zig-out/lib/libghostty.so`
 - `include/ghostty.h`
 - `vendor/glad/`
 
 For local development (ghostty at default path):
 ```bash
-cd src/qt/build && cmake .. -DCMAKE_BUILD_TYPE=Release && make -j$(nproc)
+cd src/gtk && meson setup builddir && ninja -C builddir
 ```
 
 ## Run
 
 ```bash
-LD_LIBRARY_PATH=/path/to/ghostty/zig-out/lib ./prettymux
+./builddir/prettymux
 ```
 
 ## CI

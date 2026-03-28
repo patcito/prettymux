@@ -1,4 +1,4 @@
-// PrettyMux — Qt6 + Chromium (QWebEngineView) + ghostty (OpenGL)
+// PrettyMux — GTK4 + WebKitGTK + ghostty (OpenGL)
 // Single window, native Wayland, GPU-accelerated terminal
 
 #include <QApplication>
@@ -1469,7 +1469,7 @@ public:
 
                     auto* desc = new QLabel(
                         "GPU-accelerated terminal multiplexer with<br>"
-                        "ghostty + Chromium in one window.<br><br>"
+                        "ghostty + WebKit in one window.<br><br>"
                         "Press <b>Ctrl+Shift+K</b> to see all shortcuts.<br>"
                         "Visit the website for docs and updates:"
                     );

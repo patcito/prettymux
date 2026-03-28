@@ -1,7 +1,7 @@
 /**
  * Smithers workflow: PrettyMux CLI, Socket API, Scripting & Polish
  *
- * Extends the Qt6 C++ terminal multiplexer with a full socket API,
+ * Extends the GTK4 terminal multiplexer with a full socket API,
  * Python CLI, config system, session persistence, scripting, and
  * keyboard shortcuts.
  *
@@ -74,14 +74,14 @@ export default smithers((ctx) => (
         <Task id="impl1" output={implResult} agent={coder} retries={2}>
           {`You are working on PrettyMux at ${PROJECT_DIR}.
 
-This is a Qt6 C++ terminal multiplexer. The main source is src/qt/main.cpp.
+This is a GTK4 terminal multiplexer. The main source is src/qt/main.cpp.
 Build with: ${BUILD_CMD}
 
 The app ALREADY has a basic QLocalServer socket that handles browser.open
 commands. You need to EXTEND it (not rewrite) to handle all commands.
 
 IMPORTANT: Read src/qt/main.cpp first to understand the existing code structure.
-The app uses QLocalServer, has Workspace structs with PaneWidgets, QWebEngineView
+The app uses QLocalServer, has Workspace structs with PaneWidgets, WebKitGTK
 browser tabs, and GhosttyWidget terminals.
 
 ${ctx.latest(reviewResult, "review1")?.issues?.length ? `\nPREVIOUS REVIEW FEEDBACK:\n${ctx.latest(reviewResult, "review1")!.issues.join("\n")}\n` : ""}
@@ -321,7 +321,7 @@ Implement PHASE 3: Python Scripting Module + JS Scripting
      - paneSplitRight(), paneSplitDown(), paneList()
      - browserOpen(url), browserList()
      - notify(title, body), sendKeys(keys)
-   - Register it with QWebChannel on each QWebEngineView page
+   - Register it with QWebChannel on each WebKitGTK browser view
    - This exposes window.prettymux in all browser tabs:
      window.prettymux.workspaceNew("dev")
      window.prettymux.browserOpen("https://example.com")
