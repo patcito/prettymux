@@ -247,6 +247,9 @@ on_key_pressed(GtkEventControllerKey *controller,
     ke.unshifted_codepoint = (cp < 0x110000) ? cp : 0;
 
     ghostty_surface_key(self->surface, ke);
+    /* Immediate tick + render so cursor position updates without lag */
+    if (g_ghostty_app)
+        ghostty_app_tick(g_ghostty_app);
     gtk_gl_area_queue_render(self->gl_area);
     return TRUE;
 }
@@ -278,8 +281,12 @@ static void
 on_im_commit(GtkIMContext *im, const char *text, gpointer user_data)
 {
     GhosttyTerminal *self = GHOSTTY_TERMINAL(user_data);
-    if (self->surface && text && *text)
+    if (self->surface && text && *text) {
         ghostty_surface_text(self->surface, text, strlen(text));
+        if (g_ghostty_app)
+            ghostty_app_tick(g_ghostty_app);
+        gtk_gl_area_queue_render(self->gl_area);
+    }
 }
 
 static void
