@@ -608,6 +608,143 @@ on_socket_command(const char  *command,
             json_builder_set_member_name(response, "status");
             json_builder_add_string_value(response, "error");
         }
+    } else if (strcmp(command, "action") == 0) {
+        /* Run any prettymux action by name, e.g. {"command":"action","action":"split.horizontal"} */
+        const char *act = json_object_get_string_member_with_default(msg, "action", "");
+        if (act && act[0]) {
+            handle_action(act);
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "ok");
+        } else {
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "error");
+            json_builder_set_member_name(response, "message");
+            json_builder_add_string_value(response, "missing action name");
+        }
+    } else if (strcmp(command, "type") == 0) {
+        /* Type text into the focused terminal: {"command":"type","text":"ls -la\n"} */
+        const char *text = json_object_get_string_member_with_default(msg, "text", "");
+        /* Optional workspace/pane/tab targeting */
+        int ws_idx = (int)json_object_get_int_member_with_default(msg, "workspace", -1);
+        int pane_idx = (int)json_object_get_int_member_with_default(msg, "pane", -1);
+        int tab_idx = (int)json_object_get_int_member_with_default(msg, "tab", -1);
+
+        Workspace *ws = NULL;
+        if (ws_idx >= 0 && workspaces && ws_idx < (int)workspaces->len)
+            ws = g_ptr_array_index(workspaces, ws_idx);
+        else
+            ws = workspace_get_current();
+
+        if (ws && text && text[0]) {
+            GtkNotebook *nb = NULL;
+            if (pane_idx >= 0 && ws->pane_notebooks && pane_idx < (int)ws->pane_notebooks->len)
+                nb = g_ptr_array_index(ws->pane_notebooks, pane_idx);
+            else
+                nb = workspace_get_focused_pane(ws);
+
+            GhosttyTerminal *term = NULL;
+            if (nb) {
+                int pg = (tab_idx >= 0) ? tab_idx : gtk_notebook_get_current_page(GTK_NOTEBOOK(nb));
+                if (pg >= 0 && pg < gtk_notebook_get_n_pages(GTK_NOTEBOOK(nb))) {
+                    GtkWidget *page = gtk_notebook_get_nth_page(GTK_NOTEBOOK(nb), pg);
+                    if (GHOSTTY_IS_TERMINAL(page))
+                        term = GHOSTTY_TERMINAL(page);
+                }
+            }
+            if (term) {
+                ghostty_surface_t surface = ghostty_terminal_get_surface(term);
+                if (surface) {
+                    ghostty_surface_text(surface, text, strlen(text));
+                    json_builder_set_member_name(response, "status");
+                    json_builder_add_string_value(response, "ok");
+                } else {
+                    json_builder_set_member_name(response, "status");
+                    json_builder_add_string_value(response, "error");
+                    json_builder_set_member_name(response, "message");
+                    json_builder_add_string_value(response, "terminal has no surface");
+                }
+            } else {
+                json_builder_set_member_name(response, "status");
+                json_builder_add_string_value(response, "error");
+                json_builder_set_member_name(response, "message");
+                json_builder_add_string_value(response, "no terminal found");
+            }
+        } else {
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "error");
+            json_builder_set_member_name(response, "message");
+            json_builder_add_string_value(response, "missing text");
+        }
+    } else if (strcmp(command, "exec") == 0) {
+        /* Execute a command in a terminal: {"command":"exec","cmd":"ls -la"}
+         * This types the command followed by Enter */
+        const char *cmd = json_object_get_string_member_with_default(msg, "cmd", "");
+        int ws_idx = (int)json_object_get_int_member_with_default(msg, "workspace", -1);
+        int pane_idx = (int)json_object_get_int_member_with_default(msg, "pane", -1);
+        int tab_idx = (int)json_object_get_int_member_with_default(msg, "tab", -1);
+
+        Workspace *ws = NULL;
+        if (ws_idx >= 0 && workspaces && ws_idx < (int)workspaces->len)
+            ws = g_ptr_array_index(workspaces, ws_idx);
+        else
+            ws = workspace_get_current();
+
+        if (ws && cmd && cmd[0]) {
+            GtkNotebook *nb = NULL;
+            if (pane_idx >= 0 && ws->pane_notebooks && pane_idx < (int)ws->pane_notebooks->len)
+                nb = g_ptr_array_index(ws->pane_notebooks, pane_idx);
+            else
+                nb = workspace_get_focused_pane(ws);
+
+            GhosttyTerminal *term = NULL;
+            if (nb) {
+                int pg = (tab_idx >= 0) ? tab_idx : gtk_notebook_get_current_page(GTK_NOTEBOOK(nb));
+                if (pg >= 0 && pg < gtk_notebook_get_n_pages(GTK_NOTEBOOK(nb))) {
+                    GtkWidget *page = gtk_notebook_get_nth_page(GTK_NOTEBOOK(nb), pg);
+                    if (GHOSTTY_IS_TERMINAL(page))
+                        term = GHOSTTY_TERMINAL(page);
+                }
+            }
+            if (term) {
+                ghostty_surface_t surface = ghostty_terminal_get_surface(term);
+                if (surface) {
+                    /* Type command + newline */
+                    ghostty_surface_text(surface, cmd, strlen(cmd));
+                    ghostty_surface_text(surface, "\n", 1);
+                    json_builder_set_member_name(response, "status");
+                    json_builder_add_string_value(response, "ok");
+                } else {
+                    json_builder_set_member_name(response, "status");
+                    json_builder_add_string_value(response, "error");
+                }
+            } else {
+                json_builder_set_member_name(response, "status");
+                json_builder_add_string_value(response, "error");
+                json_builder_set_member_name(response, "message");
+                json_builder_add_string_value(response, "no terminal found");
+            }
+        } else {
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "error");
+        }
+    } else if (strcmp(command, "list.actions") == 0) {
+        /* List all available actions */
+        json_builder_set_member_name(response, "status");
+        json_builder_add_string_value(response, "ok");
+        json_builder_set_member_name(response, "actions");
+        json_builder_begin_array(response);
+        for (int i = 0; default_shortcuts[i].action != NULL; i++) {
+            json_builder_add_string_value(response, default_shortcuts[i].action);
+        }
+        /* Also add actions not in shortcut table */
+        json_builder_add_string_value(response, "browser.open");
+        json_builder_add_string_value(response, "workspace.new");
+        json_builder_add_string_value(response, "workspace.list");
+        json_builder_add_string_value(response, "workspace.switch");
+        json_builder_add_string_value(response, "tab.new");
+        json_builder_add_string_value(response, "exec");
+        json_builder_add_string_value(response, "type");
+        json_builder_end_array(response);
     } else {
         json_builder_set_member_name(response, "status");
         json_builder_add_string_value(response, "error");

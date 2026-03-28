@@ -1224,25 +1224,36 @@ workspace_close_pane(Workspace *ws, GtkNotebook *pane)
     /* Remove the pane from pane_notebooks */
     g_ptr_array_remove(ws->pane_notebooks, pane);
 
-    /* Unparent both children from the paned */
+    /* Ref sibling so it survives reparenting. Remove the closing pane first
+     * (set its side to NULL), then remove sibling, then destroy the paned
+     * and re-attach sibling to grandparent. This avoids focus-tracking
+     * crashes from setting both children to NULL simultaneously. */
     g_object_ref(sibling);
-    gtk_paned_set_start_child(parent_paned, NULL);
-    gtk_paned_set_end_child(parent_paned, NULL);
+
+    /* Detach: remove the pane being closed, then the sibling */
+    if (start == pane_widget) {
+        gtk_paned_set_start_child(parent_paned, NULL);
+        gtk_paned_set_end_child(parent_paned, NULL);
+    } else {
+        gtk_paned_set_end_child(parent_paned, NULL);
+        gtk_paned_set_start_child(parent_paned, NULL);
+    }
 
     /* Replace the paned with the sibling in its grandparent */
     if (GTK_IS_PANED(grandparent)) {
         GtkWidget *gp_start = gtk_paned_get_start_child(GTK_PANED(grandparent));
         if (gp_start == GTK_WIDGET(parent_paned)) {
-            gtk_paned_set_start_child(GTK_PANED(grandparent), NULL);
             gtk_paned_set_start_child(GTK_PANED(grandparent), sibling);
         } else {
-            gtk_paned_set_end_child(GTK_PANED(grandparent), NULL);
             gtk_paned_set_end_child(GTK_PANED(grandparent), sibling);
         }
     } else if (GTK_IS_STACK(grandparent)) {
         int ws_idx = workspace_index_of(ws);
 
+        /* Remove the old paned from the stack */
+        g_object_ref(GTK_WIDGET(parent_paned));
         gtk_stack_remove(GTK_STACK(grandparent), GTK_WIDGET(parent_paned));
+        g_object_unref(GTK_WIDGET(parent_paned));
 
         char stack_name[32];
         snprintf(stack_name, sizeof(stack_name), "ws-%d",
@@ -1257,6 +1268,18 @@ workspace_close_pane(Workspace *ws, GtkNotebook *pane)
     }
 
     g_object_unref(sibling);
+
+    /* Focus the sibling's first terminal */
+    if (GTK_IS_NOTEBOOK(sibling)) {
+        int pg = gtk_notebook_get_current_page(GTK_NOTEBOOK(sibling));
+        if (pg >= 0) {
+            GtkWidget *page = gtk_notebook_get_nth_page(GTK_NOTEBOOK(sibling), pg);
+            if (page) {
+                GtkWidget *child = gtk_widget_get_first_child(page);
+                gtk_widget_grab_focus(child ? child : page);
+            }
+        }
+    }
 }
 
 /* (activity helpers are defined earlier in this file) */
