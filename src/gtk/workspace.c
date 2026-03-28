@@ -1512,6 +1512,10 @@ workspace_close_pane(Workspace *ws, GtkNotebook *pane)
 
     g_object_unref(sibling);
 
+    /* Update ws->notebook if it was the closed pane */
+    if (ws->notebook == GTK_WIDGET(pane) && ws->pane_notebooks->len > 0)
+        ws->notebook = g_ptr_array_index(ws->pane_notebooks, 0);
+
     /* Focus the sibling's first terminal */
     if (GTK_IS_NOTEBOOK(sibling)) {
         int pg = gtk_notebook_get_current_page(GTK_NOTEBOOK(sibling));
