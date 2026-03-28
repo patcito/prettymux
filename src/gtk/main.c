@@ -3,8 +3,11 @@
 
 #include <adwaita.h>
 #include <gtk/gtk.h>
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
+#include <libgen.h>
 
 #include "ghostty.h"
 #include "ghostty_terminal.h"
@@ -13,6 +16,9 @@
 #include "shortcuts.h"
 #include "workspace.h"
 #include "session.h"
+#include "command_palette.h"
+#include "port_scanner.h"
+#include "socket_server.h"
 
 // ── Global state ──
 
@@ -27,6 +33,8 @@ static struct {
     GtkWidget *main_paned;
     GtkWidget *terminal_stack;
     GtkWidget *browser_notebook;
+    GtkWidget *overlay;           // GtkOverlay wrapping the outer_paned
+    GtkWidget *command_palette;   // CommandPalette overlay widget
 } ui = {0};
 
 // ── Ghostty callbacks ──
@@ -96,7 +104,18 @@ static void handle_action(const char *action) {
                          ui.terminal_stack, ui.workspace_list);
     } else if (strcmp(action, "pane.tab.new") == 0) {
         Workspace *ws = workspace_get_current();
-        if (ws) workspace_add_terminal(ws, g_ghostty_app);
+        if (ws) {
+            GtkNotebook *focused = workspace_get_focused_pane(ws);
+            if (focused) {
+                /* Declared in workspace.c as static; use the public API
+                 * which adds to the first notebook.  For focused-pane
+                 * support, we call workspace_add_terminal which now goes
+                 * to the focused pane. */
+                workspace_add_terminal_to_focused(ws, g_ghostty_app);
+            } else {
+                workspace_add_terminal(ws, g_ghostty_app);
+            }
+        }
     } else if (strcmp(action, "browser.toggle") == 0) {
         gboolean vis = gtk_widget_get_visible(ui.browser_notebook);
         gtk_widget_set_visible(ui.browser_notebook, !vis);
@@ -114,13 +133,34 @@ static void handle_action(const char *action) {
     } else if (strcmp(action, "pane.close") == 0) {
         Workspace *ws = workspace_get_current();
         if (ws) {
-            int pg = gtk_notebook_get_current_page(GTK_NOTEBOOK(ws->notebook));
-            if (pg >= 0 && gtk_notebook_get_n_pages(GTK_NOTEBOOK(ws->notebook)) > 1)
-                gtk_notebook_remove_page(GTK_NOTEBOOK(ws->notebook), pg);
+            GtkNotebook *focused = workspace_get_focused_pane(ws);
+            if (focused) {
+                int n_pages = gtk_notebook_get_n_pages(focused);
+                int pg = gtk_notebook_get_current_page(focused);
+                if (n_pages > 1 && pg >= 0) {
+                    /* Close the current tab in this pane */
+                    GtkWidget *child = gtk_notebook_get_nth_page(focused, pg);
+                    gtk_notebook_remove_page(focused, pg);
+                    g_ptr_array_remove(ws->terminals, child);
+                } else if (n_pages <= 1 && ws->pane_notebooks &&
+                           ws->pane_notebooks->len > 1) {
+                    /* Last tab in this pane — close the entire pane */
+                    workspace_close_pane(ws, focused);
+                }
+            }
         }
     } else if (strcmp(action, "broadcast.toggle") == 0) {
         Workspace *ws = workspace_get_current();
         if (ws) ws->broadcast = !ws->broadcast;
+    } else if (strcmp(action, "split.horizontal") == 0) {
+        Workspace *ws = workspace_get_current();
+        if (ws) workspace_split_pane(ws, GTK_ORIENTATION_HORIZONTAL, g_ghostty_app);
+    } else if (strcmp(action, "split.vertical") == 0) {
+        Workspace *ws = workspace_get_current();
+        if (ws) workspace_split_pane(ws, GTK_ORIENTATION_VERTICAL, g_ghostty_app);
+    } else if (strcmp(action, "search.show") == 0) {
+        if (ui.command_palette)
+            command_palette_toggle(COMMAND_PALETTE(ui.command_palette));
     }
 }
 
@@ -135,28 +175,290 @@ static gboolean on_key_pressed(GtkEventControllerKey *ctrl, guint keyval,
     return FALSE;
 }
 
+// ── Terminal lookup: find GhosttyTerminal by ghostty_surface_t ──
+
+typedef struct {
+    GhosttyTerminal *terminal;
+    Workspace       *workspace;
+    int              workspace_idx;
+} SurfaceLookup;
+
+static SurfaceLookup
+find_terminal_for_surface(ghostty_surface_t surface)
+{
+    SurfaceLookup result = { NULL, NULL, -1 };
+    if (!surface || !workspaces)
+        return result;
+
+    for (guint wi = 0; wi < workspaces->len; wi++) {
+        Workspace *ws = g_ptr_array_index(workspaces, wi);
+        for (guint ti = 0; ti < ws->terminals->len; ti++) {
+            GhosttyTerminal *term = g_ptr_array_index(ws->terminals, ti);
+            if (ghostty_terminal_get_surface(term) == surface) {
+                result.terminal = term;
+                result.workspace = ws;
+                result.workspace_idx = (int)wi;
+                return result;
+            }
+        }
+    }
+    return result;
+}
+
+// ── Git branch detection (async) ──
+
+static void
+on_git_branch_read(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+    Workspace *ws = user_data;
+    char *stdout_buf = NULL;
+
+    if (g_subprocess_communicate_utf8_finish(G_SUBPROCESS(source), result,
+                                             &stdout_buf, NULL, NULL)) {
+        if (stdout_buf && stdout_buf[0]) {
+            g_strstrip(stdout_buf);
+            snprintf(ws->git_branch, sizeof(ws->git_branch), "%s", stdout_buf);
+        } else {
+            ws->git_branch[0] = '\0';
+        }
+        g_free(stdout_buf);
+    }
+}
+
+static void
+detect_git_branch(Workspace *ws, const char *cwd)
+{
+    GError *error = NULL;
+    GSubprocess *proc = g_subprocess_new(
+        G_SUBPROCESS_FLAGS_STDOUT_PIPE | G_SUBPROCESS_FLAGS_STDERR_SILENCE,
+        &error,
+        "git", "-C", cwd, "rev-parse", "--abbrev-ref", "HEAD", NULL);
+
+    if (!proc) {
+        if (error) g_error_free(error);
+        ws->git_branch[0] = '\0';
+        return;
+    }
+
+    g_subprocess_communicate_utf8_async(proc, NULL, NULL,
+                                        on_git_branch_read, ws);
+    g_object_unref(proc);
+}
+
+// ── Port scanner callback ──
+
+static void
+on_new_ports_detected(const int *new_ports, int new_port_count,
+                      const int *all_ports, int all_port_count,
+                      gpointer user_data)
+{
+    (void)all_ports;
+    (void)all_port_count;
+    (void)user_data;
+
+    if (new_port_count <= 0)
+        return;
+
+    /* Update current workspace notification */
+    Workspace *ws = workspace_get_current();
+    if (!ws)
+        return;
+
+    /* Only show ports if the workspace has a running command
+     * (title is not just a shell name or path) */
+    if (ws->name[0] == '\0' ||
+        strchr(ws->name, '/') != NULL ||
+        strcmp(ws->name, "bash") == 0 ||
+        strcmp(ws->name, "zsh") == 0 ||
+        strcmp(ws->name, "fish") == 0 ||
+        strcmp(ws->name, "sh") == 0)
+        return;
+
+    int port = new_ports[0];
+    snprintf(ws->notification, sizeof(ws->notification),
+             "-> localhost:%d", port);
+
+    /* Desktop notification */
+    char msg[64];
+    snprintf(msg, sizeof(msg), "Port %d detected", port);
+
+    GError *nerr = NULL;
+    GSubprocess *nproc = g_subprocess_new(
+        G_SUBPROCESS_FLAGS_NONE, &nerr,
+        "notify-send", "prettymux", msg,
+        "--app-name=prettymux", NULL);
+    if (nproc)
+        g_object_unref(nproc);
+    else if (nerr)
+        g_error_free(nerr);
+}
+
+// ── Socket server callback ──
+
+static void
+on_socket_command(const char *command, const char *url, gpointer user_data)
+{
+    (void)user_data;
+
+    if (strcmp(command, "browser.open") == 0 && url && url[0]) {
+        add_browser_tab(url);
+        gtk_widget_set_visible(ui.browser_notebook, TRUE);
+    }
+}
+
 // ── Ghostty action callback ──
 
-static bool action_cb(ghostty_app_t app, ghostty_target_s target, ghostty_action_s action) {
-    (void)app; (void)target;
+static bool action_cb(ghostty_app_t app, ghostty_target_s target,
+                       ghostty_action_s action)
+{
+    (void)app;
+
+    /* Extract surface pointer from the target */
+    ghostty_surface_t surface = NULL;
+    if (target.tag == GHOSTTY_TARGET_SURFACE)
+        surface = target.target.surface;
+
     switch (action.tag) {
-        case GHOSTTY_ACTION_OPEN_URL:
-            if (action.action.open_url.url) {
-                add_browser_tab(action.action.open_url.url);
-                gtk_widget_set_visible(ui.browser_notebook, TRUE);
-            }
-            break;
-        case GHOSTTY_ACTION_DESKTOP_NOTIFICATION: {
-            GNotification *n = g_notification_new("PrettyMux");
-            g_notification_set_body(n, action.action.desktop_notification.body);
-            GApplication *a = g_application_get_default();
-            if (a) g_application_send_notification(a, NULL, n);
-            g_object_unref(n);
-            break;
+
+    case GHOSTTY_ACTION_OPEN_URL:
+        if (action.action.open_url.url) {
+            add_browser_tab(action.action.open_url.url);
+            gtk_widget_set_visible(ui.browser_notebook, TRUE);
         }
-        default: break;
+        return true;
+
+    case GHOSTTY_ACTION_DESKTOP_NOTIFICATION: {
+        GNotification *n = g_notification_new("PrettyMux");
+        g_notification_set_body(n, action.action.desktop_notification.body);
+        GApplication *a = g_application_get_default();
+        if (a) g_application_send_notification(a, NULL, n);
+        g_object_unref(n);
+        return true;
     }
-    return true;
+
+    case GHOSTTY_ACTION_SET_TITLE: {
+        if (!action.action.set_title.title)
+            return true;
+        SurfaceLookup loc = find_terminal_for_surface(surface);
+        if (loc.terminal) {
+            ghostty_terminal_set_title(loc.terminal,
+                                       action.action.set_title.title);
+            /* Also update workspace title */
+            if (loc.workspace) {
+                snprintf(loc.workspace->name, sizeof(loc.workspace->name),
+                         "%.60s", action.action.set_title.title);
+            }
+        }
+        return true;
+    }
+
+    case GHOSTTY_ACTION_PWD: {
+        if (!action.action.pwd.pwd)
+            return true;
+        SurfaceLookup loc = find_terminal_for_surface(surface);
+        if (loc.terminal) {
+            ghostty_terminal_set_cwd(loc.terminal,
+                                     action.action.pwd.pwd);
+            if (loc.workspace) {
+                snprintf(loc.workspace->cwd, sizeof(loc.workspace->cwd),
+                         "%s", action.action.pwd.pwd);
+                detect_git_branch(loc.workspace, action.action.pwd.pwd);
+            }
+        }
+        return true;
+    }
+
+    case GHOSTTY_ACTION_COMMAND_FINISHED: {
+        SurfaceLookup loc = find_terminal_for_surface(surface);
+        if (loc.terminal) {
+            ghostty_terminal_notify_command_finished(
+                loc.terminal,
+                action.action.command_finished.exit_code,
+                action.action.command_finished.duration);
+
+            /* Desktop notification for long-running commands (>3s) */
+            double secs = action.action.command_finished.duration / 1000000000.0;
+            if (secs > 3.0) {
+                char body[128];
+                if (action.action.command_finished.exit_code == 0)
+                    snprintf(body, sizeof(body),
+                             "Command completed in %.1fs", secs);
+                else
+                    snprintf(body, sizeof(body),
+                             "Command failed (exit %d) after %.1fs",
+                             action.action.command_finished.exit_code, secs);
+
+                GNotification *n = g_notification_new("prettymux");
+                g_notification_set_body(n, body);
+                GApplication *a = g_application_get_default();
+                if (a) g_application_send_notification(a, NULL, n);
+                g_object_unref(n);
+            }
+        }
+        return true;
+    }
+
+    case GHOSTTY_ACTION_RING_BELL: {
+        SurfaceLookup loc = find_terminal_for_surface(surface);
+        if (loc.terminal)
+            ghostty_terminal_notify_bell(loc.terminal);
+
+        /* Desktop notification if not the active workspace */
+        if (loc.workspace_idx >= 0 && loc.workspace_idx != current_workspace) {
+            GError *bell_err = NULL;
+            GSubprocess *bell_proc = g_subprocess_new(
+                G_SUBPROCESS_FLAGS_NONE, &bell_err,
+                "notify-send", "prettymux", "Bell",
+                "--app-name=prettymux", NULL);
+            if (bell_proc)
+                g_object_unref(bell_proc);
+            else if (bell_err)
+                g_error_free(bell_err);
+        }
+        return true;
+    }
+
+    case GHOSTTY_ACTION_RENDER: {
+        SurfaceLookup loc = find_terminal_for_surface(surface);
+        if (loc.terminal)
+            ghostty_terminal_queue_render(loc.terminal);
+        return true;
+    }
+
+    case GHOSTTY_ACTION_SHOW_CHILD_EXITED: {
+        SurfaceLookup loc = find_terminal_for_surface(surface);
+        if (loc.terminal) {
+            ghostty_terminal_notify_child_exited(
+                loc.terminal,
+                action.action.child_exited.exit_code);
+        }
+        return true;
+    }
+
+    case GHOSTTY_ACTION_PROGRESS_REPORT: {
+        SurfaceLookup loc = find_terminal_for_surface(surface);
+        if (loc.terminal && loc.workspace) {
+            int pct = (int)action.action.progress_report.progress;
+            if (pct >= 0)
+                snprintf(loc.workspace->notification,
+                         sizeof(loc.workspace->notification),
+                         "Progress: %d%%", pct);
+            else
+                loc.workspace->notification[0] = '\0';
+        }
+        return true;
+    }
+
+    case GHOSTTY_ACTION_START_SEARCH:
+    case GHOSTTY_ACTION_SEARCH_TOTAL:
+    case GHOSTTY_ACTION_SEARCH_SELECTED:
+        return true;
+
+    default:
+        break;
+    }
+
+    return false;
 }
 
 // ── Sidebar ──
@@ -232,6 +534,8 @@ static gboolean autosave_tick(gpointer d) {
 static gboolean on_close_request(GtkWindow *w, gpointer d) {
     (void)d;
     session_save(w, ui.browser_notebook, ui.terminal_stack, ui.workspace_list);
+    port_scanner_stop();
+    socket_server_stop();
     return FALSE;
 }
 
@@ -271,9 +575,12 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     g_signal_connect(kc, "key-pressed", G_CALLBACK(on_key_pressed), NULL);
     gtk_widget_add_controller(window, kc);
 
-    // Layout
+    // Layout: overlay wraps everything so the command palette can float
+    ui.overlay = gtk_overlay_new();
+    gtk_window_set_child(GTK_WINDOW(window), ui.overlay);
+
     ui.outer_paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
-    gtk_window_set_child(GTK_WINDOW(window), ui.outer_paned);
+    gtk_overlay_set_child(GTK_OVERLAY(ui.overlay), ui.outer_paned);
 
     build_sidebar();
     gtk_paned_set_start_child(GTK_PANED(ui.outer_paned), ui.sidebar_box);
@@ -294,6 +601,13 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_paned_set_position(GTK_PANED(ui.outer_paned), 200);
     gtk_paned_set_position(GTK_PANED(ui.main_paned), 700);
 
+    // Command palette (overlay)
+    ui.command_palette = command_palette_new(ui.browser_notebook,
+                                             ui.terminal_stack,
+                                             ui.workspace_list);
+    gtk_widget_set_visible(ui.command_palette, FALSE);
+    gtk_overlay_add_overlay(GTK_OVERLAY(ui.overlay), ui.command_palette);
+
     // Create initial workspace + restore or create defaults
     workspace_add(ui.terminal_stack, ui.workspace_list, g_ghostty_app);
 
@@ -311,6 +625,40 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
 
     // Save on close
     g_signal_connect(window, "close-request", G_CALLBACK(on_close_request), NULL);
+
+    // ── Single instance socket server ──
+    socket_server_set_callback(on_socket_command, NULL);
+    const char *sock_path = socket_server_start();
+    if (sock_path) {
+        /* Set BASH_ENV to auto-source our shell integration script.
+         * Try several locations: next to the executable, then next to
+         * the source file (for development builds). */
+        char exe_path[PATH_MAX];
+        ssize_t exe_len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+        if (exe_len > 0) {
+            exe_path[exe_len] = '\0';
+            /* dirname modifies in-place, so work on a copy */
+            char *exe_dir_buf = g_strdup(exe_path);
+            const char *exe_dir = dirname(exe_dir_buf);
+
+            char *shell_integ = g_build_filename(exe_dir, "prettymux-shell-integration.sh", NULL);
+            if (!g_file_test(shell_integ, G_FILE_TEST_EXISTS)) {
+                g_free(shell_integ);
+                /* Fallback: next to source (development builds) */
+                shell_integ = g_build_filename(PRETTYMUX_SOURCE_DIR,
+                                               "prettymux-shell-integration.sh", NULL);
+            }
+            if (g_file_test(shell_integ, G_FILE_TEST_EXISTS)) {
+                g_setenv("BASH_ENV", shell_integ, TRUE);
+            }
+            g_free(shell_integ);
+            g_free(exe_dir_buf);
+        }
+    }
+
+    // ── Port scanner ──
+    port_scanner_set_callback(on_new_ports_detected, NULL);
+    port_scanner_start();
 
     gtk_window_present(GTK_WINDOW(window));
 }

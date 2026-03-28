@@ -75,6 +75,14 @@ void ghostty_terminal_notify_child_exited(GhosttyTerminal *self,
                                           uint32_t exit_code);
 
 /*
+ * ghostty_terminal_queue_render:
+ *
+ * Queue a render on this terminal's GtkGLArea.  Called from the global
+ * action callback when ghostty reports new content (GHOSTTY_ACTION_RENDER).
+ */
+void ghostty_terminal_queue_render(GhosttyTerminal *self);
+
+/*
  * Signals:
  *   "title-changed"      (GhosttyTerminal *self, const char *title)
  *   "pwd-changed"        (GhosttyTerminal *self, const char *cwd)

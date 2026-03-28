@@ -25,12 +25,16 @@ sources = files(
   'shortcuts.c',
   'workspace.c',
   'session.c',
+  'command_palette.c',
+  'port_scanner.c',
+  'socket_server.c',
   glad_dir / 'src' / 'gl.c',
 )
 
 executable('prettymux', sources,
   dependencies: [gtk4, adw, webkit, json_glib],
   include_directories: ghostty_inc,
+  c_args: ['-DPRETTYMUX_SOURCE_DIR="' + meson.current_source_dir() + '"'],
   link_args: ['-L' + ghostty_lib_dir, '-lghostty', '-Wl,-rpath,' + ghostty_lib_dir],
   install: true,
 )

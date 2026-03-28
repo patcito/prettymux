@@ -8,6 +8,7 @@
  */
 
 #include "ghostty_terminal.h"
+#include "socket_server.h"
 
 #include <gdk/gdk.h>
 #include <stdlib.h>
@@ -102,9 +103,30 @@ on_gl_realize(GtkGLArea *area, gpointer user_data)
                                    ? self->start_cwd
                                    : home;
 
-    /* Don't set env vars for now — keep config simple */
-    config.env_vars = NULL;
-    config.env_var_count = 0;
+    /* Shell integration env vars */
+    ghostty_env_var_s env_vars[3];
+    size_t env_count = 0;
+
+    env_vars[env_count].key = "PRETTYMUX";
+    env_vars[env_count].value = "1";
+    env_count++;
+
+    const char *sock_path = socket_server_get_path();
+    if (sock_path) {
+        env_vars[env_count].key = "PRETTYMUX_SOCKET";
+        env_vars[env_count].value = sock_path;
+        env_count++;
+    }
+
+    const char *bash_env = g_getenv("BASH_ENV");
+    if (bash_env) {
+        env_vars[env_count].key = "BASH_ENV";
+        env_vars[env_count].value = bash_env;
+        env_count++;
+    }
+
+    config.env_vars = env_vars;
+    config.env_var_count = env_count;
 
     self->surface = ghostty_surface_new(g_ghostty_app, &config);
     if (self->surface) {
@@ -658,4 +680,12 @@ ghostty_terminal_notify_child_exited(GhosttyTerminal *self,
         self->exit_emitted = TRUE;
         g_signal_emit(self, signals[SIGNAL_PROCESS_EXITED], 0, (int)exit_code);
     }
+}
+
+void
+ghostty_terminal_queue_render(GhosttyTerminal *self)
+{
+    g_return_if_fail(GHOSTTY_IS_TERMINAL(self));
+    if (self->gl_area)
+        gtk_gl_area_queue_render(self->gl_area);
 }
