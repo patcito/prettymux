@@ -369,6 +369,19 @@ on_motion(GtkEventControllerMotion *controller,
     gtk_gl_area_queue_render(self->gl_area);
 }
 
+/* ── Focus on hover ───────────────────────────────────────────── */
+
+static void
+on_mouse_enter(GtkEventControllerMotion *controller,
+               double x, double y,
+               gpointer user_data)
+{
+    (void)controller; (void)x; (void)y;
+    GhosttyTerminal *self = GHOSTTY_TERMINAL(user_data);
+    if (self->gl_area)
+        gtk_widget_grab_focus(GTK_WIDGET(self->gl_area));
+}
+
 /* ── Scroll ────────────────────────────────────────────────────── */
 
 static gboolean
@@ -582,6 +595,8 @@ ghostty_terminal_init(GhosttyTerminal *self)
     GtkEventController *motion_ctrl = gtk_event_controller_motion_new();
     g_signal_connect(motion_ctrl, "motion",
                      G_CALLBACK(on_motion), self);
+    g_signal_connect(motion_ctrl, "enter",
+                     G_CALLBACK(on_mouse_enter), self);
     gtk_widget_add_controller(GTK_WIDGET(self->gl_area), motion_ctrl);
 
     /* ── Scroll ── */
