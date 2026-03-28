@@ -610,7 +610,7 @@ ghostty_terminal_init(GhosttyTerminal *self)
 
     self->status_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     gtk_widget_add_css_class(self->status_bar, "terminal-status");
-    gtk_widget_set_size_request(self->status_bar, -1, 20);
+    gtk_widget_set_size_request(self->status_bar, -1, 28);
     gtk_widget_set_margin_start(self->status_bar, 4);
     gtk_widget_set_margin_end(self->status_bar, 4);
 

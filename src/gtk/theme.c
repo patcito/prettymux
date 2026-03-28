@@ -60,7 +60,7 @@ void theme_apply(void) {
         ".resize-overlay { background-color: alpha(%s, 0.92); color: %s;"
         "  border: 1px solid %s; border-radius: 6px; padding: 6px 14px;"
         "  font-size: 12px; font-family: monospace; }"
-        ".terminal-status { font-size: 10px; font-family: monospace;"
+        ".terminal-status { font-size: 20px; font-family: monospace;"
         "  color: %s; padding: 1px 4px; }"
         ".tab-blink {"
         "  border-left: 3px solid %s;"
