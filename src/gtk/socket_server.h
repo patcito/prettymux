@@ -2,21 +2,36 @@
  * socket_server.h - Unix domain socket for IPC
  *
  * Creates /tmp/prettymux-<PID>.sock, accepts JSON commands from
- * child processes (e.g. shell integration scripts).
+ * child processes (e.g. shell integration scripts, prettymux-open CLI).
  *
  * Supported commands:
  *   {"command": "browser.open", "url": "https://..."}
+ *   {"command": "workspace.new", "name": "optional-name"}
+ *   {"command": "workspace.list"}
+ *   {"command": "workspace.switch", "index": 0}
+ *   {"command": "tab.new"}
  */
 #pragma once
 
 #include <glib.h>
+#include <json-glib/json-glib.h>
 
 G_BEGIN_DECLS
 
-/* Callback: command name + JSON object with the full message */
-typedef void (*SocketCommandCallback)(const char *command,
-                                      const char *url,
-                                      gpointer    user_data);
+/*
+ * Callback signature.
+ *
+ * @command: the "command" field from the JSON message.
+ * @msg:     the full parsed JSON object (for reading extra fields).
+ * @response: a JsonBuilder* already in object state.
+ *            The callback may add members like "status", "data", etc.
+ *            The caller will close the object and send it back.
+ * @user_data: opaque user data.
+ */
+typedef void (*SocketCommandCallback)(const char  *command,
+                                      JsonObject  *msg,
+                                      JsonBuilder *response,
+                                      gpointer     user_data);
 
 /*
  * socket_server_start:

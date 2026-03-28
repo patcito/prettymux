@@ -275,14 +275,7 @@ void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
             g_free(ws->notes_text);
             ws->notes_text = g_strdup(notes);
 
-            /* Update sidebar label */
-            GtkListBoxRow *row = gtk_list_box_get_row_at_index(
-                GTK_LIST_BOX(workspace_list), wi);
-            if (row) {
-                GtkWidget *label = gtk_list_box_row_get_child(row);
-                if (GTK_IS_LABEL(label))
-                    gtk_label_set_text(GTK_LABEL(label), ws->name);
-            }
+            /* Update sidebar label via the workspace's inner label */
             workspace_refresh_sidebar_label(ws);
 
             /* Restore panes.  The first pane (with one terminal)

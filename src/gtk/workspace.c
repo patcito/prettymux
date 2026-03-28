@@ -1,5 +1,6 @@
 #include "workspace.h"
 #include "ghostty_terminal.h"
+#include "resize_overlay.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -203,7 +204,7 @@ build_tab_label_text(GhosttyTerminal *term, const char *title, char *buf, size_t
         activity_prefix = "\342\227\217 ";   /* "● " in UTF-8 */
 
     /* Progress bar suffix */
-    char progress_suffix[32];
+    char progress_suffix[48];
     progress_suffix[0] = '\0';
     int pct = ghostty_terminal_get_progress_percent(term);
     int state = ghostty_terminal_get_progress_state(term);
@@ -814,6 +815,23 @@ void workspace_switch(int index, GtkWidget *terminal_stack, GtkWidget *workspace
     GtkListBoxRow *row = gtk_list_box_get_row_at_index(GTK_LIST_BOX(workspace_list), index);
     if (row)
         gtk_list_box_select_row(GTK_LIST_BOX(workspace_list), row);
+
+    /* Clear activity on the currently visible terminal of the newly
+     * selected workspace, and refresh labels. */
+    Workspace *ws = g_ptr_array_index(workspaces, index);
+    if (ws) {
+        GtkNotebook *focused = workspace_get_focused_pane(ws);
+        if (focused) {
+            int pg = gtk_notebook_get_current_page(focused);
+            if (pg >= 0) {
+                GtkWidget *page = gtk_notebook_get_nth_page(focused, pg);
+                if (page && GHOSTTY_IS_TERMINAL(page))
+                    ghostty_terminal_clear_activity(GHOSTTY_TERMINAL(page));
+            }
+        }
+        workspace_refresh_tab_labels(ws);
+        workspace_refresh_sidebar_label(ws);
+    }
 }
 
 /* ── Pane splitting ───────────────────────────────────────────── */
@@ -883,6 +901,9 @@ workspace_split_pane(Workspace *ws, GtkOrientation orientation,
     GtkWidget *paned = gtk_paned_new(orientation);
     gtk_widget_set_hexpand(paned, TRUE);
     gtk_widget_set_vexpand(paned, TRUE);
+
+    /* Connect resize overlay to show dimensions while dragging */
+    resize_overlay_connect_paned(GTK_PANED(paned));
 
     if (GTK_IS_PANED(parent)) {
         GtkWidget *start = gtk_paned_get_start_child(GTK_PANED(parent));

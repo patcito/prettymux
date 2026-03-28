@@ -55,7 +55,11 @@ void theme_apply(void) {
         "  border-radius: 4px; padding: 8px 12px; font-size: 14px; }"
         ".search-overlay list { background: transparent; }"
         ".search-overlay list row { padding: 8px 12px; color: %s; }"
-        ".search-overlay list row:selected { background-color: %s; }",
+        ".search-overlay list row:selected { background-color: %s; }"
+        ".has-activity { color: %s; }"
+        ".resize-overlay { background-color: alpha(%s, 0.92); color: %s;"
+        "  border: 1px solid %s; border-radius: 6px; padding: 6px 14px;"
+        "  font-size: 12px; font-family: monospace; }",
         t->bg, t->fg,
         t->surface,
         t->overlay,
@@ -69,7 +73,9 @@ void theme_apply(void) {
         t->bg,
         t->surface, t->fg, t->overlay,
         t->fg,
-        t->highlight
+        t->highlight,
+        t->green,
+        t->overlay, t->fg, t->muted
     );
 
     if (!css_provider) {

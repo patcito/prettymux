@@ -30,6 +30,7 @@ sources = files(
   'socket_server.c',
   'shortcuts_overlay.c',
   'pip_window.c',
+  'resize_overlay.c',
   glad_dir / 'src' / 'gl.c',
 )
 
@@ -38,5 +39,11 @@ executable('prettymux', sources,
   include_directories: ghostty_inc,
   c_args: ['-DPRETTYMUX_SOURCE_DIR="' + meson.current_source_dir() + '"'],
   link_args: ['-L' + ghostty_lib_dir, '-lghostty', '-Wl,-rpath,' + ghostty_lib_dir],
+  install: true,
+)
+
+# CLI tool: prettymux-open (standalone, no GTK/ghostty deps)
+executable('prettymux-open',
+  files('prettymux-open.c'),
   install: true,
 )

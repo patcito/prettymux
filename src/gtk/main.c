@@ -508,6 +508,7 @@ on_new_ports_detected(const int *new_ports, int new_port_count,
     int port = new_ports[0];
     snprintf(ws->notification, sizeof(ws->notification),
              "-> localhost:%d", port);
+    workspace_refresh_sidebar_label(ws);
 
     /* Desktop notification */
     char msg[64];
@@ -527,13 +528,91 @@ on_new_ports_detected(const int *new_ports, int new_port_count,
 // ── Socket server callback ──
 
 static void
-on_socket_command(const char *command, const char *url, gpointer user_data)
+on_socket_command(const char  *command,
+                  JsonObject  *msg,
+                  JsonBuilder *response,
+                  gpointer     user_data)
 {
     (void)user_data;
 
-    if (strcmp(command, "browser.open") == 0 && url && url[0]) {
-        add_browser_tab(url);
-        gtk_widget_set_visible(ui.browser_notebook, TRUE);
+    if (strcmp(command, "browser.open") == 0) {
+        const char *url = json_object_get_string_member_with_default(
+            msg, "url", "");
+        if (url && url[0]) {
+            add_browser_tab(url);
+            gtk_widget_set_visible(ui.browser_notebook, TRUE);
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "ok");
+        } else {
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "error");
+            json_builder_set_member_name(response, "message");
+            json_builder_add_string_value(response, "missing url");
+        }
+    } else if (strcmp(command, "workspace.new") == 0) {
+        const char *name = json_object_get_string_member_with_default(
+            msg, "name", "");
+        workspace_add(ui.terminal_stack, ui.workspace_list, g_ghostty_app);
+        if (name && name[0] && workspaces && workspaces->len > 0) {
+            Workspace *ws = g_ptr_array_index(workspaces,
+                                               workspaces->len - 1);
+            snprintf(ws->name, sizeof(ws->name), "%.60s", name);
+            workspace_refresh_sidebar_label(ws);
+        }
+        json_builder_set_member_name(response, "status");
+        json_builder_add_string_value(response, "ok");
+        json_builder_set_member_name(response, "index");
+        json_builder_add_int_value(response,
+            workspaces ? (int)workspaces->len - 1 : 0);
+    } else if (strcmp(command, "workspace.list") == 0) {
+        json_builder_set_member_name(response, "status");
+        json_builder_add_string_value(response, "ok");
+        json_builder_set_member_name(response, "workspaces");
+        json_builder_begin_array(response);
+        if (workspaces) {
+            guint i;
+            for (i = 0; i < workspaces->len; i++) {
+                Workspace *ws = g_ptr_array_index(workspaces, i);
+                json_builder_begin_object(response);
+                json_builder_set_member_name(response, "index");
+                json_builder_add_int_value(response, (int)i);
+                json_builder_set_member_name(response, "name");
+                json_builder_add_string_value(response, ws->name);
+                json_builder_set_member_name(response, "active");
+                json_builder_add_boolean_value(response,
+                    (int)i == current_workspace);
+                json_builder_end_object(response);
+            }
+        }
+        json_builder_end_array(response);
+    } else if (strcmp(command, "workspace.switch") == 0) {
+        int idx = (int)json_object_get_int_member_with_default(
+            msg, "index", -1);
+        if (idx >= 0 && workspaces && idx < (int)workspaces->len) {
+            workspace_switch(idx, ui.terminal_stack, ui.workspace_list);
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "ok");
+        } else {
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "error");
+            json_builder_set_member_name(response, "message");
+            json_builder_add_string_value(response, "invalid workspace index");
+        }
+    } else if (strcmp(command, "tab.new") == 0) {
+        Workspace *ws = workspace_get_current();
+        if (ws) {
+            workspace_add_terminal_to_focused(ws, g_ghostty_app);
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "ok");
+        } else {
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "error");
+        }
+    } else {
+        json_builder_set_member_name(response, "status");
+        json_builder_add_string_value(response, "error");
+        json_builder_set_member_name(response, "message");
+        json_builder_add_string_value(response, "unknown command");
     }
 }
 
@@ -608,8 +687,22 @@ static bool action_cb(ghostty_app_t app, ghostty_target_s target,
                 action.action.command_finished.exit_code,
                 action.action.command_finished.duration);
 
-            /* Desktop notification for long-running commands (>3s) */
+            /* Update sidebar notification for finished commands */
             double secs = action.action.command_finished.duration / 1000000000.0;
+            if (secs > 3.0 && loc.workspace) {
+                if (action.action.command_finished.exit_code == 0)
+                    snprintf(loc.workspace->notification,
+                             sizeof(loc.workspace->notification),
+                             "Command done (%.1fs)", secs);
+                else
+                    snprintf(loc.workspace->notification,
+                             sizeof(loc.workspace->notification),
+                             "Exit %d (%.1fs)",
+                             action.action.command_finished.exit_code, secs);
+                workspace_refresh_sidebar_label(loc.workspace);
+            }
+
+            /* Desktop notification for long-running commands (>3s) */
             if (secs > 3.0) {
                 char body[128];
                 if (action.action.command_finished.exit_code == 0)
@@ -625,6 +718,17 @@ static bool action_cb(ghostty_app_t app, ghostty_target_s target,
                 GApplication *a = g_application_get_default();
                 if (a) g_application_send_notification(a, NULL, n);
                 g_object_unref(n);
+
+                /* Add to in-app notification system */
+                {
+                    const char *term_title = ghostty_terminal_get_title(loc.terminal);
+                    char notif_msg[256];
+                    snprintf(notif_msg, sizeof(notif_msg),
+                             "Command finished in %s",
+                             (term_title && term_title[0]) ? term_title : "Terminal");
+                    notifications_add(notif_msg);
+                    bell_button_update();
+                }
             }
         }
         return true;
@@ -634,6 +738,17 @@ static bool action_cb(ghostty_app_t app, ghostty_target_s target,
         SurfaceLookup loc = find_terminal_for_surface(surface);
         if (loc.terminal)
             ghostty_terminal_notify_bell(loc.terminal);
+
+        /* Add to notification system */
+        {
+            const char *term_title = loc.terminal
+                ? ghostty_terminal_get_title(loc.terminal) : NULL;
+            char notif_msg[256];
+            snprintf(notif_msg, sizeof(notif_msg), "Bell in %s",
+                     (term_title && term_title[0]) ? term_title : "Terminal");
+            notifications_add(notif_msg);
+            bell_button_update();
+        }
 
         /* Desktop notification if not the active workspace */
         if (loc.workspace_idx >= 0 && loc.workspace_idx != current_workspace) {
@@ -693,12 +808,17 @@ static bool action_cb(ghostty_app_t app, ghostty_target_s target,
         SurfaceLookup loc = find_terminal_for_surface(surface);
         if (loc.terminal && loc.workspace) {
             int pct = (int)action.action.progress_report.progress;
+            int state = (int)action.action.progress_report.state;
             if (pct >= 0)
                 snprintf(loc.workspace->notification,
                          sizeof(loc.workspace->notification),
                          "Progress: %d%%", pct);
             else
                 loc.workspace->notification[0] = '\0';
+
+            /* Store progress on the terminal and refresh tab labels */
+            ghostty_terminal_set_progress(loc.terminal, state, pct);
+            workspace_refresh_tab_labels(loc.workspace);
         }
         return true;
     }
@@ -753,14 +873,26 @@ static void build_sidebar(void) {
     gtk_widget_set_vexpand(scroll, TRUE);
     gtk_box_append(GTK_BOX(ui.sidebar_box), scroll);
 
+    // Bottom bar: bell button + add workspace button side by side
+    GtkWidget *bottom_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    gtk_widget_set_margin_start(bottom_box, 8);
+    gtk_widget_set_margin_end(bottom_box, 8);
+    gtk_widget_set_margin_bottom(bottom_box, 8);
+    gtk_widget_set_margin_top(bottom_box, 4);
+
+    // Bell / notification button
+    ui.bell_button = gtk_button_new_with_label("\360\237\224\224");   /* bell emoji */
+    g_signal_connect(ui.bell_button, "clicked",
+                     G_CALLBACK(on_bell_button_clicked), NULL);
+    gtk_box_append(GTK_BOX(bottom_box), ui.bell_button);
+
     // Add workspace button
     GtkWidget *btn = gtk_button_new_with_label("+ New Workspace");
-    gtk_widget_set_margin_start(btn, 8);
-    gtk_widget_set_margin_end(btn, 8);
-    gtk_widget_set_margin_bottom(btn, 8);
-    gtk_widget_set_margin_top(btn, 4);
+    gtk_widget_set_hexpand(btn, TRUE);
     g_signal_connect(btn, "clicked", G_CALLBACK(on_add_workspace_clicked), NULL);
-    gtk_box_append(GTK_BOX(ui.sidebar_box), btn);
+    gtk_box_append(GTK_BOX(bottom_box), btn);
+
+    gtk_box_append(GTK_BOX(ui.sidebar_box), bottom_box);
 }
 
 static void on_new_browser_tab_clicked(GtkButton *b, gpointer d) {
@@ -951,6 +1083,11 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
 
     gtk_paned_set_position(GTK_PANED(ui.outer_paned), 200);
     gtk_paned_set_position(GTK_PANED(ui.main_paned), 700);
+
+    // Resize overlay — show dimensions when paned handles are dragged
+    resize_overlay_init(GTK_OVERLAY(ui.overlay));
+    resize_overlay_connect_paned(GTK_PANED(ui.outer_paned));
+    resize_overlay_connect_paned(GTK_PANED(ui.main_paned));
 
     // Command palette (overlay)
     ui.command_palette = command_palette_new(ui.browser_notebook,

@@ -101,7 +101,10 @@ on_uri_changed(WebKitWebView *web_view,
     BrowserTab *self = BROWSER_TAB(user_data);
     const char *uri = webkit_web_view_get_uri(web_view);
     if (uri != NULL) {
+        /* Guard: prevent autocomplete from running on programmatic changes */
+        self->autocomplete_active = TRUE;
         gtk_editable_set_text(GTK_EDITABLE(self->url_entry), uri);
+        self->autocomplete_active = FALSE;
         browser_tab_add_url_to_history(uri);
     }
 }

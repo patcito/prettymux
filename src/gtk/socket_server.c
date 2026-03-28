@@ -2,6 +2,7 @@
  * socket_server.c - Unix domain socket for IPC
  *
  * Creates /tmp/prettymux-<PID>.sock, accepts JSON commands.
+ * Sends JSON responses back to the client.
  */
 
 #include "socket_server.h"
@@ -39,6 +40,32 @@ client_ctx_free(ClientCtx *ctx)
 }
 
 static void
+send_response_and_close(ClientCtx *ctx, JsonBuilder *resp_builder)
+{
+    /* Close the response object */
+    json_builder_end_object(resp_builder);
+
+    JsonNode *node = json_builder_get_root(resp_builder);
+    JsonGenerator *gen = json_generator_new();
+    json_generator_set_root(gen, node);
+    gsize len = 0;
+    char *json_str = json_generator_to_data(gen, &len);
+
+    /* Write the response to the client */
+    GOutputStream *out = g_io_stream_get_output_stream(
+        G_IO_STREAM(ctx->conn));
+    if (out && json_str) {
+        g_output_stream_write_all(out, json_str, len, NULL, NULL, NULL);
+        g_output_stream_write_all(out, "\n", 1, NULL, NULL, NULL);
+    }
+
+    g_free(json_str);
+    json_node_unref(node);
+    g_object_unref(gen);
+    g_object_unref(resp_builder);
+}
+
+static void
 on_client_read(GObject      *source,
                GAsyncResult *result,
                gpointer      user_data)
@@ -67,9 +94,14 @@ on_client_read(GObject      *source,
                     JsonObject *obj = json_node_get_object(root);
                     const char *command = json_object_get_string_member_with_default(
                         obj, "command", "");
-                    const char *url = json_object_get_string_member_with_default(
-                        obj, "url", "");
-                    cmd_callback(command, url, cmd_user_data);
+
+                    /* Build response */
+                    JsonBuilder *resp = json_builder_new();
+                    json_builder_begin_object(resp);
+
+                    cmd_callback(command, obj, resp, cmd_user_data);
+
+                    send_response_and_close(ctx, resp);
                 }
             }
             g_object_unref(parser);
