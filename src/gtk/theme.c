@@ -62,14 +62,10 @@ void theme_apply(void) {
         "  font-size: 12px; font-family: monospace; }"
         ".terminal-status { font-size: 10px; font-family: monospace;"
         "  color: %s; padding: 1px 4px; }"
-        "@keyframes tab-blink {"
-        "  0%%, 100%% { border-color: transparent; }"
-        "  50%% { border-color: %s; }"
-        "}"
         ".tab-blink {"
-        "  animation: tab-blink 0.5s ease-in-out 4;"
-        "  border: 2px solid transparent;"
-        "  border-radius: 4px;"
+        "  border-left: 3px solid %s;"
+        "  border-radius: 2px;"
+        "  transition: border-color 0.3s ease;"
         "}",
         t->bg, t->fg,
         t->surface,

@@ -88,8 +88,9 @@ workspace_has_activity(Workspace *ws)
         return FALSE;
     guint i;
     for (i = 0; i < ws->terminals->len; i++) {
-        GhosttyTerminal *term = g_ptr_array_index(ws->terminals, i);
-        if (ghostty_terminal_has_activity(term))
+        GtkWidget *w = g_ptr_array_index(ws->terminals, i);
+        if (!GHOSTTY_IS_TERMINAL(w)) continue;
+        if (ghostty_terminal_has_activity(GHOSTTY_TERMINAL(w)))
             return TRUE;
     }
     return FALSE;
@@ -105,11 +106,12 @@ workspace_refresh_tab_labels(Workspace *ws)
     guint pi;
     for (pi = 0; pi < ws->pane_notebooks->len; pi++) {
         GtkNotebook *nb = g_ptr_array_index(ws->pane_notebooks, pi);
+        if (!GTK_IS_NOTEBOOK(nb)) continue;
         int n_pages = gtk_notebook_get_n_pages(nb);
         int i;
         for (i = 0; i < n_pages; i++) {
             GtkWidget *page = gtk_notebook_get_nth_page(nb, i);
-            if (!GHOSTTY_IS_TERMINAL(page))
+            if (!page || !GHOSTTY_IS_TERMINAL(page))
                 continue;
             GhosttyTerminal *term = GHOSTTY_TERMINAL(page);
             GtkWidget *tab_widget = gtk_notebook_get_tab_label(nb, page);
@@ -943,6 +945,7 @@ void workspace_switch(int index, GtkWidget *terminal_stack, GtkWidget *workspace
             guint pi;
             for (pi = 0; pi < ws->pane_notebooks->len; pi++) {
                 GtkNotebook *nb = g_ptr_array_index(ws->pane_notebooks, pi);
+                if (!GTK_IS_NOTEBOOK(nb)) continue;
                 int n_pages = gtk_notebook_get_n_pages(nb);
                 int ti;
                 for (ti = 0; ti < n_pages; ti++) {
