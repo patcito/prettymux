@@ -6,7 +6,6 @@
 
 GPtrArray *workspaces = NULL;
 int current_workspace = 0;
-static gboolean rename_in_progress = FALSE;
 
 /* Idle callback: set a GtkPaned position to 50% of its allocated size. */
 static gboolean set_paned_half(gpointer data) {
@@ -117,9 +116,13 @@ workspace_refresh_tab_labels(Workspace *ws)
             GtkWidget *tab_widget = gtk_notebook_get_tab_label(nb, page);
             if (!tab_widget)
                 continue;
+            if (g_object_get_data(G_OBJECT(tab_widget), "rename-in-progress"))
+                continue;
             /* The tab widget is a GtkBox containing a GtkLabel */
             GtkWidget *inner = gtk_widget_get_first_child(tab_widget);
             if (!GTK_IS_LABEL(inner))
+                continue;
+            if (!gtk_widget_get_parent(inner))
                 continue;
             if (g_object_get_data(G_OBJECT(inner), "user-renamed"))
                 continue;
@@ -139,6 +142,7 @@ void workspace_refresh_sidebar_label(Workspace *ws) {
     if (!ws || !ws->sidebar_label) return;
     /* Guard: skip if the label has been removed from its parent (during rename) */
     if (!GTK_IS_LABEL(ws->sidebar_label) ||
+        g_object_get_data(G_OBJECT(ws->sidebar_label), "rename-in-progress") ||
         !gtk_widget_get_parent(ws->sidebar_label))
         return;
     char buf[512];
@@ -304,8 +308,8 @@ build_tab_label_text(GhosttyTerminal *term, const char *title, char *buf, size_t
 
 static void on_title_changed(GhosttyTerminal *term, const char *title, gpointer label_ptr) {
     /* Skip if rename is in progress or label was destroyed/unparented */
-    if (rename_in_progress) return;
     if (!GTK_IS_LABEL(label_ptr)) return;
+    if (g_object_get_data(G_OBJECT(label_ptr), "rename-in-progress")) return;
     if (!gtk_widget_get_parent(GTK_WIDGET(label_ptr))) return;
     /* Skip if user manually renamed this tab */
     if (g_object_get_data(G_OBJECT(label_ptr), "user-renamed")) return;
@@ -335,12 +339,53 @@ typedef struct {
     gboolean is_workspace_row;   /* TRUE if this is a workspace sidebar rename */
 } RenameData;
 
+static void on_rename_entry_activate(GtkEntry *entry, gpointer user_data);
+static void on_rename_entry_focus_leave(GtkEventControllerFocus *ctrl,
+                                        gpointer user_data);
+
+static void
+start_rename(RenameData *rd)
+{
+    if (!rd || !GTK_IS_BOX(rd->event_box) || !GTK_IS_LABEL(rd->label))
+        return;
+    if (g_object_get_data(G_OBJECT(rd->event_box), "rename-entry"))
+        return;
+
+    GtkWidget *parent = rd->event_box;
+    const char *current_text = gtk_label_get_text(GTK_LABEL(rd->label));
+
+    g_object_ref(rd->label);
+    g_object_set_data(G_OBJECT(parent), "rename-in-progress", GINT_TO_POINTER(1));
+    g_object_set_data(G_OBJECT(parent), "rename-entry", NULL);
+    g_object_set_data(G_OBJECT(rd->label), "rename-in-progress", GINT_TO_POINTER(1));
+    gtk_box_remove(GTK_BOX(parent), rd->label);
+
+    GtkWidget *entry = gtk_entry_new();
+    GtkEntryBuffer *buf = gtk_entry_get_buffer(GTK_ENTRY(entry));
+    gtk_entry_buffer_set_text(buf, current_text, -1);
+    gtk_widget_set_hexpand(entry, FALSE);
+    gtk_widget_set_size_request(entry, 80, -1);
+
+    g_signal_connect(entry, "activate",
+                     G_CALLBACK(on_rename_entry_activate), rd);
+
+    GtkEventController *focus_ctrl = gtk_event_controller_focus_new();
+    g_signal_connect(focus_ctrl, "leave",
+                     G_CALLBACK(on_rename_entry_focus_leave), rd);
+    gtk_widget_add_controller(entry, focus_ctrl);
+
+    g_object_set_data(G_OBJECT(parent), "rename-entry", entry);
+    gtk_box_append(GTK_BOX(parent), entry);
+    gtk_widget_set_visible(entry, TRUE);
+    gtk_widget_grab_focus(entry);
+}
+
 static void
 finish_rename(GtkEntry *entry, RenameData *rd)
 {
     /* Guard: finish_rename can be called twice (activate + focus-leave) */
-    if (!rename_in_progress) return;
-    rename_in_progress = FALSE;
+    if (!rd || !GTK_IS_BOX(rd->event_box) || !GTK_IS_LABEL(rd->label))
+        return;
 
     GtkEntryBuffer *buf = gtk_entry_get_buffer(GTK_ENTRY(entry));
     const char *new_text = gtk_entry_buffer_get_text(buf);
@@ -359,11 +404,16 @@ finish_rename(GtkEntry *entry, RenameData *rd)
     /* Remove the entry, re-add the label */
     GtkWidget *entry_widget = GTK_WIDGET(entry);
     GtkWidget *parent = rd->event_box;
+    if (g_object_get_data(G_OBJECT(parent), "rename-entry") != entry_widget)
+        return;
 
     gtk_box_remove(GTK_BOX(parent), entry_widget);
     gtk_box_append(GTK_BOX(parent), rd->label);
-    g_object_unref(rd->label); /* Balance the ref from on_label_double_click */
     gtk_widget_set_visible(rd->label, TRUE);
+    g_object_set_data(G_OBJECT(parent), "rename-entry", NULL);
+    g_object_set_data(G_OBJECT(parent), "rename-in-progress", NULL);
+    g_object_set_data(G_OBJECT(rd->label), "rename-in-progress", NULL);
+    g_object_unref(rd->label); /* Balance the ref from start_rename */
 
     /* Now safe to refresh sidebar */
     if (rd->is_workspace_row && rd->workspace)
@@ -396,32 +446,7 @@ on_label_double_click(GtkGestureClick *gesture, int n_press,
     if (n_press != 2) return;
 
     RenameData *rd = user_data;
-    GtkWidget *parent = rd->event_box;
-    const char *current_text = gtk_label_get_text(GTK_LABEL(rd->label));
-
-    /* Hide label, insert entry.
-     * Ref the label so it survives removal from the box. */
-    rename_in_progress = TRUE;
-    g_object_ref(rd->label);
-    gtk_box_remove(GTK_BOX(parent), rd->label);
-
-    GtkWidget *entry = gtk_entry_new();
-    GtkEntryBuffer *buf = gtk_entry_get_buffer(GTK_ENTRY(entry));
-    gtk_entry_buffer_set_text(buf, current_text, -1);
-    gtk_widget_set_hexpand(entry, FALSE);
-    gtk_widget_set_size_request(entry, 80, -1);
-
-    g_signal_connect(entry, "activate",
-                     G_CALLBACK(on_rename_entry_activate), rd);
-
-    GtkEventController *focus_ctrl = gtk_event_controller_focus_new();
-    g_signal_connect(focus_ctrl, "leave",
-                     G_CALLBACK(on_rename_entry_focus_leave), rd);
-    gtk_widget_add_controller(entry, focus_ctrl);
-
-    gtk_box_append(GTK_BOX(parent), entry);
-    gtk_widget_set_visible(entry, TRUE);
-    gtk_widget_grab_focus(entry);
+    start_rename(rd);
 }
 
 /*
@@ -1457,29 +1482,7 @@ on_sidebar_ctx_rename_activate(GSimpleAction *action, GVariant *param,
     RenameData *rd = g_object_get_data(G_OBJECT(box), "rename-data");
     if (!rd) return;
 
-    /* Same logic as on_label_double_click with n_press == 2 */
-    GtkWidget *parent_box = rd->event_box;
-    const char *current_text = gtk_label_get_text(GTK_LABEL(rd->label));
-
-    gtk_box_remove(GTK_BOX(parent_box), rd->label);
-
-    GtkWidget *entry = gtk_entry_new();
-    GtkEntryBuffer *buf = gtk_entry_get_buffer(GTK_ENTRY(entry));
-    gtk_entry_buffer_set_text(buf, current_text, -1);
-    gtk_widget_set_hexpand(entry, FALSE);
-    gtk_widget_set_size_request(entry, 80, -1);
-
-    g_signal_connect(entry, "activate",
-                     G_CALLBACK(on_rename_entry_activate), rd);
-
-    GtkEventController *focus_ctrl = gtk_event_controller_focus_new();
-    g_signal_connect(focus_ctrl, "leave",
-                     G_CALLBACK(on_rename_entry_focus_leave), rd);
-    gtk_widget_add_controller(entry, focus_ctrl);
-
-    gtk_box_append(GTK_BOX(parent_box), entry);
-    gtk_widget_set_visible(entry, TRUE);
-    gtk_widget_grab_focus(entry);
+    start_rename(rd);
 }
 
 static void
