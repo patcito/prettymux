@@ -920,11 +920,14 @@ static bool action_cb(ghostty_app_t app, ghostty_target_s target,
         return true;
 
     case GHOSTTY_ACTION_DESKTOP_NOTIFICATION: {
-        GNotification *n = g_notification_new("PrettyMux");
-        g_notification_set_body(n, action.action.desktop_notification.body);
-        GApplication *a = g_application_get_default();
-        if (a) g_application_send_notification(a, NULL, n);
-        g_object_unref(n);
+        GError *nerr = NULL;
+        GSubprocess *nproc = g_subprocess_new(
+            G_SUBPROCESS_FLAGS_NONE, &nerr,
+            "notify-send", "prettymux",
+            action.action.desktop_notification.body,
+            "--app-name=prettymux", NULL);
+        if (nproc) g_object_unref(nproc);
+        else if (nerr) g_error_free(nerr);
         return true;
     }
 
@@ -1006,20 +1009,16 @@ static bool action_cb(ghostty_app_t app, ghostty_target_s target,
                              action.action.command_finished.exit_code,
                              ws_name, term_title, secs);
 
-                GNotification *n = g_notification_new("prettymux");
-                g_notification_set_body(n, body);
-
-                /* Set default action with navigation target */
-                GApplication *ga = g_application_get_default();
-                if (ga) {
-                    g_notification_set_default_action_and_target(n,
-                        "app.navigate-to-terminal", "(iii)",
-                        loc.workspace_idx,
-                        loc.tab_idx,
-                        0);
-                    g_application_send_notification(ga, NULL, n);
+                /* Desktop notification via notify-send */
+                {
+                    GError *nerr = NULL;
+                    GSubprocess *nproc = g_subprocess_new(
+                        G_SUBPROCESS_FLAGS_NONE, &nerr,
+                        "notify-send", "prettymux", body,
+                        "--app-name=prettymux", NULL);
+                    if (nproc) g_object_unref(nproc);
+                    else if (nerr) g_error_free(nerr);
                 }
-                g_object_unref(n);
 
                 /* Add to in-app notification system */
                 {
@@ -1071,19 +1070,16 @@ static bool action_cb(ghostty_app_t app, ghostty_target_s target,
             char body[256];
             snprintf(body, sizeof(body), "Bell in %s/%s", ws_name, term_title);
 
-            GNotification *n = g_notification_new("prettymux");
-            g_notification_set_body(n, body);
-
-            GApplication *ga = g_application_get_default();
-            if (ga) {
-                g_notification_set_default_action_and_target(n,
-                    "app.navigate-to-terminal", "(iii)",
-                    loc.workspace_idx,
-                    loc.tab_idx,
-                    0);
-                g_application_send_notification(ga, NULL, n);
+            /* Desktop notification via notify-send */
+            {
+                GError *nerr = NULL;
+                GSubprocess *nproc = g_subprocess_new(
+                    G_SUBPROCESS_FLAGS_NONE, &nerr,
+                    "notify-send", "prettymux", body,
+                    "--app-name=prettymux", NULL);
+                if (nproc) g_object_unref(nproc);
+                else if (nerr) g_error_free(nerr);
             }
-            g_object_unref(n);
         }
         return true;
     }
