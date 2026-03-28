@@ -298,16 +298,18 @@ static void handle_action(const char *action) {
     } else if (strcmp(action, "workspace.close") == 0) {
         workspace_remove(current_workspace, ui.terminal_stack, ui.workspace_list);
     } else if (strcmp(action, "workspace.next") == 0) {
+        if (!workspaces || workspaces->len == 0) return;
         workspace_switch((current_workspace + 1) % workspaces->len,
                          ui.terminal_stack, ui.workspace_list);
     } else if (strcmp(action, "workspace.prev") == 0) {
+        if (!workspaces || workspaces->len == 0) return;
         workspace_switch((current_workspace - 1 + workspaces->len) % workspaces->len,
                          ui.terminal_stack, ui.workspace_list);
     } else if (strcmp(action, "pane.tab.new") == 0) {
         Workspace *ws = workspace_get_current();
         if (ws) {
             GtkNotebook *focused = workspace_get_focused_pane(ws);
-            if (focused) {
+            if (focused && GTK_IS_NOTEBOOK(focused)) {
                 /* Declared in workspace.c as static; use the public API
                  * which adds to the first notebook.  For focused-pane
                  * support, we call workspace_add_terminal which now goes
@@ -358,7 +360,7 @@ static void handle_action(const char *action) {
         Workspace *ws = workspace_get_current();
         if (ws) {
             GtkNotebook *focused = workspace_get_focused_pane(ws);
-            if (focused) {
+            if (focused && GTK_IS_NOTEBOOK(focused)) {
                 int n_pages = gtk_notebook_get_n_pages(focused);
                 int pg = gtk_notebook_get_current_page(focused);
                 if (n_pages > 1 && pg >= 0) {
@@ -406,7 +408,7 @@ static void handle_action(const char *action) {
         Workspace *ws = workspace_get_current();
         if (ws) {
             GtkNotebook *focused = workspace_get_focused_pane(ws);
-            if (focused) {
+            if (focused && GTK_IS_NOTEBOOK(focused)) {
                 int pg = gtk_notebook_get_current_page(focused);
                 if (pg >= 0) {
                     GtkWidget *child = gtk_notebook_get_nth_page(focused, pg);
@@ -436,7 +438,7 @@ static void handle_action(const char *action) {
         Workspace *ws = workspace_get_current();
         if (ws) {
             GtkNotebook *focused = workspace_get_focused_pane(ws);
-            if (focused) {
+            if (focused && GTK_IS_NOTEBOOK(focused)) {
                 int pg = gtk_notebook_get_current_page(focused);
                 if (pg >= 0) {
                     GtkWidget *child = gtk_notebook_get_nth_page(focused, pg);
@@ -463,7 +465,7 @@ static void handle_action(const char *action) {
         Workspace *ws = workspace_get_current();
         if (ws) {
             GtkNotebook *focused = workspace_get_focused_pane(ws);
-            if (focused) {
+            if (focused && GTK_IS_NOTEBOOK(focused)) {
                 int pg = gtk_notebook_get_current_page(focused);
                 if (pg >= 0) {
                     GtkWidget *child = gtk_notebook_get_nth_page(focused, pg);

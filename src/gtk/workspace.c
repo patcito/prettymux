@@ -254,7 +254,8 @@ on_git_branch_read(GObject *source, GAsyncResult *result, gpointer user_data)
 }
 
 void workspace_detect_git(Workspace *ws) {
-    if (!ws || !ws->cwd[0]) {
+    if (!ws) return;
+    if (!ws->cwd[0]) {
         ws->git_branch[0] = '\0';
         workspace_refresh_sidebar_label(ws);
         return;
@@ -488,6 +489,15 @@ on_label_double_click(GtkGestureClick *gesture, int n_press,
  * Returns a GtkBox containing a GtkLabel with a gesture controller.
  * *out_label receives the inner GtkLabel pointer (for title-changed).
  */
+/* Idle callback to refresh tab labels after a close */
+static gboolean
+tab_close_refresh_idle_cb(gpointer user_data)
+{
+    Workspace *ws = user_data;
+    workspace_refresh_tab_labels(ws);
+    return G_SOURCE_REMOVE;
+}
+
 /* Close button (X) on tab label */
 static void
 on_tab_close_clicked(GtkButton *btn, gpointer user_data)
@@ -496,6 +506,7 @@ on_tab_close_clicked(GtkButton *btn, gpointer user_data)
     GtkWidget *terminal = g_object_get_data(G_OBJECT(btn), "terminal-widget");
     Workspace *ws = g_object_get_data(G_OBJECT(btn), "workspace");
     if (!terminal || !ws) return;
+    if (!GHOSTTY_IS_TERMINAL(terminal)) return;
 
     /* Find which notebook contains this terminal */
     GtkWidget *parent = gtk_widget_get_parent(terminal);
@@ -511,6 +522,9 @@ on_tab_close_clicked(GtkButton *btn, gpointer user_data)
 
     g_ptr_array_remove(ws->terminals, terminal);
     gtk_notebook_remove_page(nb, page);
+
+    /* Defer tab label refresh to idle to avoid re-entrancy */
+    g_idle_add(tab_close_refresh_idle_cb, ws);
 
     /* If notebook is now empty and there are other panes, close the pane */
     if (gtk_notebook_get_n_pages(nb) == 0 &&
@@ -679,10 +693,10 @@ on_notebook_drop(GtkDropTarget *target, const GValue *value,
     if (dest_ws)
         setup_tab_label_dnd(tab_label_widget, terminal, dest_nb, dest_ws);
 
-    /* Connect title-changed to the new label */
+    /* Connect title-changed to the new label (auto-disconnect on label destroy) */
     if (new_label && GHOSTTY_IS_TERMINAL(terminal))
-        g_signal_connect(terminal, "title-changed",
-                         G_CALLBACK(on_title_changed), new_label);
+        g_signal_connect_object(terminal, "title-changed",
+                                G_CALLBACK(on_title_changed), new_label, 0);
 
     g_object_unref(terminal);
 
@@ -769,8 +783,8 @@ on_ws_sidebar_drop(GtkDropTarget *target, const GValue *value,
     setup_tab_label_dnd(tab_label_widget, terminal, dest_nb, dest_ws);
 
     if (new_label && GHOSTTY_IS_TERMINAL(terminal))
-        g_signal_connect(terminal, "title-changed",
-                         G_CALLBACK(on_title_changed), new_label);
+        g_signal_connect_object(terminal, "title-changed",
+                                G_CALLBACK(on_title_changed), new_label, 0);
 
     g_object_unref(terminal);
 
@@ -846,9 +860,9 @@ workspace_add_terminal_to_notebook(Workspace *ws, GtkNotebook *notebook,
     gtk_notebook_append_page(notebook, terminal, tab_label);
     gtk_notebook_set_tab_reorderable(notebook, terminal, TRUE);
 
-    /* Connect title-changed to update the inner label */
-    g_signal_connect(terminal, "title-changed",
-                     G_CALLBACK(on_title_changed), inner_label);
+    /* Connect title-changed to update the inner label (auto-disconnect on label destroy) */
+    g_signal_connect_object(terminal, "title-changed",
+                            G_CALLBACK(on_title_changed), inner_label, 0);
 
     /* Set up DnD on the tab label */
     setup_tab_label_dnd(tab_label, terminal, notebook, ws);
@@ -1164,7 +1178,7 @@ workspace_split_pane(Workspace *ws, GtkOrientation orientation,
         gtk_paned_set_resize_start_child(GTK_PANED(paned), TRUE);
         gtk_paned_set_resize_end_child(GTK_PANED(paned), TRUE);
 
-    } else {
+    } else if (GTK_IS_STACK(parent)) {
         GtkWidget *stack = parent;
         int ws_idx = workspace_index_of(ws);
 
@@ -1185,6 +1199,10 @@ workspace_split_pane(Workspace *ws, GtkOrientation orientation,
         gtk_stack_set_visible_child(GTK_STACK(stack), paned);
 
         ws->container = paned;
+    } else {
+        /* Parent is neither GtkPaned nor GtkStack -- abort split */
+        g_ptr_array_remove(ws->pane_notebooks, new_nb);
+        return;
     }
 
     gtk_widget_set_visible(paned, TRUE);
@@ -1434,6 +1452,7 @@ void
 workspace_close_pane(Workspace *ws, GtkNotebook *pane)
 {
     if (!ws || !pane) return;
+    if (!GTK_IS_NOTEBOOK(pane)) return;
     if (!ws->pane_notebooks || ws->pane_notebooks->len <= 1) return;
 
     GtkWidget *pane_widget = GTK_WIDGET(pane);
@@ -1442,13 +1461,19 @@ workspace_close_pane(Workspace *ws, GtkNotebook *pane)
     if (!GTK_IS_PANED(parent)) return;
 
     GtkPaned *parent_paned = GTK_PANED(parent);
+
+    /* Verify pane is actually a child of parent_paned */
+    GtkWidget *start = gtk_paned_get_start_child(parent_paned);
+    GtkWidget *end_c = gtk_paned_get_end_child(parent_paned);
+    if (pane_widget != start && pane_widget != end_c) return;
+
     GtkWidget *grandparent = gtk_widget_get_parent(GTK_WIDGET(parent_paned));
 
+    /* Verify grandparent is a valid container type before any detach */
+    if (!GTK_IS_PANED(grandparent) && !GTK_IS_STACK(grandparent)) return;
+
     /* Determine the sibling (the other child of the paned). */
-    GtkWidget *start = gtk_paned_get_start_child(parent_paned);
-    GtkWidget *sibling = (start == pane_widget)
-        ? gtk_paned_get_end_child(parent_paned)
-        : start;
+    GtkWidget *sibling = (start == pane_widget) ? end_c : start;
 
     if (!sibling) return;
 
@@ -1461,9 +1486,6 @@ workspace_close_pane(Workspace *ws, GtkNotebook *pane)
             g_ptr_array_remove(ws->terminals, child);
         }
     }
-
-    /* Remove the pane from pane_notebooks */
-    g_ptr_array_remove(ws->pane_notebooks, pane);
 
     /* Determine which side of grandparent holds parent_paned */
     gboolean is_start_in_gp = FALSE;
@@ -1511,6 +1533,9 @@ workspace_close_pane(Workspace *ws, GtkNotebook *pane)
     }
 
     g_object_unref(sibling);
+
+    /* Remove the pane from pane_notebooks AFTER successful reparent */
+    g_ptr_array_remove(ws->pane_notebooks, pane);
 
     /* Update ws->notebook if it was the closed pane */
     if (ws->notebook == GTK_WIDGET(pane) && ws->pane_notebooks->len > 0)

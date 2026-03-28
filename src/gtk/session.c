@@ -256,7 +256,10 @@ void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
         guint bt_len = json_array_get_length(bt_arr);
         guint bi;
         for (bi = 0; bi < bt_len; bi++) {
-            JsonObject *bt_obj = json_array_get_object_element(bt_arr, bi);
+            JsonNode *bt_node = json_array_get_element(bt_arr, bi);
+            if (!bt_node || !JSON_NODE_HOLDS_OBJECT(bt_node))
+                continue;
+            JsonObject *bt_obj = json_node_get_object(bt_node);
             const char *url = json_object_get_string_member_with_default(
                 bt_obj, "url", "");
             if (url && url[0])
@@ -278,7 +281,10 @@ void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
 
         /* Restore each workspace */
         for (wi = 0; wi < len && wi < workspaces->len; wi++) {
-            JsonObject *ws_obj = json_array_get_object_element(ws_arr, wi);
+            JsonNode *ws_node = json_array_get_element(ws_arr, wi);
+            if (!ws_node || !JSON_NODE_HOLDS_OBJECT(ws_node))
+                continue;
+            JsonObject *ws_obj = json_node_get_object(ws_node);
             Workspace *ws = g_ptr_array_index(workspaces, wi);
 
             /* Restore name */
@@ -304,8 +310,11 @@ void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
                 guint pi;
 
                 for (pi = 0; pi < n_panes; pi++) {
-                    JsonObject *pane_obj = json_array_get_object_element(
+                    JsonNode *pane_node = json_array_get_element(
                         panes_arr, pi);
+                    if (!pane_node || !JSON_NODE_HOLDS_OBJECT(pane_node))
+                        continue;
+                    JsonObject *pane_obj = json_node_get_object(pane_node);
 
                     /* For panes beyond the first, split to create them */
                     if (pi > 0) {
@@ -336,8 +345,12 @@ void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
 
                         /* Set tab names + restore CWD */
                         for (ti = 0; ti < n_tabs; ti++) {
+                            JsonNode *tab_node =
+                                json_array_get_element(tabs_arr, ti);
+                            if (!tab_node || !JSON_NODE_HOLDS_OBJECT(tab_node))
+                                continue;
                             JsonObject *tab_obj =
-                                json_array_get_object_element(tabs_arr, ti);
+                                json_node_get_object(tab_node);
                             const char *tab_name =
                                 json_object_get_string_member_with_default(
                                     tab_obj, "name", "Terminal");
