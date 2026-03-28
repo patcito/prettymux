@@ -10,7 +10,7 @@
  *
  * Phase 1: Socket API + Python CLI
  * Phase 2: Config system + Session persistence
- * Phase 3: Python scripting module + JS scripting via QWebChannel
+ * Phase 3: Python scripting module + JS scripting via WebKitGTK UserContentManager
  * Phase 4: Keyboard shortcuts, shell integration, CI
  *
  * Delete smithers.db before running to start fresh.
@@ -42,7 +42,7 @@ const { Workflow, Task, smithers, outputs } = createSmithers({
 });
 
 const PROJECT_DIR = "/home/pe/newnewrepos/w/yo/prettymux";
-const BUILD_CMD = "cd src/qt/build && cmake .. -DCMAKE_BUILD_TYPE=Release && make -j$(nproc)";
+const BUILD_CMD = "cd src/gtk && meson setup builddir --buildtype=release && ninja -C builddir";
 
 const coder = new ClaudeCodeAgent({
   model: "claude-opus-4-6",
@@ -74,21 +74,21 @@ export default smithers((ctx) => (
         <Task id="impl1" output={implResult} agent={coder} retries={2}>
           {`You are working on PrettyMux at ${PROJECT_DIR}.
 
-This is a GTK4 terminal multiplexer. The main source is src/qt/main.cpp.
+This is a GTK4 terminal multiplexer. The main source is src/gtk/main.cpp.
 Build with: ${BUILD_CMD}
 
-The app ALREADY has a basic QLocalServer socket that handles browser.open
+The app ALREADY has a basic Unix domain socket server that handles browser.open
 commands. You need to EXTEND it (not rewrite) to handle all commands.
 
-IMPORTANT: Read src/qt/main.cpp first to understand the existing code structure.
-The app uses QLocalServer, has Workspace structs with PaneWidgets, WebKitGTK
+IMPORTANT: Read src/gtk/main.cpp first to understand the existing code structure.
+The app uses a Unix domain socket server, has Workspace structs with PaneWidgets, WebKitGTK
 browser tabs, and GhosttyWidget terminals.
 
 ${ctx.latest(reviewResult, "review1")?.issues?.length ? `\nPREVIOUS REVIEW FEEDBACK:\n${ctx.latest(reviewResult, "review1")!.issues.join("\n")}\n` : ""}
 
 Implement PHASE 1: Socket API + Python CLI
 
-1. EXTEND the existing QLocalServer handler in main.cpp to support these commands:
+1. EXTEND the existing Unix domain socket handler in main.cpp to support these commands:
    JSON protocol: {"command": "...", "args": {...}} -> {"success": true, "data": ...}
 
    Workspace commands:
@@ -118,7 +118,7 @@ Implement PHASE 1: Socket API + Python CLI
    - current -> { workspace: {...}, pane: {...} }
 
    Each command handler should call the appropriate methods on PrettyMuxWindow.
-   Use Q_INVOKABLE on new methods so they can be called via QMetaObject::invokeMethod
+   Use g_idle_add or g_main_context_invoke to dispatch calls to the main GTK thread
    from the socket thread if needed.
 
 2. Create src/cli/prettymux — a Python CLI script (NOT a module, just a script):
@@ -162,7 +162,7 @@ Return JSON: { summary: "...", filesChanged: ["path1", ...] }`}
 
 Check:
 
-1. src/qt/main.cpp socket handler extended with all commands listed above
+1. src/gtk/main.cpp socket handler extended with all commands listed above
 2. Each command properly calls PrettyMuxWindow methods
 3. JSON protocol is consistent: request has "command" + "args", response has "success" + "data"
 4. src/cli/prettymux exists, is executable (chmod +x), has shebang
@@ -194,7 +194,7 @@ If ANY issue: { approved: false, issues: ["..."], summary: "Found N issues" }`}
           {`You are working on PrettyMux at ${PROJECT_DIR}.
 Build with: ${BUILD_CMD}
 
-Read src/qt/main.cpp to understand the existing code.
+Read src/gtk/main.cpp to understand the existing code.
 
 ${ctx.latest(reviewResult, "review2")?.issues?.length ? `\nPREVIOUS REVIEW FEEDBACK:\n${ctx.latest(reviewResult, "review2")!.issues.join("\n")}\n` : ""}
 
@@ -259,7 +259,7 @@ If ANY issue: { approved: false, issues: ["..."], summary: "Found N issues" }`}
       </Ralph>
 
       {/* ═══════════════════════════════════════════════════════════════
-          Phase 3: Python Scripting + JS Scripting via QWebChannel
+          Phase 3: Python Scripting + JS Scripting via WebKitGTK
           ═══════════════════════════════════════════════════════════════ */}
       <Ralph
         until={ctx.latest(reviewResult, "review3")?.approved}
@@ -271,7 +271,7 @@ If ANY issue: { approved: false, issues: ["..."], summary: "Found N issues" }`}
           {`You are working on PrettyMux at ${PROJECT_DIR}.
 Build with: ${BUILD_CMD}
 
-Read src/qt/main.cpp to understand the existing code.
+Read src/gtk/main.cpp to understand the existing code.
 The socket API from Phase 1 is already implemented.
 
 ${ctx.latest(reviewResult, "review3")?.issues?.length ? `\nPREVIOUS REVIEW FEEDBACK:\n${ctx.latest(reviewResult, "review3")!.issues.join("\n")}\n` : ""}
@@ -313,21 +313,18 @@ Implement PHASE 3: Python Scripting Module + JS Scripting
    - Raise exceptions on errors
    - Be a single file, no deps beyond stdlib
 
-2. Add JavaScript scripting via QWebChannel in main.cpp:
-   - Add QWebChannel to CMakeLists.txt: find_package(Qt6 REQUIRED COMPONENTS WebChannel)
-     and target_link_libraries(... Qt6::WebChannel)
-   - Create a PrettyMuxBridge QObject class with Q_INVOKABLE methods:
-     - workspaceNew(name), workspaceList(), workspaceSelect(index)
-     - paneSplitRight(), paneSplitDown(), paneList()
-     - browserOpen(url), browserList()
-     - notify(title, body), sendKeys(keys)
-   - Register it with QWebChannel on each WebKitGTK browser view
+2. Add JavaScript scripting via WebKitGTK UserContentManager in main.cpp:
+   - Use webkit_user_content_manager_register_script_message_handler() to register
+     a "prettymux" message handler on each WebKitGTK browser view
+   - Inject a JS bridge script via webkit_user_content_manager_add_script() that exposes:
+     window.prettymux.workspaceNew(name), window.prettymux.workspaceList(), etc.
+   - Handle "script-message-received" signal to dispatch commands to the socket API
    - This exposes window.prettymux in all browser tabs:
      window.prettymux.workspaceNew("dev")
      window.prettymux.browserOpen("https://example.com")
 
 echo "Phase 3: Creating Python scripting module..."
-echo "Phase 3: Adding QWebChannel JS bridge..."
+echo "Phase 3: Adding WebKitGTK JS bridge..."
 
 After implementing, build: ${BUILD_CMD}
 Fix any errors until build passes.
@@ -345,11 +342,11 @@ Check:
 2. Module auto-discovers socket path
 3. Module has workspace, pane, browser, notify, send_keys methods
 4. Module is a single file with no external deps
-5. CMakeLists.txt includes Qt6::WebChannel
-6. PrettyMuxBridge QObject class exists with Q_INVOKABLE methods
-7. QWebChannel registered on browser pages
+5. WebKitGTK UserContentManager used for JS bridge
+6. Script message handler registered for "prettymux" channel
+7. JS bridge script injected into browser pages
 8. window.prettymux available in browser JS context
-9. Build succeeds with WebChannel
+9. Build succeeds with Meson/Ninja
 
 Build: ${BUILD_CMD}
 Test: python3 -c "import sys; sys.path.insert(0, 'src/scripting'); import prettymux; print('OK')"
@@ -373,7 +370,7 @@ If ANY issue: { approved: false, issues: ["..."], summary: "Found N issues" }`}
           {`You are working on PrettyMux at ${PROJECT_DIR}.
 Build with: ${BUILD_CMD}
 
-Read src/qt/main.cpp to understand the existing keyboard shortcuts.
+Read src/gtk/main.cpp to understand the existing keyboard shortcuts.
 
 ${ctx.latest(reviewResult, "review4")?.issues?.length ? `\nPREVIOUS REVIEW FEEDBACK:\n${ctx.latest(reviewResult, "review4")!.issues.join("\n")}\n` : ""}
 
@@ -416,9 +413,9 @@ Implement PHASE 4: Keyboard Shortcuts, Shell Integration, CI
        runs-on: ubuntu-latest
        steps:
          - checkout
-         - Install deps: sudo apt install qt6-base-dev qt6-webengine-dev libgl-dev cmake
+         - Install deps: sudo apt install libgtk-4-dev libadwaita-1-dev libwebkitgtk-6.0-dev libjson-glib-dev meson ninja-build
          - Build ghostty: cd ghostty && zig build -Dapp-runtime=none -Doptimize=ReleaseFast
-         - Build prettymux: cd src/qt/build && cmake .. -DCMAKE_BUILD_TYPE=Release && make
+         - Build prettymux: cd src/gtk && meson setup builddir --buildtype=release && ninja -C builddir
          - Upload artifact: prettymux binary
 
 4. Update welcome.html to show all current keyboard shortcuts

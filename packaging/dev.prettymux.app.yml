@@ -1,7 +1,7 @@
 app-id: dev.prettymux.app
-runtime: org.kde.Platform
-runtime-version: '6.8'
-sdk: org.kde.Sdk
+runtime: org.gnome.Platform
+runtime-version: '46'
+sdk: org.gnome.Sdk
 command: prettymux
 finish-args:
   - --share=ipc
@@ -26,11 +26,10 @@ modules:
         path: ../ghostty
 
   - name: prettymux
-    buildsystem: cmake-ninja
+    buildsystem: meson
     config-opts:
-      - -DCMAKE_BUILD_TYPE=Release
-      - -DGHOSTTY_DIR=/app
-    subdir: src/qt
+      - -Dghostty_dir=/app
+    subdir: src/gtk
     post-install:
       - install -Dm644 prettymux-shell-integration.sh /app/share/prettymux/shell-integration.sh
       - install -Dm644 ../../packaging/prettymux.desktop /app/share/applications/dev.prettymux.app.desktop

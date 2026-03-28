@@ -10,14 +10,16 @@ license: GPL-3.0-only
 overrides:
   deb:
     depends:
-      - libqt6webenginewidgets6
-      - libqt6openglwidgets6
-      - libgl1
+      - libgtk-4-1
+      - libadwaita-1-0
+      - libwebkitgtk-6.0-4
+      - libjson-glib-1.0-0
   rpm:
     depends:
-      - qt6-qtwebengine
-      - qt6-qtbase-gui
-      - mesa-libGL
+      - gtk4
+      - libadwaita
+      - webkitgtk6.0
+      - json-glib
 
 contents:
   - src: dist/prettymux

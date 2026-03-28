@@ -65,8 +65,8 @@ export default smithers((ctx) => (
         <Sequence>
         <Task id="impl1" output={implResult} agent={coder} retries={2}>
           {`You are working on PrettyMux at ${PROJECT_DIR}.
-This is a GTK4 app built with CMake. Source: src/qt/main.cpp
-It depends on: GTK4, libadwaita, WebKitGTK, libghostty, GLAD
+This is a GTK4 app built with Meson. Source: src/gtk/main.cpp
+It depends on: GTK4, libadwaita, WebKitGTK, json-glib, libghostty, GLAD
 
 The ghostty fork is at https://github.com/patcito/ghostty branch linux-embedded-platform
 The prettymux repo is at https://github.com/patcito/prettymux
@@ -84,9 +84,9 @@ Create the following files:
 
    a) build-linux-ubuntu-lts (ubuntu-22.04):
       - Checkout prettymux and ghostty fork (linux-embedded-platform branch)
-      - Install: qt6-base-dev qt6-webengine-dev libgl-dev cmake zig
+      - Install: libgtk-4-dev libadwaita-1-dev libwebkitgtk-6.0-dev libjson-glib-dev meson ninja-build zig
       - Build ghostty: cd ghostty && zig build -Dapp-runtime=none -Doptimize=ReleaseFast
-      - Build prettymux: cd src/qt/build && cmake .. -DCMAKE_BUILD_TYPE=Release && make
+      - Build prettymux: cd src/gtk && meson setup builddir --buildtype=release && ninja -C builddir
       - Copy binary + welcome.html + shell integration + libghostty.so
       - Upload artifact
 
@@ -94,7 +94,7 @@ Create the following files:
       Same as above but on ubuntu-24.04
 
    c) build-linux-fedora (container: fedora:latest):
-      - Install: qt6-qtbase-devel qt6-qtwebengine-devel mesa-libGL-devel cmake gcc-c++
+      - Install: gtk4-devel libadwaita-devel webkitgtk6.0-devel json-glib-devel meson ninja-build gcc-c++
       - Install zig from tarball
       - Build same way
       - Create RPM using nFPM (install nfpm)
@@ -108,7 +108,7 @@ Create the following files:
         version: from git tag or 0.1.0
         maintainer: patcito
         description: GPU-accelerated terminal multiplexer
-        depends: [qt6-webengine, libgl1]
+        depends: [libgtk-4-1, libadwaita-1-0, libwebkitgtk-6.0-4, libjson-glib-1.0-0]
         contents:
           - src: prettymux -> dst: /usr/bin/prettymux
           - src: libghostty.so -> dst: /usr/lib/prettymux/libghostty.so
@@ -119,13 +119,13 @@ Create the following files:
 
    e) build-snap:
       - Use snapcore/action-build@v1 to build snap
-      - Create snap/snapcraft.yaml with core22 base, classic confinement
+      - Create snap/snapcraft.yaml with core24 base, classic confinement
       - Use snapcore/action-publish@v1 to publish if SNAPCRAFT_STORE_CREDENTIALS secret set
       - Upload .snap artifact
 
    f) build-flatpak:
       - Use flatpak/flatpak-github-actions/flatpak-builder@v6 action
-      - Create packaging/dev.prettymux.app.yml manifest with org.kde.Platform 6.6
+      - Create packaging/dev.prettymux.app.yml manifest with org.gnome.Platform 46
       - The action handles flatpak-builder setup automatically
       - Upload .flatpak bundle artifact
 
@@ -186,7 +186,7 @@ Check:
 7. packaging/dev.prettymux.app.yml exists for Flatpak
 8. Jobs upload artifacts
 9. Workflow triggers on push to main and version tags
-10. Correct GTK4 package names per distro
+10. Correct GTK4/libadwaita/WebKitGTK/json-glib package names per distro
 
 If ALL pass: { approved: true, issues: [], summary: "Phase 1 looks good" }
 If ANY issue: { approved: false, issues: ["..."], summary: "Found N issues" }`}
@@ -214,51 +214,12 @@ ${ctx.latest(reviewResult, "review2")?.issues?.length ? '\nPREVIOUS REVIEW FEEDB
 
 Implement PHASE 2: Windows + macOS + Release
 
+NOTE: PrettyMux now uses GTK4+WebKitGTK and is Linux-only.
+Windows and macOS builds are not applicable (GTK4+WebKitGTK are Linux-native).
+
 Add to .github/workflows/release.yml:
 
-1. build-windows (windows-latest):
-   - Checkout prettymux and ghostty fork
-   - Install Zig: use mlugg/setup-zig@v1 action
-   - Install Qt6: use jurplel/install-qt-action@v4 with:
-     version: '6.6.0'
-     modules: 'qtwebengine'
-     arch: 'win64_msvc2019_64'
-   - Build ghostty for Windows:
-     cd ghostty && zig build -Dapp-runtime=none -Doptimize=ReleaseFast -Dtarget=x86_64-windows
-     (NOTE: This may not work yet since ghostty Windows support is limited.
-      If it fails, add a comment explaining and skip the ghostty build.
-      The job should still create the prettymux binary structure.)
-   - Build prettymux with CMake + MSVC:
-     cmake .. -G "Visual Studio 17 2022" -DCMAKE_BUILD_TYPE=Release
-     cmake --build . --config Release
-   - Package with NSIS or just zip:
-     Create a zip with prettymux.exe + Qt DLLs + libghostty.dll + welcome.html
-     Use windeployqt to gather Qt dependencies
-   - Upload artifact: prettymux-windows-x64.zip
-
-2. build-macos (macos-14, ARM64):
-   - Checkout prettymux and ghostty fork
-   - Install Zig: use mlugg/setup-zig@v1
-   - Install Qt6: use jurplel/install-qt-action@v4 with:
-     version: '6.6.0'
-     modules: 'qtwebengine'
-   - Build ghostty:
-     cd ghostty && zig build -Dapp-runtime=none -Doptimize=ReleaseFast
-     (macOS embedded apprt already works, this is what cmux uses)
-   - Update CMakeLists.txt to handle macOS:
-     Add APPLE checks, link with Metal framework if needed
-     Set MACOSX_BUNDLE properties
-   - Build prettymux:
-     cmake .. -DCMAKE_BUILD_TYPE=Release && make
-   - Create .app bundle and .dmg:
-     Use macdeployqt to create the .app bundle
-     Use create-dmg or hdiutil to make a .dmg
-   - Upload artifact: PrettyMux.dmg
-
-3. build-macos-intel (macos-13, x86_64):
-   Same as above but for Intel Macs
-
-4. release job (needs: all build jobs):
+1. release job (needs: all Linux build jobs):
    Only runs on version tags (v*)
    - Download all artifacts
    - Create GitHub Release using softprops/action-gh-release@v2
@@ -269,21 +230,9 @@ Add to .github/workflows/release.yml:
      prettymux-archlinux-PKGBUILD.tar.gz
      prettymux-linux-x86_64.snap
      prettymux-linux-x86_64.flatpak
-     prettymux-windows-x64.zip
-     PrettyMux-arm64.dmg
-     PrettyMux-x64.dmg
+     prettymux-linux-x86_64.AppImage
    - Generate changelog from git log since last tag
    - Mark as pre-release if tag contains "beta" or "alpha"
-
-5. Update CMakeLists.txt for cross-platform support:
-   - Add #ifdef guards for Linux-specific code in main.cpp:
-     Port scanner (/proc/net/tcp) -> #ifdef __linux__
-     notify-send -> #ifdef __linux__
-     BASH_ENV -> platform check
-   - Add macOS framework linking (Metal, Cocoa)
-   - Add Windows resource file for icon
-
-6. Create packaging/prettymux.rc — Windows resource file with icon
 
 echo "Phase 2: Adding Windows and macOS builds..."
 echo "Phase 2: Adding release automation..."
@@ -295,16 +244,11 @@ Return JSON: { summary: "...", filesChanged: ["path1", ...] }`}
           {`Review Phase 2 (Windows + macOS + Release) at ${PROJECT_DIR}. FINAL REVIEW.
 
 Check:
-1. Windows job uses jurplel/install-qt-action and MSVC
-2. macOS ARM64 and Intel jobs exist
-3. macOS uses macdeployqt for .app bundle
-4. Release job creates GitHub Release on version tags
-5. All artifacts uploaded to release
-6. CMakeLists.txt has platform checks
-7. main.cpp Linux-specific code guarded with #ifdef
-8. packaging/prettymux.rc exists for Windows
-9. Changelog generated from git log
-10. Pre-release flag for beta/alpha tags
+1. Release job creates GitHub Release on version tags
+2. All Linux artifacts uploaded to release (deb, rpm, snap, flatpak, AppImage, PKGBUILD)
+3. Changelog generated from git log
+4. Pre-release flag for beta/alpha tags
+5. No Windows or macOS jobs (GTK4+WebKitGTK is Linux-only)
 
 If ALL pass: { approved: true, issues: [], summary: "Phase 2 complete" }
 If ANY issue: { approved: false, issues: ["..."], summary: "Found N issues" }`}

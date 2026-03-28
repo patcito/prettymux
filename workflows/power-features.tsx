@@ -39,7 +39,7 @@ const { Workflow, Task, smithers, outputs } = createSmithers({
 });
 
 const PROJECT_DIR = "/home/pe/newnewrepos/w/yo/prettymux";
-const BUILD_CMD = "cd src/qt/build && cmake .. -DCMAKE_BUILD_TYPE=Release && make -j$(nproc)";
+const BUILD_CMD = "cd src/gtk && meson setup builddir --buildtype=release && ninja -C builddir";
 
 const coder = new ClaudeCodeAgent({
   model: "claude-opus-4-6",
@@ -72,9 +72,9 @@ export default smithers((ctx) => (
           {`You are working on PrettyMux at ${PROJECT_DIR}.
 Build with: ${BUILD_CMD}
 
-This is a GTK4 app. Main source: src/qt/main.cpp
+This is a GTK4 app. Main source: src/gtk/main.cpp
 It has workspaces with PaneWidgets, each pane has tabs with GhosttyWidget terminals.
-Read src/qt/main.cpp FIRST to understand the full codebase.
+Read src/gtk/main.cpp FIRST to understand the full codebase.
 
 The ghostty C API is at /home/pe/newnewrepos/w/yo/ghostty/include/ghostty.h
 Key ghostty functions: ghostty_surface_key, ghostty_surface_text, ghostty_surface_binding_action
@@ -88,8 +88,8 @@ Implement PHASE 1: Terminal Power Features + Activity/Progress
    In PrettyMuxWindow::keyPressEvent, add Alt+Arrow key handling.
    When Alt+Left/Right/Up/Down is pressed, find the PaneWidget
    geometrically nearest in that direction from the currently focused pane.
-   Use QWidget::mapToGlobal to compare pane positions.
-   Call setFocus on the first terminal in the target pane.
+   Use gtk_widget_translate_coordinates to compare pane positions.
+   Call gtk_widget_grab_focus on the first terminal in the target pane.
    Intercept Alt+Arrow in GhosttyWidget before ghostty gets it.
 
 2. PANE ZOOM:
@@ -122,7 +122,7 @@ Implement PHASE 1: Terminal Power Features + Activity/Progress
    If that tab is NOT the currently visible tab in its pane, set a "has new output" flag.
    Show a small green dot next to inactive tab names that have new output.
    Clear the flag when the user switches to that tab.
-   Use QTabBar::setTabTextColor or prepend a dot character.
+   Use GtkNotebook tab label styling or prepend a dot character.
 
 6. PROGRESS BAR:
    Handle GHOSTTY_ACTION_PROGRESS_REPORT in action_cb.
@@ -132,7 +132,7 @@ Implement PHASE 1: Terminal Power Features + Activity/Progress
    - Yellow for paused
    - Red for error
    - Pulsing for indeterminate
-   Use QProgressBar or just paint a colored strip with setTabToolTip showing percentage.
+   Use GtkProgressBar or just paint a colored strip with gtk_widget_set_tooltip_text showing percentage.
    Clear on GHOSTTY_PROGRESS_STATE_REMOVE.
 
 echo "Phase 1: Implementing terminal power features..."
@@ -176,7 +176,7 @@ If ANY issue: { approved: false, issues: ["..."], summary: "Found N issues" }`}
         <Task id="impl2" output={implResult} agent={coder} retries={2}>
           {`You are working on PrettyMux at ${PROJECT_DIR}.
 Build with: ${BUILD_CMD}
-Read src/qt/main.cpp to understand existing code.
+Read src/gtk/main.cpp to understand existing code.
 
 ${ctx.latest(reviewResult, "review2")?.issues?.length ? `\nPREVIOUS REVIEW FEEDBACK:\n${ctx.latest(reviewResult, "review2")!.issues.join("\n")}\n` : ""}
 
@@ -277,7 +277,7 @@ If ANY issue: { approved: false, issues: ["..."], summary: "Found N issues" }`}
         <Task id="impl3" output={implResult} agent={coder} retries={2}>
           {`You are working on PrettyMux at ${PROJECT_DIR}.
 Build with: ${BUILD_CMD}
-Read src/qt/main.cpp to understand existing code.
+Read src/gtk/main.cpp to understand existing code.
 
 ${ctx.latest(reviewResult, "review3")?.issues?.length ? `\nPREVIOUS REVIEW FEEDBACK:\n${ctx.latest(reviewResult, "review3")!.issues.join("\n")}\n` : ""}
 

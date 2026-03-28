@@ -3,10 +3,12 @@ Section: x11
 Priority: optional
 Maintainer: patcito <patcito@users.noreply.github.com>
 Build-Depends: debhelper (>= 12),
-               cmake,
-               qt6-base-dev,
-               qt6-webengine-dev,
-               libgl-dev,
+               meson,
+               ninja-build,
+               libgtk-4-dev,
+               libadwaita-1-dev,
+               libwebkitgtk-6.0-dev,
+               libjson-glib-dev,
                g++
 Standards-Version: 4.6.0
 Homepage: https://github.com/patcito/prettymux
@@ -14,9 +16,10 @@ Homepage: https://github.com/patcito/prettymux
 Package: prettymux
 Architecture: amd64
 Depends: ${shlibs:Depends}, ${misc:Depends},
-         libqt6webenginewidgets6,
-         libqt6openglwidgets6,
-         libgl1
+         libgtk-4-1,
+         libadwaita-1-0,
+         libwebkitgtk-6.0-4,
+         libjson-glib-1.0-0
 Description: GPU-accelerated terminal multiplexer
  PrettyMux is a GPU-accelerated terminal multiplexer built on
  libghostty with an embedded browser, workspace management,
