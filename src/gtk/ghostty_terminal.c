@@ -46,6 +46,13 @@ struct _GhosttyTerminal {
     char              *cwd;
     char              *start_cwd;
     int                exit_code; /* -1 while running */
+
+    /* Activity tracking */
+    gboolean           has_new_output;
+
+    /* Progress bar (OSC 9;4) */
+    int                progress_state;   /* -1=none, 0=remove, 1=set, 2=error, 3=indeterminate, 4=pause */
+    int                progress_percent; /* 0-100, or -1 when no progress */
 };
 
 G_DEFINE_FINAL_TYPE(GhosttyTerminal, ghostty_terminal, GTK_TYPE_WIDGET)
@@ -517,6 +524,9 @@ ghostty_terminal_init(GhosttyTerminal *self)
     self->cwd = NULL;
     self->start_cwd = NULL;
     self->exit_code = -1;
+    self->has_new_output = FALSE;
+    self->progress_state = -1;
+    self->progress_percent = -1;
 
 
     /* ── Create the GtkGLArea child ── */
@@ -688,4 +698,51 @@ ghostty_terminal_queue_render(GhosttyTerminal *self)
     g_return_if_fail(GHOSTTY_IS_TERMINAL(self));
     if (self->gl_area)
         gtk_gl_area_queue_render(self->gl_area);
+}
+
+/* ── Activity tracking ────────────────────────────────────────── */
+
+void
+ghostty_terminal_mark_activity(GhosttyTerminal *self)
+{
+    g_return_if_fail(GHOSTTY_IS_TERMINAL(self));
+    self->has_new_output = TRUE;
+}
+
+void
+ghostty_terminal_clear_activity(GhosttyTerminal *self)
+{
+    g_return_if_fail(GHOSTTY_IS_TERMINAL(self));
+    self->has_new_output = FALSE;
+}
+
+gboolean
+ghostty_terminal_has_activity(GhosttyTerminal *self)
+{
+    g_return_val_if_fail(GHOSTTY_IS_TERMINAL(self), FALSE);
+    return self->has_new_output;
+}
+
+/* ── Progress bar ─────────────────────────────────────────────── */
+
+void
+ghostty_terminal_set_progress(GhosttyTerminal *self, int state, int percent)
+{
+    g_return_if_fail(GHOSTTY_IS_TERMINAL(self));
+    self->progress_state = state;
+    self->progress_percent = percent;
+}
+
+int
+ghostty_terminal_get_progress_percent(GhosttyTerminal *self)
+{
+    g_return_val_if_fail(GHOSTTY_IS_TERMINAL(self), -1);
+    return self->progress_percent;
+}
+
+int
+ghostty_terminal_get_progress_state(GhosttyTerminal *self)
+{
+    g_return_val_if_fail(GHOSTTY_IS_TERMINAL(self), -1);
+    return self->progress_state;
 }

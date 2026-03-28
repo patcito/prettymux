@@ -38,6 +38,9 @@ void workspace_remove(int index, GtkWidget *terminal_stack, GtkWidget *workspace
 void workspace_switch(int index, GtkWidget *terminal_stack, GtkWidget *workspace_list);
 void workspace_add_terminal(Workspace *ws, ghostty_app_t app);
 void workspace_add_terminal_to_focused(Workspace *ws, ghostty_app_t app);
+void workspace_add_terminal_to_notebook_external(Workspace *ws,
+                                                  GtkNotebook *notebook,
+                                                  ghostty_app_t app);
 
 /*
  * Git branch detection (async).
@@ -97,3 +100,25 @@ void workspace_toggle_zoom(Workspace *ws);
 void workspace_toggle_notes(Workspace *ws, GtkWidget *container);
 void workspace_save_notes(Workspace *ws);
 void workspace_restore_notes(Workspace *ws);
+
+/*
+ * Pane navigation.
+ *
+ * workspace_navigate_pane: move focus to the pane that is
+ *   geometrically in the direction (dx, dy) from the currently
+ *   focused pane.  dx/dy should be -1, 0, or 1.
+ */
+void workspace_navigate_pane(Workspace *ws, int dx, int dy);
+
+/*
+ * Tab label refresh.
+ *
+ * workspace_refresh_tab_labels: update all tab labels in a workspace to
+ *   reflect activity indicators and progress bars.
+ */
+void workspace_refresh_tab_labels(Workspace *ws);
+
+/*
+ * Check if any terminal in the workspace has unread activity.
+ */
+gboolean workspace_has_activity(Workspace *ws);

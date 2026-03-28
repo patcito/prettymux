@@ -46,6 +46,19 @@ typedef struct {
 static GtkWidget *create_pane_notebook(Workspace *ws, ghostty_app_t app);
 static void setup_tab_label_dnd(GtkWidget *label, GtkWidget *terminal,
                                 GtkNotebook *notebook, Workspace *ws);
+static void on_notebook_switch_page(GtkNotebook *nb, GtkWidget *page,
+                                    guint page_num, gpointer user_data);
+static void build_tab_label_text(GhosttyTerminal *term, const char *title,
+                                 char *buf, size_t bufsz);
+
+/* Context menu data for sidebar rows (defined later) */
+typedef struct {
+    Workspace *workspace;
+    int ws_idx;
+} SidebarCtxData;
+
+static void on_sidebar_right_click(GtkGestureClick *gesture, int n_press,
+                                   double x, double y, gpointer user_data);
 
 /* ── Helpers ────────────────────────────────────────────────────── */
 
@@ -64,16 +77,67 @@ static int workspace_index_of(Workspace *ws) {
     return -1;
 }
 
+/* ── Activity detection ────────────────────────────────────────── */
+
+gboolean
+workspace_has_activity(Workspace *ws)
+{
+    /* Stub: no activity tracking yet. */
+    (void)ws;
+    return FALSE;
+}
+
+/* ── Tab label refresh ─────────────────────────────────────────── */
+
+void
+workspace_refresh_tab_labels(Workspace *ws)
+{
+    /* Stub: tab labels are updated via title-changed signals. */
+    (void)ws;
+}
+
 /* ── Sidebar label refresh ──────────────────────────────────────── */
 
 void workspace_refresh_sidebar_label(Workspace *ws) {
     if (!ws || !ws->sidebar_label) return;
-    char buf[256];
-    if (ws->git_branch[0])
-        snprintf(buf, sizeof(buf), "%s [%s]", ws->name, ws->git_branch);
+    char buf[512];
+    gboolean has_act = workspace_has_activity(ws);
+
+    /* Build the first line: [activity dot] name [branch] */
+    char line1[256];
+    if (ws->git_branch[0]) {
+        if (has_act)
+            snprintf(line1, sizeof(line1), "\342\227\217 %s [%s]",
+                     ws->name, ws->git_branch);
+        else
+            snprintf(line1, sizeof(line1), "%s [%s]",
+                     ws->name, ws->git_branch);
+    } else {
+        if (has_act)
+            snprintf(line1, sizeof(line1), "\342\227\217 %s", ws->name);
+        else
+            snprintf(line1, sizeof(line1), "%s", ws->name);
+    }
+
+    /* Build optional second line: notification or port info */
+    if (ws->notification[0]) {
+        char *escaped_line1 = g_markup_escape_text(line1, -1);
+        char *escaped_note  = g_markup_escape_text(ws->notification, -1);
+        snprintf(buf, sizeof(buf),
+                 "%s\n<small><i>%s</i></small>",
+                 escaped_line1, escaped_note);
+        g_free(escaped_line1);
+        g_free(escaped_note);
+        gtk_label_set_markup(GTK_LABEL(ws->sidebar_label), buf);
+    } else {
+        gtk_label_set_text(GTK_LABEL(ws->sidebar_label), line1);
+    }
+
+    /* Apply or remove the "has-activity" CSS class on the label */
+    if (has_act)
+        gtk_widget_add_css_class(ws->sidebar_label, "has-activity");
     else
-        snprintf(buf, sizeof(buf), "%s", ws->name);
-    gtk_label_set_text(GTK_LABEL(ws->sidebar_label), buf);
+        gtk_widget_remove_css_class(ws->sidebar_label, "has-activity");
 }
 
 /* ── Feature 2: Git branch detection (async) ────────────────────── */
@@ -127,11 +191,48 @@ void workspace_detect_git(Workspace *ws) {
 
 /* ── Tab title changed signal handler ───────────────────────────── */
 
-static void on_title_changed(GhosttyTerminal *term, const char *title, gpointer label_ptr) {
-    (void)term;
+static void
+build_tab_label_text(GhosttyTerminal *term, const char *title, char *buf, size_t bufsz)
+{
     char short_title[32];
-    snprintf(short_title, sizeof(short_title), "%.28s", title);
-    gtk_label_set_text(GTK_LABEL(label_ptr), short_title);
+    snprintf(short_title, sizeof(short_title), "%.28s", title ? title : "Terminal");
+
+    /* Activity indicator (green dot prefix) */
+    const char *activity_prefix = "";
+    if (ghostty_terminal_has_activity(term))
+        activity_prefix = "\342\227\217 ";   /* "● " in UTF-8 */
+
+    /* Progress bar suffix */
+    char progress_suffix[32];
+    progress_suffix[0] = '\0';
+    int pct = ghostty_terminal_get_progress_percent(term);
+    int state = ghostty_terminal_get_progress_state(term);
+    if (state > 0 && pct >= 0) {
+        /* 5 blocks total: filled = pct/20, empty = 5-filled */
+        int filled = pct / 20;
+        if (filled > 5) filled = 5;
+        int i;
+        char bar[32];
+        int pos = 0;
+        for (i = 0; i < filled; i++) {
+            /* U+25B0 = ▰ (3 bytes UTF-8: E2 96 B0) */
+            bar[pos++] = (char)0xE2; bar[pos++] = (char)0x96; bar[pos++] = (char)0xB0;
+        }
+        for (i = filled; i < 5; i++) {
+            /* U+25B1 = ▱ (3 bytes UTF-8: E2 96 B1) */
+            bar[pos++] = (char)0xE2; bar[pos++] = (char)0x96; bar[pos++] = (char)0xB1;
+        }
+        bar[pos] = '\0';
+        snprintf(progress_suffix, sizeof(progress_suffix), " %s %d%%", bar, pct);
+    }
+
+    snprintf(buf, bufsz, "%s%s%s", activity_prefix, short_title, progress_suffix);
+}
+
+static void on_title_changed(GhosttyTerminal *term, const char *title, gpointer label_ptr) {
+    char buf[128];
+    build_tab_label_text(term, title, buf, sizeof(buf));
+    gtk_label_set_text(GTK_LABEL(label_ptr), buf);
 }
 
 /* ── Feature 4: Double-click to rename (tab labels + sidebar rows) ─ */
@@ -568,6 +669,12 @@ void workspace_add_terminal_to_focused(Workspace *ws, ghostty_app_t app) {
         workspace_add_terminal(ws, app);
 }
 
+void workspace_add_terminal_to_notebook_external(Workspace *ws,
+                                                  GtkNotebook *notebook,
+                                                  ghostty_app_t app) {
+    workspace_add_terminal_to_notebook(ws, notebook, app);
+}
+
 /* ── Workspace sidebar row ──────────────────────────────────────── */
 
 static GtkWidget *create_workspace_row(Workspace *ws, int ws_idx) {
@@ -579,6 +686,20 @@ static GtkWidget *create_workspace_row(Workspace *ws, int ws_idx) {
 
     /* Set up drop target for workspace DnD */
     setup_ws_sidebar_drop_target(box, ws_idx);
+
+    /* Right-click context menu (Rename / Delete) */
+    {
+        SidebarCtxData *ctx = g_new0(SidebarCtxData, 1);
+        ctx->workspace = ws;
+        ctx->ws_idx = ws_idx;
+        g_object_set_data_full(G_OBJECT(box), "sidebar-ctx-data", ctx, g_free);
+
+        GtkGesture *rclick = gtk_gesture_click_new();
+        gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(rclick), GDK_BUTTON_SECONDARY);
+        g_signal_connect(rclick, "pressed",
+                         G_CALLBACK(on_sidebar_right_click), ctx);
+        gtk_widget_add_controller(box, GTK_EVENT_CONTROLLER(rclick));
+    }
 
     return box;
 }
@@ -610,6 +731,10 @@ create_pane_notebook(Workspace *ws, ghostty_app_t app)
 
     /* Set up drop target so tabs can be dropped onto this notebook */
     setup_notebook_drop_target(GTK_NOTEBOOK(notebook));
+
+    /* On tab switch, clear activity on the newly selected terminal */
+    g_signal_connect(notebook, "switch-page",
+                     G_CALLBACK(on_notebook_switch_page), ws);
 
     return notebook;
 }
@@ -954,6 +1079,93 @@ workspace_toggle_notes(Workspace *ws, GtkWidget *notes_container)
     gtk_widget_grab_focus(text_view);
 }
 
+/* ── Pane navigation ─────────────────────────────────────────── */
+
+/*
+ * workspace_navigate_pane:
+ *
+ * Find the pane that is geometrically in the direction (dx, dy)
+ * from the currently focused pane and give it focus.  Uses
+ * graphene_rect_t (available via GTK4) from compute_bounds to
+ * get positions.
+ */
+void
+workspace_navigate_pane(Workspace *ws, int dx, int dy)
+{
+    if (!ws || !ws->pane_notebooks || ws->pane_notebooks->len <= 1)
+        return;
+
+    GtkNotebook *focused = workspace_get_focused_pane(ws);
+    if (!focused)
+        return;
+
+    /* Get the position of the focused pane */
+    GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(focused));
+    if (!root)
+        return;
+
+    graphene_point_t focused_pos;
+    if (!gtk_widget_compute_point(GTK_WIDGET(focused), GTK_WIDGET(root),
+                                  &GRAPHENE_POINT_INIT(0, 0), &focused_pos))
+        return;
+
+    double focused_w = (double)gtk_widget_get_width(GTK_WIDGET(focused));
+    double focused_h = (double)gtk_widget_get_height(GTK_WIDGET(focused));
+    double focused_cx = focused_pos.x + focused_w / 2.0;
+    double focused_cy = focused_pos.y + focused_h / 2.0;
+
+    GtkNotebook *best = NULL;
+    double best_dist = 1e18;
+    guint i;
+
+    for (i = 0; i < ws->pane_notebooks->len; i++) {
+        GtkNotebook *nb = g_ptr_array_index(ws->pane_notebooks, i);
+        if (nb == focused)
+            continue;
+
+        graphene_point_t nb_pos;
+        if (!gtk_widget_compute_point(GTK_WIDGET(nb), GTK_WIDGET(root),
+                                      &GRAPHENE_POINT_INIT(0, 0), &nb_pos))
+            continue;
+
+        double nb_w = (double)gtk_widget_get_width(GTK_WIDGET(nb));
+        double nb_h = (double)gtk_widget_get_height(GTK_WIDGET(nb));
+        double nb_cx = nb_pos.x + nb_w / 2.0;
+        double nb_cy = nb_pos.y + nb_h / 2.0;
+
+        double ddx = nb_cx - focused_cx;
+        double ddy = nb_cy - focused_cy;
+
+        /* Filter: candidate must be in the requested direction */
+        if (dx > 0 && ddx <= 0) continue;
+        if (dx < 0 && ddx >= 0) continue;
+        if (dy > 0 && ddy <= 0) continue;
+        if (dy < 0 && ddy >= 0) continue;
+
+        double dist = ddx * ddx + ddy * ddy;
+        if (dist < best_dist) {
+            best_dist = dist;
+            best = nb;
+        }
+    }
+
+    if (!best)
+        return;
+
+    /* Focus the current page's first focusable child in the target pane */
+    int pg = gtk_notebook_get_current_page(best);
+    if (pg >= 0) {
+        GtkWidget *page = gtk_notebook_get_nth_page(best, pg);
+        if (page) {
+            GtkWidget *child = gtk_widget_get_first_child(page);
+            if (child)
+                gtk_widget_grab_focus(child);
+            else
+                gtk_widget_grab_focus(page);
+        }
+    }
+}
+
 /* ── Close pane ──────────────────────────────────────────────── */
 
 void
@@ -1024,4 +1236,129 @@ workspace_close_pane(Workspace *ws, GtkNotebook *pane)
     }
 
     g_object_unref(sibling);
+}
+
+/* (activity helpers are defined earlier in this file) */
+
+/* ── Notebook switch-page: clear activity on focused terminal ──── */
+
+static void
+on_notebook_switch_page(GtkNotebook *nb, GtkWidget *page,
+                        guint page_num, gpointer user_data)
+{
+    (void)nb;
+    (void)page_num;
+    Workspace *ws = user_data;
+
+    if (GHOSTTY_IS_TERMINAL(page)) {
+        ghostty_terminal_clear_activity(GHOSTTY_TERMINAL(page));
+        /* Refresh tab labels + sidebar to remove the dot */
+        workspace_refresh_tab_labels(ws);
+        workspace_refresh_sidebar_label(ws);
+    }
+}
+
+/* ── Right-click context menu on sidebar rows ──────────────────── */
+
+static void
+on_sidebar_ctx_rename_activate(GSimpleAction *action, GVariant *param,
+                               gpointer user_data)
+{
+    (void)action;
+    (void)param;
+    SidebarCtxData *ctx = user_data;
+    Workspace *ws = ctx->workspace;
+    if (!ws || !ws->sidebar_label)
+        return;
+
+    /* Trigger inline rename on the sidebar label's parent box */
+    GtkWidget *box = gtk_widget_get_parent(ws->sidebar_label);
+    if (!box) return;
+
+    RenameData *rd = g_object_get_data(G_OBJECT(box), "rename-data");
+    if (!rd) return;
+
+    /* Same logic as on_label_double_click with n_press == 2 */
+    GtkWidget *parent_box = rd->event_box;
+    const char *current_text = gtk_label_get_text(GTK_LABEL(rd->label));
+
+    gtk_box_remove(GTK_BOX(parent_box), rd->label);
+
+    GtkWidget *entry = gtk_entry_new();
+    GtkEntryBuffer *buf = gtk_entry_get_buffer(GTK_ENTRY(entry));
+    gtk_entry_buffer_set_text(buf, current_text, -1);
+    gtk_widget_set_hexpand(entry, FALSE);
+    gtk_widget_set_size_request(entry, 80, -1);
+
+    g_signal_connect(entry, "activate",
+                     G_CALLBACK(on_rename_entry_activate), rd);
+
+    GtkEventController *focus_ctrl = gtk_event_controller_focus_new();
+    g_signal_connect(focus_ctrl, "leave",
+                     G_CALLBACK(on_rename_entry_focus_leave), rd);
+    gtk_widget_add_controller(entry, focus_ctrl);
+
+    gtk_box_append(GTK_BOX(parent_box), entry);
+    gtk_widget_set_visible(entry, TRUE);
+    gtk_widget_grab_focus(entry);
+}
+
+static void
+on_sidebar_ctx_delete_activate(GSimpleAction *action, GVariant *param,
+                               gpointer user_data)
+{
+    (void)action;
+    (void)param;
+    SidebarCtxData *ctx = user_data;
+    if (g_terminal_stack && g_workspace_list)
+        workspace_remove(ctx->ws_idx, g_terminal_stack, g_workspace_list);
+}
+
+static void
+on_sidebar_right_click(GtkGestureClick *gesture, int n_press,
+                       double x, double y, gpointer user_data)
+{
+    (void)n_press;
+    SidebarCtxData *ctx = user_data;
+    GtkWidget *widget = gtk_event_controller_get_widget(
+        GTK_EVENT_CONTROLLER(gesture));
+
+    GMenu *menu = g_menu_new();
+    char action_rename[64];
+    char action_delete[64];
+    snprintf(action_rename, sizeof(action_rename), "sidebar-ctx-%d.rename", ctx->ws_idx);
+    snprintf(action_delete, sizeof(action_delete), "sidebar-ctx-%d.delete", ctx->ws_idx);
+
+    g_menu_append(menu, "Rename", action_rename);
+    g_menu_append(menu, "Delete", action_delete);
+
+    /* Create action group */
+    char group_name[64];
+    snprintf(group_name, sizeof(group_name), "sidebar-ctx-%d", ctx->ws_idx);
+
+    GSimpleActionGroup *ag = g_simple_action_group_new();
+
+    GSimpleAction *act_rename = g_simple_action_new("rename", NULL);
+    g_signal_connect(act_rename, "activate",
+                     G_CALLBACK(on_sidebar_ctx_rename_activate), ctx);
+    g_action_map_add_action(G_ACTION_MAP(ag), G_ACTION(act_rename));
+
+    GSimpleAction *act_delete = g_simple_action_new("delete", NULL);
+    g_signal_connect(act_delete, "activate",
+                     G_CALLBACK(on_sidebar_ctx_delete_activate), ctx);
+    g_action_map_add_action(G_ACTION_MAP(ag), G_ACTION(act_delete));
+
+    gtk_widget_insert_action_group(widget, group_name, G_ACTION_GROUP(ag));
+
+    GtkWidget *popover = gtk_popover_menu_new_from_model(G_MENU_MODEL(menu));
+    gtk_widget_set_parent(popover, widget);
+
+    GdkRectangle rect = { (int)x, (int)y, 1, 1 };
+    gtk_popover_set_pointing_to(GTK_POPOVER(popover), &rect);
+    gtk_popover_popup(GTK_POPOVER(popover));
+
+    g_object_unref(menu);
+    g_object_unref(act_rename);
+    g_object_unref(act_delete);
+    g_object_unref(ag);
 }

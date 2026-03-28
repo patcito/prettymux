@@ -19,4 +19,10 @@ void browser_tab_go_forward(BrowserTab *self);
 void browser_tab_reload(BrowserTab *self);
 void browser_tab_show_inspector(BrowserTab *self);
 
+/* URL history / autocomplete */
+void browser_tab_add_url_to_history(const char *url);
+GPtrArray *browser_tab_get_url_history(void);
+void browser_tab_set_url_history(GPtrArray *history);
+void browser_tab_focus_url(BrowserTab *self);
+
 G_END_DECLS

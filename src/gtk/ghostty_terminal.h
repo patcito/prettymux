@@ -83,6 +83,23 @@ void ghostty_terminal_notify_child_exited(GhosttyTerminal *self,
 void ghostty_terminal_queue_render(GhosttyTerminal *self);
 
 /*
+ * Activity tracking: mark terminal as having new unread output.
+ * Cleared when the terminal's tab becomes focused/selected.
+ */
+void     ghostty_terminal_mark_activity(GhosttyTerminal *self);
+void     ghostty_terminal_clear_activity(GhosttyTerminal *self);
+gboolean ghostty_terminal_has_activity(GhosttyTerminal *self);
+
+/*
+ * Progress bar state (from OSC 9;4 / GHOSTTY_ACTION_PROGRESS_REPORT).
+ *   state:   0=remove, 1=set, 2=error, 3=indeterminate, 4=pause  (-1 = none)
+ *   percent: 0-100
+ */
+void ghostty_terminal_set_progress(GhosttyTerminal *self, int state, int percent);
+int  ghostty_terminal_get_progress_percent(GhosttyTerminal *self);
+int  ghostty_terminal_get_progress_state(GhosttyTerminal *self);
+
+/*
  * Signals:
  *   "title-changed"      (GhosttyTerminal *self, const char *title)
  *   "pwd-changed"        (GhosttyTerminal *self, const char *cwd)

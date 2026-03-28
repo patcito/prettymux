@@ -21,6 +21,7 @@
 #include "socket_server.h"
 #include "shortcuts_overlay.h"
 #include "pip_window.h"
+#include "resize_overlay.h"
 
 // ── Global state ──
 
@@ -38,7 +39,96 @@ static struct {
     GtkWidget *browser_notebook;
     GtkWidget *overlay;           // GtkOverlay wrapping the outer_paned
     GtkWidget *command_palette;   // CommandPalette overlay widget
+    GtkWidget *bell_button;       // Bell/notification button in sidebar header
 } ui = {0};
+
+// ── Notification system ──
+
+static GPtrArray *g_notifications = NULL;   /* GPtrArray of g_strdup'd strings */
+
+static void notifications_init(void) {
+    if (!g_notifications)
+        g_notifications = g_ptr_array_new_with_free_func(g_free);
+}
+
+static void notifications_add(const char *msg) {
+    notifications_init();
+    g_ptr_array_add(g_notifications, g_strdup(msg));
+}
+
+static void notifications_clear(void) {
+    if (g_notifications)
+        g_ptr_array_set_size(g_notifications, 0);
+}
+
+static guint notifications_count(void) {
+    if (!g_notifications) return 0;
+    return g_notifications->len;
+}
+
+static void bell_button_update(void) {
+    if (!ui.bell_button) return;
+    guint count = notifications_count();
+    if (count > 0) {
+        char label[32];
+        snprintf(label, sizeof(label), "\360\237\224\224 %u", count);  /* bell emoji + count */
+        gtk_button_set_label(GTK_BUTTON(ui.bell_button), label);
+    } else {
+        gtk_button_set_label(GTK_BUTTON(ui.bell_button), "\360\237\224\224");
+    }
+}
+
+/* Clear all notifications popover action */
+static void
+on_notif_clear_all_activate(GSimpleAction *action, GVariant *param,
+                            gpointer user_data)
+{
+    (void)action; (void)param; (void)user_data;
+    notifications_clear();
+    bell_button_update();
+}
+
+/* Bell button clicked: show notification popover */
+static void
+on_bell_button_clicked(GtkButton *btn, gpointer user_data)
+{
+    (void)user_data;
+    GtkWidget *widget = GTK_WIDGET(btn);
+
+    GMenu *section = g_menu_new();
+
+    notifications_init();
+    if (g_notifications->len == 0) {
+        g_menu_append(section, "No notifications", NULL);
+    } else {
+        guint i;
+        for (i = 0; i < g_notifications->len; i++) {
+            const char *msg = g_ptr_array_index(g_notifications, i);
+            g_menu_append(section, msg, NULL);
+        }
+    }
+
+    GMenu *menu = g_menu_new();
+    g_menu_append_section(menu, NULL, G_MENU_MODEL(section));
+    g_menu_append(menu, "Clear All", "notif.clear-all");
+
+    /* Action group for clear-all */
+    GSimpleActionGroup *ag = g_simple_action_group_new();
+    GSimpleAction *act_clear = g_simple_action_new("clear-all", NULL);
+    g_signal_connect(act_clear, "activate",
+                     G_CALLBACK(on_notif_clear_all_activate), NULL);
+    g_action_map_add_action(G_ACTION_MAP(ag), G_ACTION(act_clear));
+    gtk_widget_insert_action_group(widget, "notif", G_ACTION_GROUP(ag));
+
+    GtkWidget *popover = gtk_popover_menu_new_from_model(G_MENU_MODEL(menu));
+    gtk_widget_set_parent(popover, widget);
+    gtk_popover_popup(GTK_POPOVER(popover));
+
+    g_object_unref(section);
+    g_object_unref(menu);
+    g_object_unref(act_clear);
+    g_object_unref(ag);
+}
 
 // ── Ghostty callbacks ──
 
@@ -90,6 +180,24 @@ static void add_browser_tab(const char *url) {
     gtk_notebook_set_tab_reorderable(GTK_NOTEBOOK(ui.browser_notebook), tab, TRUE);
     gtk_notebook_set_current_page(GTK_NOTEBOOK(ui.browser_notebook), idx);
     gtk_widget_set_visible(tab, TRUE);
+}
+
+// ── Clipboard paste callback ──
+
+static void
+on_clipboard_text_received(GObject *source, GAsyncResult *result,
+                           gpointer user_data)
+{
+    ghostty_surface_t surface = (ghostty_surface_t)user_data;
+    GError *error = NULL;
+    char *text = gdk_clipboard_read_text_finish(GDK_CLIPBOARD(source),
+                                                 result, &error);
+    if (text && text[0] && surface) {
+        ghostty_surface_text(surface, text, strlen(text));
+    }
+    g_free(text);
+    if (error)
+        g_error_free(error);
 }
 
 // ── Action dispatch ──
@@ -199,6 +307,68 @@ static void handle_action(const char *action) {
                 }
             }
         }
+    } else if (strcmp(action, "browser.focus_url") == 0) {
+        /* Ctrl+L: focus the URL bar in the current browser tab */
+        if (gtk_widget_get_visible(ui.browser_notebook)) {
+            int pg = gtk_notebook_get_current_page(GTK_NOTEBOOK(ui.browser_notebook));
+            if (pg >= 0) {
+                GtkWidget *child = gtk_notebook_get_nth_page(
+                    GTK_NOTEBOOK(ui.browser_notebook), pg);
+                if (BROWSER_IS_TAB(child))
+                    browser_tab_focus_url(BROWSER_TAB(child));
+            }
+        }
+    } else if (strcmp(action, "terminal.copy") == 0) {
+        /* Ctrl+Shift+C: copy terminal selection to clipboard */
+        Workspace *ws = workspace_get_current();
+        if (ws) {
+            GtkNotebook *focused = workspace_get_focused_pane(ws);
+            if (focused) {
+                int pg = gtk_notebook_get_current_page(focused);
+                if (pg >= 0) {
+                    GtkWidget *child = gtk_notebook_get_nth_page(focused, pg);
+                    if (child && GHOSTTY_IS_TERMINAL(child)) {
+                        ghostty_surface_t surface =
+                            ghostty_terminal_get_surface(GHOSTTY_TERMINAL(child));
+                        if (surface && ghostty_surface_has_selection(surface)) {
+                            ghostty_text_s text = {0};
+                            if (ghostty_surface_read_selection(surface, &text)) {
+                                if (text.text && text.text_len > 0) {
+                                    GdkClipboard *clip = gdk_display_get_clipboard(
+                                        gdk_display_get_default());
+                                    gdk_clipboard_set_text(clip, text.text);
+                                }
+                                ghostty_surface_free_text(surface, &text);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } else if (strcmp(action, "terminal.paste") == 0) {
+        /* Ctrl+Shift+V: paste from clipboard into terminal */
+        Workspace *ws = workspace_get_current();
+        if (ws) {
+            GtkNotebook *focused = workspace_get_focused_pane(ws);
+            if (focused) {
+                int pg = gtk_notebook_get_current_page(focused);
+                if (pg >= 0) {
+                    GtkWidget *child = gtk_notebook_get_nth_page(focused, pg);
+                    if (child && GHOSTTY_IS_TERMINAL(child)) {
+                        ghostty_surface_t surface =
+                            ghostty_terminal_get_surface(GHOSTTY_TERMINAL(child));
+                        if (surface) {
+                            GdkClipboard *clip = gdk_display_get_clipboard(
+                                gdk_display_get_default());
+                            /* Read clipboard text asynchronously.
+                             * Store the surface pointer for the callback. */
+                            gdk_clipboard_read_text_async(clip, NULL,
+                                on_clipboard_text_received, surface);
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -208,6 +378,69 @@ static gboolean on_key_pressed(GtkEventControllerKey *ctrl, guint keyval,
                                 guint keycode, GdkModifierType state, gpointer d)
 {
     (void)ctrl; (void)keycode; (void)d;
+    GdkModifierType mods = state & (GDK_CONTROL_MASK | GDK_SHIFT_MASK |
+                                     GDK_ALT_MASK | GDK_SUPER_MASK);
+    guint lower = gdk_keyval_to_lower(keyval);
+
+    /* ── Ctrl+1-9: direct workspace switch ── */
+    if (mods == GDK_CONTROL_MASK &&
+        lower >= GDK_KEY_1 && lower <= GDK_KEY_9) {
+        int idx = (int)(lower - GDK_KEY_1);
+        if (workspaces && idx < (int)workspaces->len)
+            workspace_switch(idx, ui.terminal_stack, ui.workspace_list);
+        return TRUE;
+    }
+
+    /* ── Alt+Arrow: pane navigation ── */
+    if (mods == GDK_ALT_MASK) {
+        Workspace *ws = workspace_get_current();
+        if (ws) {
+            switch (keyval) {
+            case GDK_KEY_Left:  workspace_navigate_pane(ws, -1,  0); return TRUE;
+            case GDK_KEY_Right: workspace_navigate_pane(ws,  1,  0); return TRUE;
+            case GDK_KEY_Up:    workspace_navigate_pane(ws,  0, -1); return TRUE;
+            case GDK_KEY_Down:  workspace_navigate_pane(ws,  0,  1); return TRUE;
+            default: break;
+            }
+        }
+    }
+
+    /* ── F11: fullscreen toggle ── */
+    if (keyval == GDK_KEY_F11 && mods == 0) {
+        if (gtk_window_is_fullscreen(g_main_window))
+            gtk_window_unfullscreen(g_main_window);
+        else
+            gtk_window_fullscreen(g_main_window);
+        return TRUE;
+    }
+
+    /* ── Ctrl+W (no shift): close current browser tab ── */
+    if (mods == GDK_CONTROL_MASK && lower == GDK_KEY_w) {
+        if (gtk_widget_get_visible(ui.browser_notebook)) {
+            int n = gtk_notebook_get_n_pages(GTK_NOTEBOOK(ui.browser_notebook));
+            if (n > 1) {
+                int pg = gtk_notebook_get_current_page(
+                    GTK_NOTEBOOK(ui.browser_notebook));
+                if (pg >= 0) {
+                    GtkWidget *child = gtk_notebook_get_nth_page(
+                        GTK_NOTEBOOK(ui.browser_notebook), pg);
+                    gtk_notebook_remove_page(
+                        GTK_NOTEBOOK(ui.browser_notebook), pg);
+                    (void)child;
+                }
+                return TRUE;
+            }
+        }
+    }
+
+    /* ── Ctrl+T (no shift): new browser tab ── */
+    if (mods == GDK_CONTROL_MASK && lower == GDK_KEY_t) {
+        add_browser_tab("https://prettymux-web.vercel.app/?prettymux=t");
+        gtk_widget_set_visible(ui.browser_notebook, TRUE);
+        return TRUE;
+    }
+
+    /* ── Shortcut table lookup ── */
     const char *action = shortcut_match(keyval, state);
     if (action) { handle_action(action); return TRUE; }
     return FALSE;
@@ -419,8 +652,30 @@ static bool action_cb(ghostty_app_t app, ghostty_target_s target,
 
     case GHOSTTY_ACTION_RENDER: {
         SurfaceLookup loc = find_terminal_for_surface(surface);
-        if (loc.terminal)
+        if (loc.terminal) {
             ghostty_terminal_queue_render(loc.terminal);
+
+            /* Mark activity if this terminal is NOT on the currently visible
+             * tab of the currently visible workspace */
+            if (loc.workspace_idx >= 0 &&
+                loc.workspace_idx != current_workspace) {
+                ghostty_terminal_mark_activity(loc.terminal);
+                workspace_refresh_sidebar_label(loc.workspace);
+            } else if (loc.workspace) {
+                /* Same workspace, but check if it is the active tab */
+                GtkNotebook *focused = workspace_get_focused_pane(loc.workspace);
+                if (focused) {
+                    int pg = gtk_notebook_get_current_page(focused);
+                    GtkWidget *visible_page = (pg >= 0)
+                        ? gtk_notebook_get_nth_page(focused, pg)
+                        : NULL;
+                    if (visible_page != GTK_WIDGET(loc.terminal)) {
+                        ghostty_terminal_mark_activity(loc.terminal);
+                        workspace_refresh_tab_labels(loc.workspace);
+                    }
+                }
+            }
+        }
         return true;
     }
 

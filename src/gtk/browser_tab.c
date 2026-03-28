@@ -3,6 +3,10 @@
 #include <string.h>
 #include <ctype.h>
 
+/* ---------- URL history (module-level singleton) ---------- */
+
+static GPtrArray *url_history = NULL;  /* array of g_strdup'd URLs */
+
 /* ---------- type definition ---------- */
 
 struct _BrowserTab {
@@ -13,6 +17,7 @@ struct _BrowserTab {
     GtkWidget *reload_btn;
     GtkWidget *url_entry;
     WebKitWebView *web_view;
+    gboolean autocomplete_active; /* guard to prevent recursive edits */
 };
 
 G_DEFINE_TYPE(BrowserTab, browser_tab, GTK_TYPE_BOX)
@@ -95,8 +100,60 @@ on_uri_changed(WebKitWebView *web_view,
 {
     BrowserTab *self = BROWSER_TAB(user_data);
     const char *uri = webkit_web_view_get_uri(web_view);
-    if (uri != NULL)
+    if (uri != NULL) {
         gtk_editable_set_text(GTK_EDITABLE(self->url_entry), uri);
+        browser_tab_add_url_to_history(uri);
+    }
+}
+
+/* ---------- URL autocomplete on text edit ---------- */
+
+static void
+on_url_entry_changed(GtkEditable *editable, gpointer user_data)
+{
+    BrowserTab *self = BROWSER_TAB(user_data);
+
+    if (self->autocomplete_active)
+        return;
+
+    const char *text = gtk_editable_get_text(editable);
+    if (!text || text[0] == '\0')
+        return;
+    if (!url_history)
+        return;
+
+    int text_len = (int)strlen(text);
+    guint i;
+
+    /* Try exact prefix match from history */
+    for (i = 0; i < url_history->len; i++) {
+        const char *entry = g_ptr_array_index(url_history, i);
+        if (g_ascii_strncasecmp(entry, text, text_len) == 0) {
+            self->autocomplete_active = TRUE;
+            gtk_editable_set_text(editable, entry);
+            gtk_editable_select_region(editable, text_len, (int)strlen(entry));
+            self->autocomplete_active = FALSE;
+            return;
+        }
+    }
+
+    /* Try matching without protocol (user types "gith..." matches "https://github.com") */
+    for (i = 0; i < url_history->len; i++) {
+        const char *entry = g_ptr_array_index(url_history, i);
+        const char *stripped = entry;
+        if (g_str_has_prefix(stripped, "https://"))
+            stripped += 8;
+        else if (g_str_has_prefix(stripped, "http://"))
+            stripped += 7;
+        if (g_ascii_strncasecmp(stripped, text, text_len) == 0) {
+            self->autocomplete_active = TRUE;
+            gtk_editable_set_text(editable, entry);
+            gtk_editable_select_region(editable, text_len,
+                                       (int)strlen(entry));
+            self->autocomplete_active = FALSE;
+            return;
+        }
+    }
 }
 
 static void
@@ -238,6 +295,8 @@ browser_tab_init(BrowserTab *self)
                      G_CALLBACK(on_reload_clicked), self);
     g_signal_connect(self->url_entry, "activate",
                      G_CALLBACK(on_url_entry_activate), self);
+    g_signal_connect(GTK_EDITABLE(self->url_entry), "changed",
+                     G_CALLBACK(on_url_entry_changed), self);
 
     g_signal_connect(self->web_view, "notify::uri",
                      G_CALLBACK(on_uri_changed), self);
@@ -315,4 +374,59 @@ browser_tab_show_inspector(BrowserTab *self)
     g_return_if_fail(BROWSER_IS_TAB(self));
     WebKitWebInspector *inspector = webkit_web_view_get_inspector(self->web_view);
     webkit_web_inspector_show(inspector);
+}
+
+void
+browser_tab_focus_url(BrowserTab *self)
+{
+    g_return_if_fail(BROWSER_IS_TAB(self));
+    gtk_widget_grab_focus(self->url_entry);
+    gtk_editable_select_region(GTK_EDITABLE(self->url_entry), 0, -1);
+}
+
+/* ---------- URL history management ---------- */
+
+void
+browser_tab_add_url_to_history(const char *url)
+{
+    if (!url || url[0] == '\0')
+        return;
+    /* Skip about: and data: URIs */
+    if (g_str_has_prefix(url, "about:") || g_str_has_prefix(url, "data:"))
+        return;
+
+    if (!url_history)
+        url_history = g_ptr_array_new_with_free_func(g_free);
+
+    /* Check for duplicates */
+    guint i;
+    for (i = 0; i < url_history->len; i++) {
+        if (strcmp(g_ptr_array_index(url_history, i), url) == 0)
+            return;
+    }
+
+    g_ptr_array_add(url_history, g_strdup(url));
+
+    /* Cap at 500 entries */
+    while (url_history->len > 500)
+        g_ptr_array_remove_index(url_history, 0);
+}
+
+GPtrArray *
+browser_tab_get_url_history(void)
+{
+    return url_history;
+}
+
+void
+browser_tab_set_url_history(GPtrArray *history)
+{
+    if (url_history)
+        g_ptr_array_unref(url_history);
+
+    if (history) {
+        url_history = history;
+    } else {
+        url_history = NULL;
+    }
 }

@@ -22,6 +22,9 @@ const ShortcutDef default_shortcuts[] = {
     {"pip.toggle",        GDK_KEY_m,            GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Picture in picture"},
     {"split.horizontal",  GDK_KEY_e,            GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Split horizontal"},
     {"split.vertical",    GDK_KEY_o,            GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Split vertical"},
+    {"browser.focus_url", GDK_KEY_l,            GDK_CONTROL_MASK,                  "Focus URL bar"},
+    {"terminal.copy",     GDK_KEY_c,            GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Copy selection"},
+    {"terminal.paste",    GDK_KEY_v,            GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Paste"},
     {NULL, 0, 0, NULL},
 };
 
