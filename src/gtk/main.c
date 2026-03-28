@@ -241,14 +241,28 @@ static void handle_action(const char *action) {
         }
     } else if (strcmp(action, "theme.cycle") == 0) {
         theme_cycle();
-        /* Tell ghostty to switch color scheme to match */
+        /* Tell ghostty to switch color scheme + reload config for each surface */
         if (g_ghostty_app) {
             const Theme *t = theme_get_current();
-            /* Light theme = light scheme, everything else = dark */
             ghostty_color_scheme_e scheme = (strcmp(t->name, "Light") == 0)
                 ? GHOSTTY_COLOR_SCHEME_LIGHT
                 : GHOSTTY_COLOR_SCHEME_DARK;
             ghostty_app_set_color_scheme(g_ghostty_app, scheme);
+
+            /* Also set per-surface so it takes effect even without
+             * window-theme=auto in ghostty config */
+            if (workspaces) {
+                for (guint wi = 0; wi < workspaces->len; wi++) {
+                    Workspace *ws = g_ptr_array_index(workspaces, wi);
+                    if (!ws->terminals) continue;
+                    for (guint ti = 0; ti < ws->terminals->len; ti++) {
+                        GhosttyTerminal *term = g_ptr_array_index(ws->terminals, ti);
+                        ghostty_surface_t surf = ghostty_terminal_get_surface(term);
+                        if (surf)
+                            ghostty_surface_set_color_scheme(surf, scheme);
+                    }
+                }
+            }
         }
     } else if (strcmp(action, "pane.close") == 0) {
         Workspace *ws = workspace_get_current();
