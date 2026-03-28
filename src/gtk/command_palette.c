@@ -187,36 +187,42 @@ palette_gather_items(CommandPalette *self)
 static GtkWidget *
 create_row_widget(PaletteItem *item)
 {
-    const char *icon;
+    const char *kind_label;
+    const char *kind_class;
     switch (item->kind) {
-    case PALETTE_ITEM_WORKSPACE: icon = "\xe2\x96\xa3 "; break; /* "▣ " */
-    case PALETTE_ITEM_TERMINAL:  icon = "\xe2\x96\xb8 "; break; /* "▸ " */
-    case PALETTE_ITEM_BROWSER:   icon = "\xe2\x97\x89 "; break; /* "◉ " */
+    case PALETTE_ITEM_WORKSPACE: kind_label = "WS"; kind_class = "palette-badge-ws"; break;
+    case PALETTE_ITEM_TERMINAL:  kind_label = "TTY"; kind_class = "palette-badge-tty"; break;
+    case PALETTE_ITEM_BROWSER:   kind_label = "WEB"; kind_class = "palette-badge-web"; break;
     }
 
-    GtkWidget *hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-    gtk_widget_set_margin_start(hbox, 16);
-    gtk_widget_set_margin_end(hbox, 16);
-    gtk_widget_set_margin_top(hbox, 6);
-    gtk_widget_set_margin_bottom(hbox, 6);
+    GtkWidget *hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    gtk_widget_add_css_class(hbox, "palette-row");
 
-    char buf[256];
-    snprintf(buf, sizeof(buf), "%s%s", icon, item->name);
-    GtkWidget *name_label = gtk_label_new(buf);
+    /* Type badge */
+    GtkWidget *badge = gtk_label_new(kind_label);
+    gtk_widget_add_css_class(badge, "palette-badge");
+    gtk_widget_add_css_class(badge, kind_class);
+    gtk_box_append(GTK_BOX(hbox), badge);
+
+    /* Name + detail stacked vertically */
+    GtkWidget *text_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 1);
+    gtk_widget_set_hexpand(text_box, TRUE);
+
+    GtkWidget *name_label = gtk_label_new(item->name);
     gtk_label_set_xalign(GTK_LABEL(name_label), 0);
     gtk_label_set_ellipsize(GTK_LABEL(name_label), PANGO_ELLIPSIZE_END);
-    gtk_widget_set_hexpand(name_label, TRUE);
-    gtk_box_append(GTK_BOX(hbox), name_label);
+    gtk_widget_add_css_class(name_label, "palette-name");
+    gtk_box_append(GTK_BOX(text_box), name_label);
 
     if (item->detail && *item->detail) {
         GtkWidget *detail_label = gtk_label_new(item->detail);
-        gtk_label_set_xalign(GTK_LABEL(detail_label), 1);
+        gtk_label_set_xalign(GTK_LABEL(detail_label), 0);
         gtk_label_set_ellipsize(GTK_LABEL(detail_label), PANGO_ELLIPSIZE_END);
-        gtk_widget_set_size_request(detail_label, 180, -1);
-        gtk_widget_add_css_class(detail_label, "dim-label");
-        gtk_box_append(GTK_BOX(hbox), detail_label);
+        gtk_widget_add_css_class(detail_label, "palette-detail");
+        gtk_box_append(GTK_BOX(text_box), detail_label);
     }
 
+    gtk_box_append(GTK_BOX(hbox), text_box);
     return hbox;
 }
 
@@ -404,6 +410,115 @@ command_palette_class_init(CommandPaletteClass *klass)
     gtk_widget_class_set_layout_manager_type(widget_class, GTK_TYPE_BIN_LAYOUT);
 }
 
+static gboolean palette_css_injected = FALSE;
+
+static void inject_palette_css(void) {
+    if (palette_css_injected) return;
+    palette_css_injected = TRUE;
+
+    const Theme *t = theme_get_current();
+    char *css = g_strdup_printf(
+        ".palette-backdrop {"
+        "  background-color: alpha(#000000, 0.65);"
+        "}"
+        ".palette-card {"
+        "  background-color: %s;"
+        "  border-radius: 16px;"
+        "  border: 1px solid alpha(%s, 0.15);"
+        "}"
+        ".palette-search {"
+        "  background: alpha(%s, 0.5);"
+        "  color: %s;"
+        "  border: 1px solid alpha(%s, 0.2);"
+        "  border-radius: 10px;"
+        "  padding: 12px 16px;"
+        "  font-size: 15px;"
+        "  font-family: 'IBM Plex Mono', 'JetBrains Mono', monospace;"
+        "}"
+        ".palette-search:focus {"
+        "  border-color: %s;"
+        "  outline: none;"
+        "}"
+        ".palette-title {"
+        "  font-size: 11px;"
+        "  font-weight: 600;"
+        "  letter-spacing: 1.5px;"
+        "  color: %s;"
+        "}"
+        ".palette-row {"
+        "  padding: 8px 16px;"
+        "}"
+        ".palette-badge {"
+        "  font-size: 9px;"
+        "  font-weight: 700;"
+        "  font-family: 'IBM Plex Mono', monospace;"
+        "  letter-spacing: 0.5px;"
+        "  padding: 2px 6px;"
+        "  border-radius: 4px;"
+        "  min-width: 28px;"
+        "}"
+        ".palette-badge-ws {"
+        "  background-color: alpha(%s, 0.15);"
+        "  color: %s;"
+        "}"
+        ".palette-badge-tty {"
+        "  background-color: alpha(%s, 0.15);"
+        "  color: %s;"
+        "}"
+        ".palette-badge-web {"
+        "  background-color: alpha(%s, 0.15);"
+        "  color: %s;"
+        "}"
+        ".palette-name {"
+        "  font-size: 13px;"
+        "  font-weight: 500;"
+        "  color: %s;"
+        "}"
+        ".palette-detail {"
+        "  font-size: 11px;"
+        "  color: %s;"
+        "  font-family: 'IBM Plex Mono', monospace;"
+        "}"
+        ".palette-list {"
+        "  background: transparent;"
+        "}"
+        ".palette-list > row {"
+        "  border-radius: 8px;"
+        "  margin: 1px 8px;"
+        "}"
+        ".palette-list > row:selected {"
+        "  background-color: alpha(%s, 0.08);"
+        "}"
+        ".palette-hint {"
+        "  font-size: 11px;"
+        "  color: %s;"
+        "  font-family: 'IBM Plex Mono', monospace;"
+        "}",
+        t->surface,           /* card bg */
+        t->fg,                /* card border */
+        t->overlay,           /* search bg */
+        t->fg,                /* search text */
+        t->fg,                /* search border */
+        t->accent,            /* search focus border */
+        t->subtext,           /* title */
+        t->accent, t->accent, /* ws badge */
+        t->green, t->green,   /* tty badge */
+        t->blue, t->blue,     /* web badge */
+        t->fg,                /* name */
+        t->subtext,           /* detail */
+        t->accent,            /* selected row */
+        t->subtext            /* hint */
+    );
+
+    GtkCssProvider *p = gtk_css_provider_new();
+    gtk_css_provider_load_from_string(p, css);
+    gtk_style_context_add_provider_for_display(
+        gdk_display_get_default(),
+        GTK_STYLE_PROVIDER(p),
+        GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 1);
+    g_free(css);
+}
+
 static void
 command_palette_init(CommandPalette *self)
 {
@@ -412,56 +527,65 @@ command_palette_init(CommandPalette *self)
     self->terminal_stack = NULL;
     self->workspace_list = NULL;
 
-    /* ── Build widget tree ── */
+    inject_palette_css();
 
-    /* The overlay_box fills the entire palette widget and provides
-     * a semi-transparent background. */
+    /* ── Frosted backdrop ── */
     self->overlay_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    gtk_widget_add_css_class(self->overlay_box, "search-overlay");
+    gtk_widget_add_css_class(self->overlay_box, "palette-backdrop");
     gtk_widget_set_hexpand(self->overlay_box, TRUE);
     gtk_widget_set_vexpand(self->overlay_box, TRUE);
     gtk_widget_set_halign(self->overlay_box, GTK_ALIGN_FILL);
     gtk_widget_set_valign(self->overlay_box, GTK_ALIGN_FILL);
     gtk_widget_set_parent(self->overlay_box, GTK_WIDGET(self));
 
-    /* Centre-top card */
+    /* ── Card ── */
     self->card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    gtk_widget_set_size_request(self->card, 520, -1);
+    gtk_widget_add_css_class(self->card, "palette-card");
+    gtk_widget_set_size_request(self->card, 560, -1);
     gtk_widget_set_halign(self->card, GTK_ALIGN_CENTER);
     gtk_widget_set_valign(self->card, GTK_ALIGN_START);
-    gtk_widget_set_margin_top(self->card, 80);
+    gtk_widget_set_margin_top(self->card, 100);
     gtk_box_append(GTK_BOX(self->overlay_box), self->card);
 
-    /* Search entry */
+    /* ── Header label ── */
+    GtkWidget *title = gtk_label_new("COMMAND PALETTE");
+    gtk_widget_add_css_class(title, "palette-title");
+    gtk_label_set_xalign(GTK_LABEL(title), 0);
+    gtk_widget_set_margin_start(title, 20);
+    gtk_widget_set_margin_top(title, 16);
+    gtk_widget_set_margin_bottom(title, 8);
+    gtk_box_append(GTK_BOX(self->card), title);
+
+    /* ── Search entry ── */
     self->search_entry = gtk_search_entry_new();
+    gtk_widget_add_css_class(self->search_entry, "palette-search");
     gtk_widget_set_margin_start(self->search_entry, 16);
     gtk_widget_set_margin_end(self->search_entry, 16);
-    gtk_widget_set_margin_top(self->search_entry, 16);
     gtk_widget_set_margin_bottom(self->search_entry, 8);
     gtk_box_append(GTK_BOX(self->card), self->search_entry);
 
-    /* Results list in a scrolled window */
+    /* ── Results list ── */
     self->list_box = gtk_list_box_new();
     gtk_list_box_set_selection_mode(GTK_LIST_BOX(self->list_box),
                                     GTK_SELECTION_SINGLE);
-    gtk_widget_add_css_class(self->list_box, "rich-list");
+    gtk_widget_add_css_class(self->list_box, "palette-list");
 
     GtkWidget *scroll = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
                                    GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), self->list_box);
-    gtk_widget_set_size_request(scroll, -1, 300);
+    gtk_widget_set_size_request(scroll, -1, 320);
     gtk_box_append(GTK_BOX(self->card), scroll);
 
-    /* Hint bar */
+    /* ── Hint bar ── */
     self->hint_label = gtk_label_new(
-        "\xe2\x86\x91\xe2\x86\x93 navigate    Enter select    Esc close");
-    gtk_label_set_xalign(GTK_LABEL(self->hint_label), 0);
+        "\xe2\x86\x91\xe2\x86\x93 navigate    \xe2\x8f\x8e select    esc close");
+    gtk_widget_add_css_class(self->hint_label, "palette-hint");
+    gtk_label_set_xalign(GTK_LABEL(self->hint_label), 0.5);
     gtk_widget_set_margin_start(self->hint_label, 16);
     gtk_widget_set_margin_end(self->hint_label, 16);
-    gtk_widget_set_margin_top(self->hint_label, 4);
-    gtk_widget_set_margin_bottom(self->hint_label, 8);
-    gtk_widget_add_css_class(self->hint_label, "dim-label");
+    gtk_widget_set_margin_top(self->hint_label, 8);
+    gtk_widget_set_margin_bottom(self->hint_label, 12);
     gtk_box_append(GTK_BOX(self->card), self->hint_label);
 
     /* ── Signals ── */
