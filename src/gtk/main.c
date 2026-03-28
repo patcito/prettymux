@@ -241,6 +241,15 @@ static void handle_action(const char *action) {
         }
     } else if (strcmp(action, "theme.cycle") == 0) {
         theme_cycle();
+        /* Tell ghostty to switch color scheme to match */
+        if (g_ghostty_app) {
+            const Theme *t = theme_get_current();
+            /* Light theme = light scheme, everything else = dark */
+            ghostty_color_scheme_e scheme = (strcmp(t->name, "Light") == 0)
+                ? GHOSTTY_COLOR_SCHEME_LIGHT
+                : GHOSTTY_COLOR_SCHEME_DARK;
+            ghostty_app_set_color_scheme(g_ghostty_app, scheme);
+        }
     } else if (strcmp(action, "pane.close") == 0) {
         Workspace *ws = workspace_get_current();
         if (ws) {
@@ -727,6 +736,19 @@ on_socket_command(const char  *command,
             json_builder_set_member_name(response, "status");
             json_builder_add_string_value(response, "error");
         }
+    } else if (strcmp(command, "dismiss.welcome") == 0) {
+        /* Close any visible dialog by activating the main window */
+        if (g_main_window)
+            gtk_window_present(g_main_window);
+        /* Also write the flag file so it won't show again */
+        char *dir = g_build_filename(g_get_home_dir(), ".config", "prettymux", NULL);
+        g_mkdir_with_parents(dir, 0755);
+        char *flag = g_build_filename(dir, ".welcome-shown", NULL);
+        g_file_set_contents(flag, "1", 1, NULL);
+        g_free(flag);
+        g_free(dir);
+        json_builder_set_member_name(response, "status");
+        json_builder_add_string_value(response, "ok");
     } else if (strcmp(command, "list.actions") == 0) {
         /* List all available actions */
         json_builder_set_member_name(response, "status");
