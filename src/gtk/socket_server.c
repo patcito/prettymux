@@ -25,6 +25,7 @@ static gpointer              cmd_user_data = NULL;
 typedef struct {
     GSocketConnection *conn;
     GByteArray        *buf;
+    gsize              data_len;  /* actual bytes received so far */
 } ClientCtx;
 
 static void
@@ -53,13 +54,14 @@ on_client_read(GObject      *source,
         if (error)
             g_error_free(error);
 
-        if (ctx->buf->len > 0 && cmd_callback) {
+        if (ctx->data_len > 0 && cmd_callback) {
             /* Null-terminate */
-            g_byte_array_append(ctx->buf, (const guint8 *)"\0", 1);
+            ctx->buf->data[ctx->data_len] = '\0';
 
             JsonParser *parser = json_parser_new();
-            if (json_parser_load_from_data(parser, (const char *)ctx->buf->data,
-                                           -1, NULL)) {
+            if (json_parser_load_from_data(parser,
+                                           (const char *)ctx->buf->data,
+                                           (gssize)ctx->data_len, NULL)) {
                 JsonNode *root = json_parser_get_root(parser);
                 if (root && JSON_NODE_HOLDS_OBJECT(root)) {
                     JsonObject *obj = json_node_get_object(root);
@@ -77,16 +79,16 @@ on_client_read(GObject      *source,
         return;
     }
 
-    /* Got data — append to buffer and keep reading */
-    ctx->buf->len += (guint)bytes_read;
+    /* Got data — track how much real data we have */
+    ctx->data_len += (gsize)bytes_read;
 
-    /* Grow the buffer and request more data */
-    gsize old_len = ctx->buf->len;
-    g_byte_array_set_size(ctx->buf, old_len + 4096);
+    /* Grow the buffer if needed and request more data */
+    if (ctx->data_len + 4096 > ctx->buf->len)
+        g_byte_array_set_size(ctx->buf, ctx->data_len + 4096);
 
     g_input_stream_read_async(
         G_INPUT_STREAM(source),
-        ctx->buf->data + old_len,
+        ctx->buf->data + ctx->data_len,
         4096,
         G_PRIORITY_DEFAULT,
         NULL,
@@ -108,8 +110,9 @@ on_incoming(GSocketService    *svc,
 
     ClientCtx *ctx = g_new0(ClientCtx, 1);
     ctx->conn = g_object_ref(conn);
-    ctx->buf = g_byte_array_sized_new(4096);
-    g_byte_array_set_size(ctx->buf, 4096);
+    ctx->buf = g_byte_array_sized_new(4096 + 1);  /* +1 for null terminator */
+    g_byte_array_set_size(ctx->buf, 4096 + 1);
+    ctx->data_len = 0;
 
     GInputStream *input = g_io_stream_get_input_stream(G_IO_STREAM(conn));
     g_input_stream_read_async(

@@ -10,15 +10,27 @@ typedef struct {
     GtkWidget *notebook;         /* The *first* terminal tab notebook (kept for
                                   * backwards compat; same as pane_notebooks[0]). */
     GPtrArray *terminals;        /* Flat array of ALL GhosttyTerminal widgets */
-    GPtrArray *pane_notebooks;   /* Array of GtkNotebook* — one per pane */
+    GPtrArray *pane_notebooks;   /* Array of GtkNotebook* -- one per pane */
     char cwd[512];
     char git_branch[128];
     char notification[256];
     gboolean broadcast;
+    GtkWidget *sidebar_label;    /* GtkLabel in the sidebar row (for updates) */
+
+    /* Pane zoom state */
+    gboolean zoomed;
+    GtkNotebook *zoomed_pane;
+
+    /* Notes panel */
+    char *notes_text;            /* Per-workspace notes content (heap-allocated) */
 } Workspace;
 
 extern GPtrArray *workspaces;
 extern int current_workspace;
+
+/* Keep references to terminal_stack / workspace_list for DnD operations */
+extern GtkWidget *g_terminal_stack;
+extern GtkWidget *g_workspace_list;
 
 Workspace *workspace_get_current(void);
 void workspace_add(GtkWidget *terminal_stack, GtkWidget *workspace_list, ghostty_app_t app);
@@ -26,6 +38,23 @@ void workspace_remove(int index, GtkWidget *terminal_stack, GtkWidget *workspace
 void workspace_switch(int index, GtkWidget *terminal_stack, GtkWidget *workspace_list);
 void workspace_add_terminal(Workspace *ws, ghostty_app_t app);
 void workspace_add_terminal_to_focused(Workspace *ws, ghostty_app_t app);
+
+/*
+ * Git branch detection (async).
+ *
+ * workspace_detect_git: spawn `git rev-parse --abbrev-ref HEAD` in the
+ *   given workspace CWD and update ws->git_branch + sidebar label on
+ *   completion.
+ */
+void workspace_detect_git(Workspace *ws);
+
+/*
+ * Sidebar label refresh.
+ *
+ * workspace_refresh_sidebar_label: update the sidebar row label to
+ *   show "name [branch]" or just "name".
+ */
+void workspace_refresh_sidebar_label(Workspace *ws);
 
 /*
  * Pane splitting.
@@ -43,3 +72,28 @@ void        workspace_split_pane(Workspace *ws, GtkOrientation orientation,
                                  ghostty_app_t app);
 void        workspace_close_pane(Workspace *ws, GtkNotebook *pane);
 GtkNotebook *workspace_get_focused_pane(Workspace *ws);
+
+/*
+ * Pane zoom.
+ *
+ * workspace_toggle_zoom: when zooming, hide all pane notebooks except
+ *   the focused one.  When un-zooming, show all panes again.
+ */
+void workspace_toggle_zoom(Workspace *ws);
+
+/*
+ * Notes panel.
+ *
+ * workspace_toggle_notes: show/hide a per-workspace text editing area.
+ *   On hide, saves the text to ws->notes_text.
+ *   On show, restores from ws->notes_text.
+ *
+ * workspace_save_notes: save current notes text from the visible panel
+ *   (call before switching workspaces).
+ *
+ * workspace_restore_notes: restore notes text to the panel for the
+ *   given workspace (call after switching workspaces).
+ */
+void workspace_toggle_notes(Workspace *ws, GtkWidget *container);
+void workspace_save_notes(Workspace *ws);
+void workspace_restore_notes(Workspace *ws);

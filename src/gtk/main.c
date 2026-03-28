@@ -19,6 +19,8 @@
 #include "command_palette.h"
 #include "port_scanner.h"
 #include "socket_server.h"
+#include "shortcuts_overlay.h"
+#include "pip_window.h"
 
 // ── Global state ──
 
@@ -31,6 +33,7 @@ static struct {
     GtkWidget *sidebar_box;
     GtkWidget *workspace_list;
     GtkWidget *main_paned;
+    GtkWidget *terminal_box;      // GtkBox holding terminal_stack + notes panel
     GtkWidget *terminal_stack;
     GtkWidget *browser_notebook;
     GtkWidget *overlay;           // GtkOverlay wrapping the outer_paned
@@ -140,8 +143,8 @@ static void handle_action(const char *action) {
                 if (n_pages > 1 && pg >= 0) {
                     /* Close the current tab in this pane */
                     GtkWidget *child = gtk_notebook_get_nth_page(focused, pg);
-                    gtk_notebook_remove_page(focused, pg);
                     g_ptr_array_remove(ws->terminals, child);
+                    gtk_notebook_remove_page(focused, pg);
                 } else if (n_pages <= 1 && ws->pane_notebooks &&
                            ws->pane_notebooks->len > 1) {
                     /* Last tab in this pane — close the entire pane */
@@ -161,6 +164,41 @@ static void handle_action(const char *action) {
     } else if (strcmp(action, "search.show") == 0) {
         if (ui.command_palette)
             command_palette_toggle(COMMAND_PALETTE(ui.command_palette));
+    } else if (strcmp(action, "shortcuts.show") == 0) {
+        /* Feature 1: Shortcuts overlay */
+        if (ui.overlay)
+            shortcuts_overlay_toggle(GTK_OVERLAY(ui.overlay));
+    } else if (strcmp(action, "pip.toggle") == 0) {
+        /* Feature 2: Picture-in-Picture window */
+        pip_window_toggle(g_main_window, ui.browser_notebook);
+    } else if (strcmp(action, "pane.zoom") == 0) {
+        /* Feature 3: Pane zoom */
+        Workspace *ws = workspace_get_current();
+        if (ws) workspace_toggle_zoom(ws);
+    } else if (strcmp(action, "notes.toggle") == 0) {
+        /* Feature 4: Notes panel */
+        Workspace *ws = workspace_get_current();
+        if (ws && ui.terminal_box)
+            workspace_toggle_notes(ws, ui.terminal_box);
+    } else if (strcmp(action, "terminal.search") == 0) {
+        /* Feature 5: Terminal search via ghostty built-in */
+        Workspace *ws = workspace_get_current();
+        if (ws) {
+            GtkNotebook *focused = workspace_get_focused_pane(ws);
+            if (focused) {
+                int pg = gtk_notebook_get_current_page(focused);
+                if (pg >= 0) {
+                    GtkWidget *child = gtk_notebook_get_nth_page(focused, pg);
+                    if (child && GHOSTTY_IS_TERMINAL(child)) {
+                        ghostty_surface_t surface =
+                            ghostty_terminal_get_surface(GHOSTTY_TERMINAL(child));
+                        if (surface)
+                            ghostty_surface_binding_action(surface,
+                                                           "search_forward", 14);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -203,46 +241,6 @@ find_terminal_for_surface(ghostty_surface_t surface)
         }
     }
     return result;
-}
-
-// ── Git branch detection (async) ──
-
-static void
-on_git_branch_read(GObject *source, GAsyncResult *result, gpointer user_data)
-{
-    Workspace *ws = user_data;
-    char *stdout_buf = NULL;
-
-    if (g_subprocess_communicate_utf8_finish(G_SUBPROCESS(source), result,
-                                             &stdout_buf, NULL, NULL)) {
-        if (stdout_buf && stdout_buf[0]) {
-            g_strstrip(stdout_buf);
-            snprintf(ws->git_branch, sizeof(ws->git_branch), "%s", stdout_buf);
-        } else {
-            ws->git_branch[0] = '\0';
-        }
-        g_free(stdout_buf);
-    }
-}
-
-static void
-detect_git_branch(Workspace *ws, const char *cwd)
-{
-    GError *error = NULL;
-    GSubprocess *proc = g_subprocess_new(
-        G_SUBPROCESS_FLAGS_STDOUT_PIPE | G_SUBPROCESS_FLAGS_STDERR_SILENCE,
-        &error,
-        "git", "-C", cwd, "rev-parse", "--abbrev-ref", "HEAD", NULL);
-
-    if (!proc) {
-        if (error) g_error_free(error);
-        ws->git_branch[0] = '\0';
-        return;
-    }
-
-    g_subprocess_communicate_utf8_async(proc, NULL, NULL,
-                                        on_git_branch_read, ws);
-    g_object_unref(proc);
 }
 
 // ── Port scanner callback ──
@@ -343,10 +341,11 @@ static bool action_cb(ghostty_app_t app, ghostty_target_s target,
         if (loc.terminal) {
             ghostty_terminal_set_title(loc.terminal,
                                        action.action.set_title.title);
-            /* Also update workspace title */
+            /* Also update workspace title + sidebar label */
             if (loc.workspace) {
                 snprintf(loc.workspace->name, sizeof(loc.workspace->name),
                          "%.60s", action.action.set_title.title);
+                workspace_refresh_sidebar_label(loc.workspace);
             }
         }
         return true;
@@ -362,7 +361,7 @@ static bool action_cb(ghostty_app_t app, ghostty_target_s target,
             if (loc.workspace) {
                 snprintf(loc.workspace->cwd, sizeof(loc.workspace->cwd),
                          "%s", action.action.pwd.pwd);
-                detect_git_branch(loc.workspace, action.action.pwd.pwd);
+                workspace_detect_git(loc.workspace);
             }
         }
         return true;
@@ -539,6 +538,96 @@ static gboolean on_close_request(GtkWindow *w, gpointer d) {
     return FALSE;
 }
 
+// ── Feature 3: Welcome Dialog ──
+
+static void
+on_welcome_ok_clicked(GtkButton *btn, gpointer user_data)
+{
+    (void)btn;
+    AdwDialog *dlg = ADW_DIALOG(user_data);
+
+    /* Check if the "don't show again" checkbox is checked */
+    GtkWidget *check = g_object_get_data(G_OBJECT(dlg), "check-button");
+    if (check && gtk_check_button_get_active(GTK_CHECK_BUTTON(check))) {
+        char *config_dir = g_build_filename(g_get_home_dir(),
+                                            ".config", "prettymux", NULL);
+        g_mkdir_with_parents(config_dir, 0755);
+        char *flag_path = g_build_filename(config_dir, ".welcome-shown", NULL);
+        g_file_set_contents(flag_path, "1", 1, NULL);
+        g_free(flag_path);
+        g_free(config_dir);
+    }
+
+    adw_dialog_close(dlg);
+}
+
+static void
+show_welcome_dialog(GtkWindow *parent)
+{
+    char *flag_path = g_build_filename(g_get_home_dir(),
+                                       ".config", "prettymux",
+                                       ".welcome-shown", NULL);
+    gboolean already_shown = g_file_test(flag_path, G_FILE_TEST_EXISTS);
+    g_free(flag_path);
+
+    if (already_shown)
+        return;
+
+    AdwDialog *dlg = adw_dialog_new();
+    adw_dialog_set_title(dlg, "Welcome to PrettyMux");
+    adw_dialog_set_content_width(dlg, 420);
+    adw_dialog_set_content_height(dlg, 340);
+
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
+    gtk_widget_set_margin_start(box, 32);
+    gtk_widget_set_margin_end(box, 32);
+    gtk_widget_set_margin_top(box, 28);
+    gtk_widget_set_margin_bottom(box, 24);
+
+    /* Title */
+    GtkWidget *title = gtk_label_new("Welcome to PrettyMux");
+    gtk_widget_add_css_class(title, "title-1");
+    gtk_label_set_xalign(GTK_LABEL(title), 0.5f);
+    gtk_box_append(GTK_BOX(box), title);
+
+    /* Description */
+    GtkWidget *desc = gtk_label_new(
+        "GPU-accelerated terminal multiplexer with\n"
+        "ghostty + WebKit in one window.\n\n"
+        "Press Ctrl+Shift+K to see all shortcuts.\n"
+        "Visit prettymux-web.vercel.app for docs.");
+    gtk_label_set_wrap(GTK_LABEL(desc), TRUE);
+    gtk_label_set_xalign(GTK_LABEL(desc), 0.5f);
+    gtk_label_set_justify(GTK_LABEL(desc), GTK_JUSTIFY_CENTER);
+    gtk_box_append(GTK_BOX(box), desc);
+
+    /* Spacer */
+    GtkWidget *spacer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_set_vexpand(spacer, TRUE);
+    gtk_box_append(GTK_BOX(box), spacer);
+
+    /* Checkbox */
+    GtkWidget *check = gtk_check_button_new_with_label("Don't show this again");
+    gtk_widget_set_halign(check, GTK_ALIGN_CENTER);
+    gtk_box_append(GTK_BOX(box), check);
+
+    /* OK button */
+    GtkWidget *ok_btn = gtk_button_new_with_label("Get Started");
+    gtk_widget_add_css_class(ok_btn, "suggested-action");
+    gtk_widget_set_halign(ok_btn, GTK_ALIGN_CENTER);
+    gtk_widget_set_size_request(ok_btn, 140, -1);
+    gtk_box_append(GTK_BOX(box), ok_btn);
+
+    /* Store checkbox reference on the dialog for the callback */
+    g_object_set_data(G_OBJECT(dlg), "check-button", check);
+
+    g_signal_connect(ok_btn, "clicked",
+                     G_CALLBACK(on_welcome_ok_clicked), dlg);
+
+    adw_dialog_set_child(dlg, box);
+    adw_dialog_present(dlg, GTK_WIDGET(parent));
+}
+
 static void on_activate(GtkApplication *app, gpointer user_data) {
     (void)user_data;
 
@@ -590,10 +679,17 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     ui.main_paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
     gtk_paned_set_end_child(GTK_PANED(ui.outer_paned), ui.main_paned);
 
+    // Terminal area: vertical box holding terminal_stack + notes panel
+    ui.terminal_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_set_hexpand(ui.terminal_box, TRUE);
+    gtk_widget_set_vexpand(ui.terminal_box, TRUE);
+
     ui.terminal_stack = gtk_stack_new();
     gtk_widget_set_hexpand(ui.terminal_stack, TRUE);
     gtk_widget_set_vexpand(ui.terminal_stack, TRUE);
-    gtk_paned_set_start_child(GTK_PANED(ui.main_paned), ui.terminal_stack);
+    gtk_box_append(GTK_BOX(ui.terminal_box), ui.terminal_stack);
+
+    gtk_paned_set_start_child(GTK_PANED(ui.main_paned), ui.terminal_box);
 
     build_browser();
     gtk_paned_set_end_child(GTK_PANED(ui.main_paned), ui.browser_notebook);
@@ -661,6 +757,9 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     port_scanner_start();
 
     gtk_window_present(GTK_WINDOW(window));
+
+    // ── Welcome dialog (first run) ──
+    show_welcome_dialog(GTK_WINDOW(window));
 }
 
 // ── Entry point ──

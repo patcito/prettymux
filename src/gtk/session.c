@@ -75,6 +75,8 @@ void session_save(GtkWindow *window, GtkWidget *browser_notebook,
             json_builder_add_string_value(b, ws->name);
             json_builder_set_member_name(b, "terminalCount");
             json_builder_add_int_value(b, ws->terminals->len);
+            json_builder_set_member_name(b, "notes");
+            json_builder_add_string_value(b, ws->notes_text ? ws->notes_text : "");
             json_builder_end_object(b);
         }
     }
@@ -153,12 +155,17 @@ void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
             workspace_add(terminal_stack, workspace_list, ghostty_app);
         }
 
-        // Set names
+        // Set names and restore notes
         for (guint i = 0; i < len && i < workspaces->len; i++) {
             JsonObject *ws_obj = json_array_get_object_element(ws_arr, i);
             Workspace *ws = g_ptr_array_index(workspaces, i);
             const char *name = json_object_get_string_member_with_default(ws_obj, "name", ws->name);
             snprintf(ws->name, sizeof(ws->name), "%s", name);
+
+            /* Restore per-workspace notes */
+            const char *notes = json_object_get_string_member_with_default(ws_obj, "notes", "");
+            g_free(ws->notes_text);
+            ws->notes_text = g_strdup(notes);
 
             GtkListBoxRow *row = gtk_list_box_get_row_at_index(GTK_LIST_BOX(workspace_list), i);
             if (row) {

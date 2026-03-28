@@ -28,6 +28,8 @@ sources = files(
   'command_palette.c',
   'port_scanner.c',
   'socket_server.c',
+  'shortcuts_overlay.c',
+  'pip_window.c',
   glad_dir / 'src' / 'gl.c',
 )
 

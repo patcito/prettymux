@@ -1,15 +1,131 @@
 #include "workspace.h"
 #include "ghostty_terminal.h"
 #include <stdio.h>
+#include <string.h>
 
 GPtrArray *workspaces = NULL;
 int current_workspace = 0;
+
+/* Idle callback: set a GtkPaned position to 50% of its allocated size. */
+static gboolean set_paned_half(gpointer data) {
+    GtkWidget *paned = GTK_WIDGET(data);
+    if (!GTK_IS_PANED(paned)) { g_object_unref(paned); return G_SOURCE_REMOVE; }
+
+    GtkOrientation orient = gtk_orientable_get_orientation(GTK_ORIENTABLE(paned));
+    int size = (orient == GTK_ORIENTATION_HORIZONTAL)
+        ? gtk_widget_get_width(paned)
+        : gtk_widget_get_height(paned);
+
+    if (size > 10)
+        gtk_paned_set_position(GTK_PANED(paned), size / 2);
+    else
+        gtk_paned_set_position(GTK_PANED(paned), 200); /* fallback */
+
+    g_object_unref(paned);
+    return G_SOURCE_REMOVE;
+}
+
+/* Global widget references for DnD operations (set by workspace_add) */
+GtkWidget *g_terminal_stack = NULL;
+GtkWidget *g_workspace_list = NULL;
+
+/* ── DnD data structure ─────────────────────────────────────────── */
+
+/*
+ * Drag payload: pointer to the terminal widget being dragged,
+ * plus the source notebook and workspace index at drag start.
+ */
+typedef struct {
+    GtkWidget *terminal;         /* GhosttyTerminal widget */
+    GtkWidget *source_notebook;  /* GtkNotebook the tab was dragged from */
+    int source_ws_idx;           /* Workspace index at drag start */
+} TabDragData;
+
+/* ── Forward declarations ───────────────────────────────────────── */
+
+static GtkWidget *create_pane_notebook(Workspace *ws, ghostty_app_t app);
+static void setup_tab_label_dnd(GtkWidget *label, GtkWidget *terminal,
+                                GtkNotebook *notebook, Workspace *ws);
+
+/* ── Helpers ────────────────────────────────────────────────────── */
 
 Workspace *workspace_get_current(void) {
     if (!workspaces || current_workspace >= (int)workspaces->len)
         return NULL;
     return g_ptr_array_index(workspaces, current_workspace);
 }
+
+static int workspace_index_of(Workspace *ws) {
+    if (!workspaces) return -1;
+    for (guint i = 0; i < workspaces->len; i++) {
+        if (g_ptr_array_index(workspaces, i) == ws)
+            return (int)i;
+    }
+    return -1;
+}
+
+/* ── Sidebar label refresh ──────────────────────────────────────── */
+
+void workspace_refresh_sidebar_label(Workspace *ws) {
+    if (!ws || !ws->sidebar_label) return;
+    char buf[256];
+    if (ws->git_branch[0])
+        snprintf(buf, sizeof(buf), "%s [%s]", ws->name, ws->git_branch);
+    else
+        snprintf(buf, sizeof(buf), "%s", ws->name);
+    gtk_label_set_text(GTK_LABEL(ws->sidebar_label), buf);
+}
+
+/* ── Feature 2: Git branch detection (async) ────────────────────── */
+
+static void
+on_git_branch_read(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+    Workspace *ws = user_data;
+    char *stdout_buf = NULL;
+
+    if (g_subprocess_communicate_utf8_finish(G_SUBPROCESS(source), result,
+                                             &stdout_buf, NULL, NULL)) {
+        if (stdout_buf && stdout_buf[0]) {
+            g_strstrip(stdout_buf);
+            snprintf(ws->git_branch, sizeof(ws->git_branch), "%s", stdout_buf);
+        } else {
+            ws->git_branch[0] = '\0';
+        }
+        g_free(stdout_buf);
+    } else {
+        ws->git_branch[0] = '\0';
+    }
+
+    workspace_refresh_sidebar_label(ws);
+}
+
+void workspace_detect_git(Workspace *ws) {
+    if (!ws || !ws->cwd[0]) {
+        ws->git_branch[0] = '\0';
+        workspace_refresh_sidebar_label(ws);
+        return;
+    }
+
+    GError *error = NULL;
+    GSubprocess *proc = g_subprocess_new(
+        G_SUBPROCESS_FLAGS_STDOUT_PIPE | G_SUBPROCESS_FLAGS_STDERR_SILENCE,
+        &error,
+        "git", "-C", ws->cwd, "rev-parse", "--abbrev-ref", "HEAD", NULL);
+
+    if (!proc) {
+        if (error) g_error_free(error);
+        ws->git_branch[0] = '\0';
+        workspace_refresh_sidebar_label(ws);
+        return;
+    }
+
+    g_subprocess_communicate_utf8_async(proc, NULL, NULL,
+                                        on_git_branch_read, ws);
+    g_object_unref(proc);
+}
+
+/* ── Tab title changed signal handler ───────────────────────────── */
 
 static void on_title_changed(GhosttyTerminal *term, const char *title, gpointer label_ptr) {
     (void)term;
@@ -18,7 +134,400 @@ static void on_title_changed(GhosttyTerminal *term, const char *title, gpointer 
     gtk_label_set_text(GTK_LABEL(label_ptr), short_title);
 }
 
-/* Add a terminal tab to a specific notebook within a workspace. */
+/* ── Feature 4: Double-click to rename (tab labels + sidebar rows) ─ */
+
+/*
+ * When double-click is detected on a label, replace it with a GtkEntry
+ * for inline editing.  On Enter or focus-out, restore the label.
+ */
+
+/* Data for the inline rename operation */
+typedef struct {
+    GtkWidget *event_box;        /* The parent box holding label or entry */
+    GtkWidget *label;            /* The GtkLabel */
+    GtkWidget *terminal;         /* Associated terminal (NULL for sidebar) */
+    Workspace *workspace;        /* Associated workspace (for sidebar rows) */
+    gboolean is_workspace_row;   /* TRUE if this is a workspace sidebar rename */
+} RenameData;
+
+static void
+finish_rename(GtkEntry *entry, RenameData *rd)
+{
+    GtkEntryBuffer *buf = gtk_entry_get_buffer(GTK_ENTRY(entry));
+    const char *new_text = gtk_entry_buffer_get_text(buf);
+    if (new_text && new_text[0]) {
+        gtk_label_set_text(GTK_LABEL(rd->label), new_text);
+        if (rd->is_workspace_row && rd->workspace) {
+            snprintf(rd->workspace->name, sizeof(rd->workspace->name),
+                     "%.60s", new_text);
+            workspace_refresh_sidebar_label(rd->workspace);
+        }
+    }
+
+    /* Remove the entry and show the label again */
+    GtkWidget *entry_widget = GTK_WIDGET(entry);
+    GtkWidget *parent = rd->event_box;
+
+    gtk_box_remove(GTK_BOX(parent), entry_widget);
+    gtk_box_append(GTK_BOX(parent), rd->label);
+    gtk_widget_set_visible(rd->label, TRUE);
+}
+
+static void
+on_rename_entry_activate(GtkEntry *entry, gpointer user_data)
+{
+    RenameData *rd = user_data;
+    finish_rename(entry, rd);
+}
+
+static void
+on_rename_entry_focus_leave(GtkEventControllerFocus *ctrl, gpointer user_data)
+{
+    (void)ctrl;
+    RenameData *rd = user_data;
+    GtkWidget *entry_widget = gtk_event_controller_get_widget(
+        GTK_EVENT_CONTROLLER(ctrl));
+    if (GTK_IS_ENTRY(entry_widget))
+        finish_rename(GTK_ENTRY(entry_widget), rd);
+}
+
+static void
+on_label_double_click(GtkGestureClick *gesture, int n_press,
+                      double x, double y, gpointer user_data)
+{
+    (void)gesture; (void)x; (void)y;
+    if (n_press != 2) return;
+
+    RenameData *rd = user_data;
+    GtkWidget *parent = rd->event_box;
+    const char *current_text = gtk_label_get_text(GTK_LABEL(rd->label));
+
+    /* Hide label, insert entry */
+    gtk_box_remove(GTK_BOX(parent), rd->label);
+
+    GtkWidget *entry = gtk_entry_new();
+    GtkEntryBuffer *buf = gtk_entry_get_buffer(GTK_ENTRY(entry));
+    gtk_entry_buffer_set_text(buf, current_text, -1);
+    gtk_widget_set_hexpand(entry, FALSE);
+    gtk_widget_set_size_request(entry, 80, -1);
+
+    g_signal_connect(entry, "activate",
+                     G_CALLBACK(on_rename_entry_activate), rd);
+
+    GtkEventController *focus_ctrl = gtk_event_controller_focus_new();
+    g_signal_connect(focus_ctrl, "leave",
+                     G_CALLBACK(on_rename_entry_focus_leave), rd);
+    gtk_widget_add_controller(entry, focus_ctrl);
+
+    gtk_box_append(GTK_BOX(parent), entry);
+    gtk_widget_set_visible(entry, TRUE);
+    gtk_widget_grab_focus(entry);
+}
+
+/*
+ * Create a tab label widget with double-click-to-rename support.
+ * Returns a GtkBox containing a GtkLabel with a gesture controller.
+ * *out_label receives the inner GtkLabel pointer (for title-changed).
+ */
+static GtkWidget *
+create_editable_tab_label(const char *text, GtkWidget *terminal,
+                          Workspace *ws, gboolean is_workspace_row,
+                          GtkWidget **out_label)
+{
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    GtkWidget *label = gtk_label_new(text);
+    gtk_label_set_xalign(GTK_LABEL(label), 0);
+    gtk_box_append(GTK_BOX(box), label);
+
+    RenameData *rd = g_new0(RenameData, 1);
+    rd->event_box = box;
+    rd->label = label;
+    rd->terminal = terminal;
+    rd->workspace = ws;
+    rd->is_workspace_row = is_workspace_row;
+
+    /* Prevent the RenameData from leaking */
+    g_object_set_data_full(G_OBJECT(box), "rename-data", rd, g_free);
+
+    GtkGesture *click = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), GDK_BUTTON_PRIMARY);
+    g_signal_connect(click, "pressed",
+                     G_CALLBACK(on_label_double_click), rd);
+    gtk_widget_add_controller(box, GTK_EVENT_CONTROLLER(click));
+
+    if (out_label)
+        *out_label = label;
+    return box;
+}
+
+/* ── Feature 1: DnD - Tab drag source callbacks ─────────────────── */
+
+static GdkContentProvider *
+on_tab_drag_prepare(GtkDragSource *source, double x, double y,
+                    gpointer user_data)
+{
+    (void)source; (void)x; (void)y;
+    TabDragData *dd = user_data;
+
+    GBytes *bytes = g_bytes_new(dd, sizeof(TabDragData));
+    GdkContentProvider *provider = gdk_content_provider_new_typed(
+        G_TYPE_BYTES, bytes);
+    g_bytes_unref(bytes);
+    return provider;
+}
+
+static void
+on_tab_drag_begin(GtkDragSource *source, GdkDrag *drag, gpointer user_data)
+{
+    (void)user_data;
+    GtkWidget *icon = gtk_label_new("Tab");
+    gtk_widget_add_css_class(icon, "drag-icon");
+    GdkPaintable *paintable = gtk_widget_paintable_new(icon);
+    gdk_drag_set_hotspot(drag, 20, 10);
+    gtk_drag_source_set_icon(source, paintable, 20, 10);
+    g_object_unref(paintable);
+}
+
+/* ── Feature 1: DnD - Notebook drop target callbacks ────────────── */
+
+static gboolean
+on_notebook_drop(GtkDropTarget *target, const GValue *value,
+                 double x, double y, gpointer user_data)
+{
+    (void)target; (void)x; (void)y;
+    GtkNotebook *dest_nb = GTK_NOTEBOOK(user_data);
+
+    if (!G_VALUE_HOLDS(value, G_TYPE_BYTES))
+        return FALSE;
+
+    GBytes *bytes = g_value_get_boxed(value);
+    if (g_bytes_get_size(bytes) != sizeof(TabDragData))
+        return FALSE;
+
+    const TabDragData *dd = g_bytes_get_data(bytes, NULL);
+    GtkWidget *terminal = dd->terminal;
+    GtkNotebook *src_nb = GTK_NOTEBOOK(dd->source_notebook);
+
+    if (src_nb == dest_nb)
+        return FALSE;
+
+    /* Find the tab page index in the source notebook */
+    int src_page = -1;
+    int n_pages = gtk_notebook_get_n_pages(src_nb);
+    int i;
+    for (i = 0; i < n_pages; i++) {
+        if (gtk_notebook_get_nth_page(src_nb, i) == terminal) {
+            src_page = i;
+            break;
+        }
+    }
+    if (src_page < 0)
+        return FALSE;
+
+    /* Get the tab label text before removal */
+    GtkWidget *old_tab_widget = gtk_notebook_get_tab_label(src_nb, terminal);
+    const char *tab_text = "Terminal";
+    if (old_tab_widget) {
+        GtkWidget *inner = gtk_widget_get_first_child(old_tab_widget);
+        if (GTK_IS_LABEL(inner))
+            tab_text = gtk_label_get_text(GTK_LABEL(inner));
+    }
+    char saved_text[64];
+    snprintf(saved_text, sizeof(saved_text), "%s", tab_text);
+
+    /* Remove terminal from source workspace's terminals list */
+    Workspace *src_ws = NULL;
+    if (dd->source_ws_idx >= 0 && dd->source_ws_idx < (int)workspaces->len)
+        src_ws = g_ptr_array_index(workspaces, dd->source_ws_idx);
+    if (src_ws)
+        g_ptr_array_remove(src_ws->terminals, terminal);
+
+    /* Ref the terminal so it survives reparenting */
+    g_object_ref(terminal);
+    gtk_notebook_remove_page(src_nb, src_page);
+
+    /* Find the destination workspace */
+    Workspace *dest_ws = NULL;
+    guint wi;
+    for (wi = 0; wi < workspaces->len; wi++) {
+        Workspace *ws = g_ptr_array_index(workspaces, wi);
+        guint pi;
+        for (pi = 0; pi < ws->pane_notebooks->len; pi++) {
+            if (g_ptr_array_index(ws->pane_notebooks, pi) == dest_nb) {
+                dest_ws = ws;
+                break;
+            }
+        }
+        if (dest_ws) break;
+    }
+
+    /* Create new tab label for destination */
+    GtkWidget *new_label = NULL;
+    GtkWidget *tab_label_widget = create_editable_tab_label(
+        saved_text, terminal, dest_ws, FALSE, &new_label);
+
+    gtk_notebook_append_page(dest_nb, terminal, tab_label_widget);
+    gtk_notebook_set_tab_reorderable(dest_nb, terminal, TRUE);
+
+    if (dest_ws)
+        g_ptr_array_add(dest_ws->terminals, terminal);
+
+    /* Set up DnD on the new tab label */
+    if (dest_ws)
+        setup_tab_label_dnd(tab_label_widget, terminal, dest_nb, dest_ws);
+
+    /* Connect title-changed to the new label */
+    if (new_label && GHOSTTY_IS_TERMINAL(terminal))
+        g_signal_connect(terminal, "title-changed",
+                         G_CALLBACK(on_title_changed), new_label);
+
+    g_object_unref(terminal);
+
+    gtk_notebook_set_current_page(dest_nb,
+        gtk_notebook_get_n_pages(dest_nb) - 1);
+
+    return TRUE;
+}
+
+/* ── Feature 1: DnD - Workspace sidebar drop target callbacks ───── */
+
+static gboolean
+on_ws_sidebar_drop(GtkDropTarget *target, const GValue *value,
+                   double x, double y, gpointer user_data)
+{
+    (void)target; (void)x; (void)y;
+    int dest_ws_idx = GPOINTER_TO_INT(user_data);
+
+    if (!G_VALUE_HOLDS(value, G_TYPE_BYTES))
+        return FALSE;
+
+    GBytes *bytes = g_value_get_boxed(value);
+    if (g_bytes_get_size(bytes) != sizeof(TabDragData))
+        return FALSE;
+
+    const TabDragData *dd = g_bytes_get_data(bytes, NULL);
+    GtkWidget *terminal = dd->terminal;
+    GtkNotebook *src_nb = GTK_NOTEBOOK(dd->source_notebook);
+
+    if (dest_ws_idx < 0 || dest_ws_idx >= (int)workspaces->len)
+        return FALSE;
+
+    Workspace *dest_ws = g_ptr_array_index(workspaces, dest_ws_idx);
+
+    /* Don't drop on same workspace if it only has one notebook */
+    Workspace *src_ws = NULL;
+    if (dd->source_ws_idx >= 0 && dd->source_ws_idx < (int)workspaces->len)
+        src_ws = g_ptr_array_index(workspaces, dd->source_ws_idx);
+    if (src_ws == dest_ws && dest_ws->pane_notebooks->len == 1)
+        return FALSE;
+
+    /* Find tab in source notebook */
+    int src_page = -1;
+    int n_pages = gtk_notebook_get_n_pages(src_nb);
+    int i;
+    for (i = 0; i < n_pages; i++) {
+        if (gtk_notebook_get_nth_page(src_nb, i) == terminal) {
+            src_page = i;
+            break;
+        }
+    }
+    if (src_page < 0)
+        return FALSE;
+
+    /* Save tab text */
+    GtkWidget *old_tab_widget = gtk_notebook_get_tab_label(src_nb, terminal);
+    const char *tab_text = "Terminal";
+    if (old_tab_widget) {
+        GtkWidget *inner = gtk_widget_get_first_child(old_tab_widget);
+        if (GTK_IS_LABEL(inner))
+            tab_text = gtk_label_get_text(GTK_LABEL(inner));
+    }
+    char saved_text[64];
+    snprintf(saved_text, sizeof(saved_text), "%s", tab_text);
+
+    /* Remove from source */
+    if (src_ws)
+        g_ptr_array_remove(src_ws->terminals, terminal);
+
+    g_object_ref(terminal);
+    gtk_notebook_remove_page(src_nb, src_page);
+
+    /* Add to destination workspace's first notebook */
+    GtkNotebook *dest_nb = GTK_NOTEBOOK(dest_ws->notebook);
+
+    GtkWidget *new_label = NULL;
+    GtkWidget *tab_label_widget = create_editable_tab_label(
+        saved_text, terminal, dest_ws, FALSE, &new_label);
+
+    gtk_notebook_append_page(dest_nb, terminal, tab_label_widget);
+    gtk_notebook_set_tab_reorderable(dest_nb, terminal, TRUE);
+    g_ptr_array_add(dest_ws->terminals, terminal);
+
+    setup_tab_label_dnd(tab_label_widget, terminal, dest_nb, dest_ws);
+
+    if (new_label && GHOSTTY_IS_TERMINAL(terminal))
+        g_signal_connect(terminal, "title-changed",
+                         G_CALLBACK(on_title_changed), new_label);
+
+    g_object_unref(terminal);
+
+    /* Switch to dest workspace */
+    if (g_terminal_stack && g_workspace_list)
+        workspace_switch(dest_ws_idx, g_terminal_stack, g_workspace_list);
+
+    gtk_notebook_set_current_page(dest_nb,
+        gtk_notebook_get_n_pages(dest_nb) - 1);
+
+    return TRUE;
+}
+
+/* ── DnD: Setup drag source on tab labels ───────────────────────── */
+
+static void
+setup_tab_label_dnd(GtkWidget *label_widget, GtkWidget *terminal,
+                    GtkNotebook *notebook, Workspace *ws)
+{
+    TabDragData *dd = g_new0(TabDragData, 1);
+    dd->terminal = terminal;
+    dd->source_notebook = GTK_WIDGET(notebook);
+    dd->source_ws_idx = workspace_index_of(ws);
+
+    /* Prevent the TabDragData from leaking */
+    g_object_set_data_full(G_OBJECT(label_widget), "tab-drag-data", dd, g_free);
+
+    GtkDragSource *drag_source = gtk_drag_source_new();
+    gtk_drag_source_set_actions(drag_source, GDK_ACTION_MOVE);
+    g_signal_connect(drag_source, "prepare",
+                     G_CALLBACK(on_tab_drag_prepare), dd);
+    g_signal_connect(drag_source, "drag-begin",
+                     G_CALLBACK(on_tab_drag_begin), dd);
+    gtk_widget_add_controller(label_widget, GTK_EVENT_CONTROLLER(drag_source));
+}
+
+/* ── DnD: Setup drop target on pane notebooks ───────────────────── */
+
+static void
+setup_notebook_drop_target(GtkNotebook *notebook)
+{
+    GtkDropTarget *drop = gtk_drop_target_new(G_TYPE_BYTES, GDK_ACTION_MOVE);
+    g_signal_connect(drop, "drop",
+                     G_CALLBACK(on_notebook_drop), notebook);
+    gtk_widget_add_controller(GTK_WIDGET(notebook), GTK_EVENT_CONTROLLER(drop));
+}
+
+/* ── DnD: Setup drop target on workspace sidebar rows ───────────── */
+
+static void
+setup_ws_sidebar_drop_target(GtkWidget *row_widget, int ws_idx)
+{
+    GtkDropTarget *drop = gtk_drop_target_new(G_TYPE_BYTES, GDK_ACTION_MOVE);
+    g_signal_connect(drop, "drop",
+                     G_CALLBACK(on_ws_sidebar_drop), GINT_TO_POINTER(ws_idx));
+    gtk_widget_add_controller(row_widget, GTK_EVENT_CONTROLLER(drop));
+}
+
+/* ── Add terminal to notebook ───────────────────────────────────── */
+
 static void
 workspace_add_terminal_to_notebook(Workspace *ws, GtkNotebook *notebook,
                                    ghostty_app_t app)
@@ -27,11 +536,19 @@ workspace_add_terminal_to_notebook(Workspace *ws, GtkNotebook *notebook,
     GtkWidget *terminal = ghostty_terminal_new(NULL);
     g_ptr_array_add(ws->terminals, terminal);
 
-    GtkWidget *label = gtk_label_new("Terminal");
-    gtk_notebook_append_page(notebook, terminal, label);
+    GtkWidget *inner_label = NULL;
+    GtkWidget *tab_label = create_editable_tab_label(
+        "Terminal", terminal, ws, FALSE, &inner_label);
+
+    gtk_notebook_append_page(notebook, terminal, tab_label);
     gtk_notebook_set_tab_reorderable(notebook, terminal, TRUE);
 
-    g_signal_connect(terminal, "title-changed", G_CALLBACK(on_title_changed), label);
+    /* Connect title-changed to update the inner label */
+    g_signal_connect(terminal, "title-changed",
+                     G_CALLBACK(on_title_changed), inner_label);
+
+    /* Set up DnD on the tab label */
+    setup_tab_label_dnd(tab_label, terminal, notebook, ws);
 
     gtk_widget_set_visible(terminal, TRUE);
     gtk_notebook_set_current_page(notebook,
@@ -51,12 +568,22 @@ void workspace_add_terminal_to_focused(Workspace *ws, ghostty_app_t app) {
         workspace_add_terminal(ws, app);
 }
 
-static GtkWidget *create_workspace_row(Workspace *ws) {
-    GtkWidget *label = gtk_label_new(ws->name);
-    gtk_label_set_xalign(GTK_LABEL(label), 0);
-    gtk_widget_add_css_class(label, "sidebar-row");
-    return label;
+/* ── Workspace sidebar row ──────────────────────────────────────── */
+
+static GtkWidget *create_workspace_row(Workspace *ws, int ws_idx) {
+    GtkWidget *inner_label = NULL;
+    GtkWidget *box = create_editable_tab_label(
+        ws->name, NULL, ws, TRUE, &inner_label);
+    gtk_widget_add_css_class(box, "sidebar-row");
+    ws->sidebar_label = inner_label;
+
+    /* Set up drop target for workspace DnD */
+    setup_ws_sidebar_drop_target(box, ws_idx);
+
+    return box;
 }
+
+/* ── "+" button callback ────────────────────────────────────────── */
 
 static void on_ws_add_tab_clicked(GtkButton *btn, gpointer data) {
     (void)data;
@@ -81,17 +608,27 @@ create_pane_notebook(Workspace *ws, ghostty_app_t app)
     gtk_notebook_set_action_widget(GTK_NOTEBOOK(notebook), add_btn, GTK_PACK_END);
     gtk_widget_set_visible(add_btn, TRUE);
 
+    /* Set up drop target so tabs can be dropped onto this notebook */
+    setup_notebook_drop_target(GTK_NOTEBOOK(notebook));
+
     return notebook;
 }
+
+/* ── Workspace add/remove/switch ────────────────────────────────── */
 
 void workspace_add(GtkWidget *terminal_stack, GtkWidget *workspace_list, ghostty_app_t app) {
     if (!workspaces)
         workspaces = g_ptr_array_new();
 
+    /* Store global references for DnD */
+    g_terminal_stack = terminal_stack;
+    g_workspace_list = workspace_list;
+
     Workspace *ws = g_new0(Workspace, 1);
     snprintf(ws->name, sizeof(ws->name), "Workspace %d", (int)workspaces->len + 1);
     ws->terminals = g_ptr_array_new();
     ws->pane_notebooks = g_ptr_array_new();
+    ws->sidebar_label = NULL;
 
     /* Create the first pane notebook */
     ws->notebook = create_pane_notebook(ws, app);
@@ -105,7 +642,8 @@ void workspace_add(GtkWidget *terminal_stack, GtkWidget *workspace_list, ghostty
     gtk_stack_add_named(GTK_STACK(terminal_stack), ws->container, stack_name);
 
     /* Add to sidebar */
-    GtkWidget *row = create_workspace_row(ws);
+    int ws_idx = (int)workspaces->len;
+    GtkWidget *row = create_workspace_row(ws, ws_idx);
     gtk_list_box_append(GTK_LIST_BOX(workspace_list), row);
 
     g_ptr_array_add(workspaces, ws);
@@ -135,6 +673,7 @@ void workspace_remove(int index, GtkWidget *terminal_stack, GtkWidget *workspace
 
     g_ptr_array_unref(ws->terminals);
     g_ptr_array_unref(ws->pane_notebooks);
+    g_free(ws->notes_text);
     g_free(ws);
 }
 
@@ -165,24 +704,20 @@ GtkNotebook *
 workspace_get_focused_pane(Workspace *ws)
 {
     if (!ws || !ws->pane_notebooks || ws->pane_notebooks->len == 0)
-        return NULL;
+        return ws ? GTK_NOTEBOOK(ws->notebook) : NULL;
 
-    GtkRoot *root = NULL;
-    GtkWidget *focus = NULL;
+    GtkNotebook *first_nb = g_ptr_array_index(ws->pane_notebooks, 0);
 
     /* Try to find the focused widget */
-    GtkNotebook *first_nb = g_ptr_array_index(ws->pane_notebooks, 0);
-    root = gtk_widget_get_root(GTK_WIDGET(first_nb));
-    if (root)
-        focus = gtk_root_get_focus(root);
+    GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(first_nb));
+    GtkWidget *focus = root ? gtk_root_get_focus(root) : NULL;
 
     if (focus) {
-        /* Walk up the focus widget's ancestors to find which notebook it
-         * belongs to. */
-        for (GtkWidget *w = focus; w != NULL; w = gtk_widget_get_parent(w)) {
+        GtkWidget *w;
+        for (w = focus; w != NULL; w = gtk_widget_get_parent(w)) {
             if (GTK_IS_NOTEBOOK(w)) {
-                /* Verify this notebook is one of our pane notebooks */
-                for (guint i = 0; i < ws->pane_notebooks->len; i++) {
+                guint i;
+                for (i = 0; i < ws->pane_notebooks->len; i++) {
                     if (g_ptr_array_index(ws->pane_notebooks, i) == w)
                         return GTK_NOTEBOOK(w);
                 }
@@ -225,16 +760,8 @@ workspace_split_pane(Workspace *ws, GtkOrientation orientation,
     gtk_widget_set_vexpand(paned, TRUE);
 
     if (GTK_IS_PANED(parent)) {
-        /*
-         * The source notebook is already inside a GtkPaned.
-         * Determine if it is the start or end child, then replace it
-         * with the new paned.
-         */
         GtkWidget *start = gtk_paned_get_start_child(GTK_PANED(parent));
 
-        /* We need to unparent the source first.  GtkPaned doesn't have
-         * a replace API, so we set_start/end_child(NULL), build the
-         * new paned, then put it back. */
         if (start == source_widget) {
             gtk_paned_set_start_child(GTK_PANED(parent), NULL);
             gtk_paned_set_start_child(GTK_PANED(paned), source_widget);
@@ -251,23 +778,9 @@ workspace_split_pane(Workspace *ws, GtkOrientation orientation,
         gtk_paned_set_resize_end_child(GTK_PANED(paned), TRUE);
 
     } else {
-        /*
-         * The source notebook is the direct child of the GtkStack page.
-         * We need to remove it from the stack and insert the new paned
-         * in its place.
-         */
-        GtkWidget *stack = parent;  /* Should be the GtkStack */
+        GtkWidget *stack = parent;
+        int ws_idx = workspace_index_of(ws);
 
-        /* Determine the stack page name before removal */
-        int ws_idx = -1;
-        for (guint i = 0; i < workspaces->len; i++) {
-            if (g_ptr_array_index(workspaces, i) == ws) {
-                ws_idx = (int)i;
-                break;
-            }
-        }
-
-        /* Ref the source so it survives removal from the stack */
         g_object_ref(source_widget);
         gtk_stack_remove(GTK_STACK(stack), source_widget);
 
@@ -278,7 +791,6 @@ workspace_split_pane(Workspace *ws, GtkOrientation orientation,
 
         g_object_unref(source_widget);
 
-        /* Add the paned to the stack */
         char stack_name[32];
         snprintf(stack_name, sizeof(stack_name), "ws-%d",
                  ws_idx >= 0 ? ws_idx : 0);
@@ -291,26 +803,159 @@ workspace_split_pane(Workspace *ws, GtkOrientation orientation,
     gtk_widget_set_visible(paned, TRUE);
     gtk_widget_set_visible(new_nb, TRUE);
 
+    /* Set paned to 50% once it has a size */
+    g_object_ref(paned);
+    g_idle_add(set_paned_half, paned);
+
     /* Add a terminal to the new pane */
     workspace_add_terminal_to_notebook(ws, GTK_NOTEBOOK(new_nb), app);
 
-    /* Focus the new terminal */
-    int last = gtk_notebook_get_n_pages(GTK_NOTEBOOK(new_nb)) - 1;
-    if (last >= 0) {
-        GtkWidget *page = gtk_notebook_get_nth_page(GTK_NOTEBOOK(new_nb), last);
-        if (page)
-            gtk_widget_grab_focus(page);
+    /* Focus the new terminal's GtkGLArea so it receives key events */
+    {
+        int last = gtk_notebook_get_n_pages(GTK_NOTEBOOK(new_nb)) - 1;
+        if (last >= 0) {
+            GtkWidget *page = gtk_notebook_get_nth_page(GTK_NOTEBOOK(new_nb), last);
+            if (page) {
+                GtkWidget *child = gtk_widget_get_first_child(page);
+                if (child)
+                    gtk_widget_grab_focus(child);
+                else
+                    gtk_widget_grab_focus(page);
+            }
+        }
     }
 }
 
-/*
- * workspace_close_pane:
- *
- * Remove a pane notebook and collapse the GtkPaned that contained it.
- * The sibling takes the paned's place in the widget tree.
- *
- * If this was the last pane, do nothing.
- */
+/* ── Pane zoom ───────────────────────────────────────────────── */
+
+void
+workspace_toggle_zoom(Workspace *ws)
+{
+    if (!ws) return;
+
+    if (ws->zoomed) {
+        /* Un-zoom: show all pane notebooks */
+        if (ws->pane_notebooks) {
+            guint i;
+            for (i = 0; i < ws->pane_notebooks->len; i++) {
+                GtkWidget *nb = g_ptr_array_index(ws->pane_notebooks, i);
+                gtk_widget_set_visible(nb, TRUE);
+            }
+        }
+        ws->zoomed = FALSE;
+        ws->zoomed_pane = NULL;
+        return;
+    }
+
+    /* Only zoom if there are multiple panes */
+    if (!ws->pane_notebooks || ws->pane_notebooks->len <= 1)
+        return;
+
+    /* Find the focused pane */
+    GtkNotebook *focused = workspace_get_focused_pane(ws);
+    if (!focused)
+        return;
+
+    /* Hide all other pane notebooks */
+    {
+        guint i;
+        for (i = 0; i < ws->pane_notebooks->len; i++) {
+            GtkNotebook *nb = g_ptr_array_index(ws->pane_notebooks, i);
+            if (nb != focused)
+                gtk_widget_set_visible(GTK_WIDGET(nb), FALSE);
+        }
+    }
+
+    ws->zoomed = TRUE;
+    ws->zoomed_pane = focused;
+}
+
+/* ── Notes panel ─────────────────────────────────────────────── */
+
+void
+workspace_save_notes(Workspace *ws)
+{
+    if (!ws || !ws->notes_text)
+        return;
+
+    /* Notes text is saved on toggle-hide; this is a no-op placeholder
+     * for external callers that want to ensure notes are persisted. */
+}
+
+void
+workspace_restore_notes(Workspace *ws)
+{
+    (void)ws;
+    /* Notes text is restored on toggle-show; no-op placeholder. */
+}
+
+void
+workspace_toggle_notes(Workspace *ws, GtkWidget *notes_container)
+{
+    if (!ws || !notes_container)
+        return;
+
+    /* Look for an existing notes panel child in the container. */
+    GtkWidget *child = gtk_widget_get_first_child(notes_container);
+    GtkWidget *notes_panel = NULL;
+    while (child) {
+        const char *name = gtk_widget_get_name(child);
+        if (name && strcmp(name, "workspace-notes-panel") == 0) {
+            notes_panel = child;
+            break;
+        }
+        child = gtk_widget_get_next_sibling(child);
+    }
+
+    if (notes_panel) {
+        /* Already visible -- save and hide */
+        GtkTextBuffer *buf = gtk_text_view_get_buffer(
+            GTK_TEXT_VIEW(gtk_scrolled_window_get_child(
+                GTK_SCROLLED_WINDOW(notes_panel))));
+        GtkTextIter start_iter, end_iter;
+        gtk_text_buffer_get_bounds(buf, &start_iter, &end_iter);
+        char *text = gtk_text_buffer_get_text(buf, &start_iter, &end_iter, FALSE);
+        g_free(ws->notes_text);
+        ws->notes_text = text; /* takes ownership */
+
+        if (GTK_IS_BOX(notes_container))
+            gtk_box_remove(GTK_BOX(notes_container), notes_panel);
+        else if (GTK_IS_PANED(notes_container))
+            gtk_widget_set_visible(notes_panel, FALSE);
+        return;
+    }
+
+    /* Create notes panel */
+    GtkWidget *text_view = gtk_text_view_new();
+    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(text_view), GTK_WRAP_WORD_CHAR);
+    gtk_text_view_set_left_margin(GTK_TEXT_VIEW(text_view), 8);
+    gtk_text_view_set_right_margin(GTK_TEXT_VIEW(text_view), 8);
+    gtk_text_view_set_top_margin(GTK_TEXT_VIEW(text_view), 4);
+    gtk_text_view_set_bottom_margin(GTK_TEXT_VIEW(text_view), 4);
+
+    /* Restore saved text */
+    if (ws->notes_text && ws->notes_text[0]) {
+        GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_view));
+        gtk_text_buffer_set_text(buf, ws->notes_text, -1);
+    }
+
+    GtkWidget *scroll = gtk_scrolled_window_new();
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
+                                   GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), text_view);
+    gtk_widget_set_size_request(scroll, -1, 120);
+    gtk_widget_set_name(scroll, "workspace-notes-panel");
+
+    if (GTK_IS_BOX(notes_container)) {
+        gtk_box_append(GTK_BOX(notes_container), scroll);
+    }
+
+    gtk_widget_set_visible(scroll, TRUE);
+    gtk_widget_grab_focus(text_view);
+}
+
+/* ── Close pane ──────────────────────────────────────────────── */
+
 void
 workspace_close_pane(Workspace *ws, GtkNotebook *pane)
 {
@@ -334,10 +979,13 @@ workspace_close_pane(Workspace *ws, GtkNotebook *pane)
     if (!sibling) return;
 
     /* Remove terminals that belong to the closing pane from ws->terminals */
-    int n_pages = gtk_notebook_get_n_pages(pane);
-    for (int i = 0; i < n_pages; i++) {
-        GtkWidget *child = gtk_notebook_get_nth_page(pane, i);
-        g_ptr_array_remove(ws->terminals, child);
+    {
+        int n_pages = gtk_notebook_get_n_pages(pane);
+        int i;
+        for (i = 0; i < n_pages; i++) {
+            GtkWidget *child = gtk_notebook_get_nth_page(pane, i);
+            g_ptr_array_remove(ws->terminals, child);
+        }
     }
 
     /* Remove the pane from pane_notebooks */
@@ -359,14 +1007,7 @@ workspace_close_pane(Workspace *ws, GtkNotebook *pane)
             gtk_paned_set_end_child(GTK_PANED(grandparent), sibling);
         }
     } else if (GTK_IS_STACK(grandparent)) {
-        /* The paned was the direct child of the stack */
-        int ws_idx = -1;
-        for (guint i = 0; i < workspaces->len; i++) {
-            if (g_ptr_array_index(workspaces, i) == ws) {
-                ws_idx = (int)i;
-                break;
-            }
-        }
+        int ws_idx = workspace_index_of(ws);
 
         gtk_stack_remove(GTK_STACK(grandparent), GTK_WIDGET(parent_paned));
 
@@ -378,7 +1019,6 @@ workspace_close_pane(Workspace *ws, GtkNotebook *pane)
 
         ws->container = sibling;
 
-        /* If the sibling is a notebook, it becomes the primary again */
         if (GTK_IS_NOTEBOOK(sibling))
             ws->notebook = sibling;
     }
