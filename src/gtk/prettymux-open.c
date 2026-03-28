@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <dirent.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 
@@ -65,14 +66,49 @@ usage(void)
         "Set PRETTYMUX_SOCKET to the socket path.\n");
 }
 
+/* Find the prettymux socket: check env var first, then scan /tmp */
+static const char *
+find_socket(void)
+{
+    const char *env = getenv("PRETTYMUX_SOCKET");
+    if (env && env[0]) return env;
+
+    /* Scan /tmp for prettymux-*.sock */
+    static char found[256];
+    DIR *d = opendir("/tmp");
+    if (!d) return NULL;
+    struct dirent *ent;
+    while ((ent = readdir(d)) != NULL) {
+        if (strncmp(ent->d_name, "prettymux-", 10) == 0 &&
+            strstr(ent->d_name, ".sock") != NULL) {
+            snprintf(found, sizeof(found), "/tmp/%s", ent->d_name);
+            /* Check if socket is connectable */
+            int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+            if (fd >= 0) {
+                struct sockaddr_un addr = {0};
+                addr.sun_family = AF_UNIX;
+                snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", found);
+                if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
+                    close(fd);
+                    closedir(d);
+                    return found;
+                }
+                close(fd);
+            }
+        }
+    }
+    closedir(d);
+    return NULL;
+}
+
 static int
 send_command(const char *json_msg)
 {
-    const char *sock_path = getenv("PRETTYMUX_SOCKET");
-    if (!sock_path || sock_path[0] == '\0') {
+    const char *sock_path = find_socket();
+    if (!sock_path) {
         fprintf(stderr,
-            "prettymux-open: PRETTYMUX_SOCKET not set.\n"
-            "Are you running inside a prettymux terminal?\n");
+            "prettymux-open: no running prettymux instance found.\n"
+            "Set PRETTYMUX_SOCKET or start prettymux first.\n");
         return 1;
     }
 
