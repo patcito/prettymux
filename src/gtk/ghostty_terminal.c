@@ -181,6 +181,9 @@ on_gl_resize(GtkGLArea *area, int width, int height, gpointer user_data)
 
     if (!self->surface)
         return;
+    /* Ignore 0x0 resize events (happens during pane close/reparent) */
+    if (width <= 0 || height <= 0)
+        return;
 
     double scale = gtk_widget_get_scale_factor(GTK_WIDGET(area));
     ghostty_surface_set_content_scale(self->surface, scale, scale);
