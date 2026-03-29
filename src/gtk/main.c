@@ -300,6 +300,11 @@ on_clipboard_text_received(GObject *source, GAsyncResult *result,
 // ── Action dispatch ──
 
 static void save_session_now(void);
+static gboolean save_session_idle(gpointer d) {
+    (void)d;
+    save_session_now();
+    return G_SOURCE_REMOVE;
+}
 
 static void handle_action(const char *action) {
     if (strcmp(action, "workspace.new") == 0) {
@@ -495,8 +500,8 @@ static void handle_action(const char *action) {
         }
     }
 
-    /* Auto-save after any state-modifying action */
-    save_session_now();
+    /* Defer session save to idle so we don't block the current handler */
+    g_idle_add((GSourceFunc)save_session_idle, NULL);
 }
 
 // ── Keyboard handler (capture phase) ──
@@ -811,8 +816,19 @@ on_socket_command(const char  *command,
             json_builder_set_member_name(response, "message");
             json_builder_add_string_value(response, "missing name");
         }
+    } else if (strcmp(command, "tab.edit") == 0) {
+        /* Start inline rename on the current tab */
+        Workspace *ws = workspace_get_current();
+        if (ws) {
+            workspace_start_tab_rename(ws);
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "ok");
+        } else {
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "error");
+        }
     } else if (strcmp(command, "action") == 0) {
-        /* Run any prettymux action by name, e.g. {"command":"action","action":"split.horizontal"} */
+        /* Run any prettymux action by name */
         const char *act = json_object_get_string_member_with_default(msg, "action", "");
         if (act && act[0]) {
             handle_action(act);
@@ -968,8 +984,12 @@ on_socket_command(const char  *command,
         json_builder_add_string_value(response, "unknown command");
     }
 
-    /* Auto-save after any socket command that modifies state */
-    save_session_now();
+    /* Defer session save to idle — don't block the socket handler */
+    if (strcmp(command, "workspace.list") != 0 &&
+        strcmp(command, "list.actions") != 0 &&
+        strcmp(command, "tab.edit") != 0) {
+        g_idle_add((GSourceFunc)save_session_idle, NULL);
+    }
 }
 
 // ── Ghostty action callback (marshaled to GTK main thread) ──

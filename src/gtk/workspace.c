@@ -51,6 +51,8 @@ static void setup_tab_label_dnd(GtkWidget *label, GtkWidget *terminal,
                                 GtkNotebook *notebook, Workspace *ws);
 static void on_notebook_switch_page(GtkNotebook *nb, GtkWidget *page,
                                     guint page_num, gpointer user_data);
+typedef struct _RenameData RenameData;
+static void finish_rename(GtkEntry *entry, RenameData *rd);
 static void build_tab_label_text(GhosttyTerminal *term, const char *title,
                                  char *buf, size_t bufsz);
 
@@ -372,17 +374,39 @@ static void on_title_changed(GhosttyTerminal *term, const char *title, gpointer 
  */
 
 /* Data for the inline rename operation */
-typedef struct {
+struct _RenameData {
     GtkWidget *event_box;        /* The parent box holding label or entry */
     GtkWidget *label;            /* The GtkLabel */
     GtkWidget *terminal;         /* Associated terminal (NULL for sidebar) */
     Workspace *workspace;        /* Associated workspace (for sidebar rows) */
     gboolean is_workspace_row;   /* TRUE if this is a workspace sidebar rename */
-} RenameData;
+};
 
 static void on_rename_entry_activate(GtkEntry *entry, gpointer user_data);
 static void on_rename_entry_focus_leave(GtkEventControllerFocus *ctrl,
                                         gpointer user_data);
+
+static gboolean
+on_rename_key_pressed(GtkEventControllerKey *ctrl, guint keyval,
+                      guint keycode, GdkModifierType state, gpointer user_data)
+{
+    (void)ctrl; (void)keycode; (void)state;
+    if (keyval == GDK_KEY_Escape) {
+        RenameData *rd = user_data;
+        /* Cancel: restore original label without changing text */
+        GtkWidget *entry_widget = gtk_event_controller_get_widget(
+            GTK_EVENT_CONTROLLER(ctrl));
+        if (GTK_IS_ENTRY(entry_widget)) {
+            /* Set buffer to original text so finish_rename doesn't change it */
+            GtkEntryBuffer *buf = gtk_entry_get_buffer(GTK_ENTRY(entry_widget));
+            gtk_entry_buffer_set_text(buf,
+                gtk_label_get_text(GTK_LABEL(rd->label)), -1);
+            finish_rename(GTK_ENTRY(entry_widget), rd);
+        }
+        return TRUE;
+    }
+    return FALSE;
+}
 
 static void
 start_rename(RenameData *rd)
@@ -410,15 +434,18 @@ start_rename(RenameData *rd)
     g_signal_connect(entry, "activate",
                      G_CALLBACK(on_rename_entry_activate), rd);
 
-    GtkEventController *focus_ctrl = gtk_event_controller_focus_new();
-    g_signal_connect(focus_ctrl, "leave",
-                     G_CALLBACK(on_rename_entry_focus_leave), rd);
-    gtk_widget_add_controller(entry, focus_ctrl);
+    /* Escape cancels the rename */
+    GtkEventController *key_ctrl = gtk_event_controller_key_new();
+    g_signal_connect(key_ctrl, "key-pressed",
+                     G_CALLBACK(on_rename_key_pressed), rd);
+    gtk_widget_add_controller(entry, key_ctrl);
 
     g_object_set_data(G_OBJECT(parent), "rename-entry", entry);
     gtk_box_append(GTK_BOX(parent), entry);
     gtk_widget_set_visible(entry, TRUE);
+    gtk_widget_set_size_request(entry, 120, -1);
     gtk_widget_grab_focus(entry);
+    gtk_widget_queue_draw(parent);
 }
 
 static void
@@ -906,6 +933,21 @@ void workspace_add_terminal_to_notebook_with_cwd(Workspace *ws,
                                                   ghostty_app_t app,
                                                   const char *cwd) {
     workspace_add_terminal_to_notebook_cwd(ws, notebook, app, cwd);
+}
+
+void workspace_start_tab_rename(Workspace *ws) {
+    if (!ws) return;
+    GtkNotebook *nb = workspace_get_focused_pane(ws);
+    if (!nb || !GTK_IS_NOTEBOOK(nb)) return;
+    int pg = gtk_notebook_get_current_page(nb);
+    if (pg < 0) return;
+    GtkWidget *child = gtk_notebook_get_nth_page(nb, pg);
+    if (!child) return;
+    GtkWidget *tab_w = gtk_notebook_get_tab_label(nb, child);
+    if (!tab_w) return;
+    RenameData *rd = g_object_get_data(G_OBJECT(tab_w), "rename-data");
+    if (!rd) return;
+    start_rename(rd);
 }
 
 /* ── Workspace sidebar row ──────────────────────────────────────── */
