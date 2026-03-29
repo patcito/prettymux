@@ -9,6 +9,7 @@
 #include "shortcuts.h"
 #include "theme.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #define OVERLAY_NAME "shortcuts-overlay-box"
@@ -16,6 +17,15 @@
 /* ── CSS injected once ─────────────────────────────────────────── */
 
 static gboolean css_injected = FALSE;
+
+typedef struct {
+    GtkWidget *row;
+    GtkWidget *label;
+    GtkWidget *badges_box;
+    GtkWidget *overlay_box;
+    const char *action;
+    gboolean editing;
+} ShortcutRowData;
 
 static void
 inject_css(void)
@@ -68,6 +78,10 @@ inject_css(void)
         "}"
         ".shortcut-row {"
         "  padding: 6px 0px;"
+        "  border-radius: 8px;"
+        "}"
+        ".shortcut-row.editing {"
+        "  background-color: alpha(%s, 0.14);"
         "}"
         ".shortcut-label {"
         "  font-size: 16px;"
@@ -101,6 +115,18 @@ inject_css(void)
         ".shortcuts-close:hover {"
         "  background-color: %s;"
         "}"
+        ".shortcuts-reset {"
+        "  background-color: alpha(%s, 0.75);"
+        "  color: %s;"
+        "  border: 1px solid alpha(%s, 0.2);"
+        "  border-radius: 8px;"
+        "  padding: 6px 20px;"
+        "  font-size: 13px;"
+        "  font-weight: 500;"
+        "}"
+        ".shortcuts-reset:hover {"
+        "  background-color: alpha(%s, 0.95);"
+        "}"
         ".shortcuts-esc-hint {"
         "  font-size: 11px;"
         "  color: %s;"
@@ -112,6 +138,7 @@ inject_css(void)
         t->overlay, t->fg, t->fg, /* search: bg, text, border */
         t->accent,             /* search focus */
         t->accent,             /* section header */
+        t->accent,             /* editing row bg */
         t->fg,                 /* shortcut label */
         t->overlay,            /* key badge bg */
         t->fg,                 /* key badge border */
@@ -120,6 +147,10 @@ inject_css(void)
         t->accent,             /* close btn bg */
         t->bg,                 /* close btn text */
         t->blue,               /* close btn hover */
+        t->overlay,            /* reset btn bg */
+        t->fg,                 /* reset btn text */
+        t->fg,                 /* reset btn border */
+        t->surface,            /* reset btn hover */
         t->subtext             /* esc hint */
     );
 
@@ -182,41 +213,166 @@ make_key_badges(guint keyval, GdkModifierType mods)
     return box;
 }
 
-/* ── Make a fixed-text badge row (for non-table shortcuts) ────── */
-
-static GtkWidget *
-make_text_badges(const char *keys)
+static gboolean
+text_contains_case_insensitive(const char *haystack, const char *needle)
 {
-    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
-    gtk_widget_set_halign(box, GTK_ALIGN_END);
+    gboolean found;
+    char *haystack_folded;
+    char *needle_folded;
 
-    /* Split by + and create individual badges */
-    char *copy = g_strdup(keys);
-    char *token = strtok(copy, "+");
-    while (token) {
-        /* Trim whitespace */
-        while (*token == ' ') token++;
-        char *end = token + strlen(token) - 1;
-        while (end > token && *end == ' ') *end-- = '\0';
+    if (!haystack || !needle || !*needle)
+        return TRUE;
 
-        if (*token) {
-            GtkWidget *b = gtk_label_new(token);
-            gtk_widget_add_css_class(b, "key-badge");
-            gtk_box_append(GTK_BOX(box), b);
-        }
-        token = strtok(NULL, "+");
-    }
-    g_free(copy);
-    return box;
+    haystack_folded = g_utf8_casefold(haystack, -1);
+    needle_folded = g_utf8_casefold(needle, -1);
+    found = strstr(haystack_folded, needle_folded) != NULL;
+    g_free(haystack_folded);
+    g_free(needle_folded);
+    return found;
+}
+
+static void
+replace_badges_content(GtkWidget *badges_box, GtkWidget *content)
+{
+    GtkWidget *child;
+
+    while ((child = gtk_widget_get_first_child(badges_box)) != NULL)
+        gtk_box_remove(GTK_BOX(badges_box), child);
+    if (content)
+        gtk_box_append(GTK_BOX(badges_box), content);
 }
 
 /* ── Add shortcut row ─────────────────────────────────────────── */
 
 static void
-add_row(GtkWidget *column, const char *label_text, GtkWidget *badges)
+shortcut_row_refresh(ShortcutRowData *rd)
 {
+    const ShortcutDef *binding = shortcut_find_by_action(rd->action);
+    if (!binding)
+        return;
+
+    gtk_widget_remove_css_class(rd->row, "editing");
+    rd->editing = FALSE;
+    if (g_object_get_data(G_OBJECT(rd->overlay_box), "editing-row") == rd)
+        g_object_set_data(G_OBJECT(rd->overlay_box), "editing-row", NULL);
+    replace_badges_content(rd->badges_box,
+                           make_key_badges(binding->keyval, binding->mods));
+}
+
+static void
+shortcut_row_show_message(ShortcutRowData *rd, const char *message)
+{
+    GtkWidget *msg = gtk_label_new(message);
+    gtk_widget_add_css_class(msg, "key-badge");
+    replace_badges_content(rd->badges_box, msg);
+}
+
+static gboolean
+shortcut_is_modifier_only(guint keyval)
+{
+    switch (keyval) {
+    case GDK_KEY_Shift_L:
+    case GDK_KEY_Shift_R:
+    case GDK_KEY_Control_L:
+    case GDK_KEY_Control_R:
+    case GDK_KEY_Alt_L:
+    case GDK_KEY_Alt_R:
+    case GDK_KEY_Meta_L:
+    case GDK_KEY_Meta_R:
+    case GDK_KEY_Super_L:
+    case GDK_KEY_Super_R:
+    case GDK_KEY_Hyper_L:
+    case GDK_KEY_Hyper_R:
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+
+static void
+shortcut_row_begin_edit(ShortcutRowData *rd)
+{
+    ShortcutRowData *active =
+        g_object_get_data(G_OBJECT(rd->overlay_box), "editing-row");
+    if (active && active != rd)
+        shortcut_row_refresh(active);
+
+    rd->editing = TRUE;
+    gtk_widget_add_css_class(rd->row, "editing");
+    shortcut_row_show_message(rd, "Press shortcut");
+    g_object_set_data(G_OBJECT(rd->overlay_box), "editing-row", rd);
+    gtk_widget_grab_focus(rd->row);
+}
+
+static gboolean
+on_shortcut_row_key_pressed(GtkEventControllerKey *ctrl, guint keyval,
+                            guint keycode, GdkModifierType state,
+                            gpointer user_data)
+{
+    ShortcutRowData *rd = user_data;
+    const ShortcutDef *conflict = NULL;
+    GdkModifierType mods;
+
+    (void)ctrl;
+    (void)keycode;
+
+    if (!rd->editing)
+        return FALSE;
+
+    if (keyval == GDK_KEY_Escape) {
+        shortcut_row_refresh(rd);
+        g_object_set_data(G_OBJECT(rd->overlay_box), "editing-row", NULL);
+        return TRUE;
+    }
+
+    if (shortcut_is_modifier_only(keyval))
+        return TRUE;
+
+    mods = state & (GDK_CONTROL_MASK | GDK_SHIFT_MASK |
+                    GDK_ALT_MASK | GDK_SUPER_MASK);
+
+    if (!shortcut_set_binding(rd->action, keyval, mods, &conflict)) {
+        const char *label = conflict && conflict->label
+            ? conflict->label : "Already in use";
+        char msg[128];
+        snprintf(msg, sizeof(msg), "Used by %s", label);
+        shortcut_row_show_message(rd, msg);
+        return TRUE;
+    }
+
+    shortcut_row_refresh(rd);
+    g_object_set_data(G_OBJECT(rd->overlay_box), "editing-row", NULL);
+    return TRUE;
+}
+
+static void
+on_shortcut_row_pressed(GtkGestureClick *gesture, int n_press,
+                        double x, double y, gpointer user_data)
+{
+    ShortcutRowData *rd = user_data;
+    (void)gesture;
+    (void)x;
+    (void)y;
+
+    if (n_press == 2)
+        shortcut_row_begin_edit(rd);
+}
+
+static void
+shortcut_row_data_free(gpointer data)
+{
+    g_free(data);
+}
+
+static GtkWidget *
+add_row(GtkWidget *column, GtkWidget *overlay_box,
+        const char *action, const char *label_text, GtkWidget *badges)
+{
+    ShortcutRowData *rd;
     GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    GtkWidget *badges_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     gtk_widget_add_css_class(row, "shortcut-row");
+    gtk_widget_set_focusable(row, TRUE);
 
     GtkWidget *lbl = gtk_label_new(label_text);
     gtk_label_set_xalign(GTK_LABEL(lbl), 0);
@@ -224,8 +380,31 @@ add_row(GtkWidget *column, const char *label_text, GtkWidget *badges)
     gtk_widget_add_css_class(lbl, "shortcut-label");
     gtk_box_append(GTK_BOX(row), lbl);
 
-    gtk_box_append(GTK_BOX(row), badges);
+    gtk_box_append(GTK_BOX(badges_box), badges);
+    gtk_box_append(GTK_BOX(row), badges_box);
+
+    rd = g_new0(ShortcutRowData, 1);
+    rd->row = row;
+    rd->label = lbl;
+    rd->badges_box = badges_box;
+    rd->overlay_box = overlay_box;
+    rd->action = action;
+    g_object_set_data_full(G_OBJECT(row), "shortcut-row-data", rd,
+                           shortcut_row_data_free);
+
+    GtkGesture *click = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), GDK_BUTTON_PRIMARY);
+    g_signal_connect(click, "pressed",
+                     G_CALLBACK(on_shortcut_row_pressed), rd);
+    gtk_widget_add_controller(row, GTK_EVENT_CONTROLLER(click));
+
+    GtkEventController *key = gtk_event_controller_key_new();
+    g_signal_connect(key, "key-pressed",
+                     G_CALLBACK(on_shortcut_row_key_pressed), rd);
+    gtk_widget_add_controller(row, key);
+
     gtk_box_append(GTK_BOX(column), row);
+    return row;
 }
 
 static void
@@ -245,6 +424,9 @@ on_overlay_key_pressed(GtkEventControllerKey *ctrl, guint keyval,
 {
     (void)ctrl; (void)keycode;
     GtkWidget *overlay_box = GTK_WIDGET(user_data);
+
+    if (g_object_get_data(G_OBJECT(overlay_box), "editing-row"))
+        return FALSE;
 
     if (keyval == GDK_KEY_Escape) {
         GtkWidget *parent = gtk_widget_get_parent(overlay_box);
@@ -340,7 +522,10 @@ filter_column_rows(GtkWidget *col, const char *query)
                  w; w = gtk_widget_get_next_sibling(w)) {
                 if (GTK_IS_LABEL(w)) {
                     const char *text = gtk_label_get_text(GTK_LABEL(w));
-                    if (text && strcasestr(text, query)) { match = TRUE; break; }
+                    if (text_contains_case_insensitive(text, query)) {
+                        match = TRUE;
+                        break;
+                    }
                 }
             }
         }
@@ -364,12 +549,39 @@ on_shortcuts_search_changed(GtkSearchEntry *entry, gpointer user_data)
     }
 }
 
+static void
+refresh_shortcut_rows(GtkWidget *columns)
+{
+    for (GtkWidget *col = gtk_widget_get_first_child(columns);
+         col; col = gtk_widget_get_next_sibling(col)) {
+        if (!GTK_IS_BOX(col))
+            continue;
+        for (GtkWidget *child = gtk_widget_get_first_child(col);
+             child; child = gtk_widget_get_next_sibling(child)) {
+            ShortcutRowData *rd =
+                g_object_get_data(G_OBJECT(child), "shortcut-row-data");
+            if (rd)
+                shortcut_row_refresh(rd);
+        }
+    }
+}
+
+static void
+on_reset_clicked(GtkButton *btn, gpointer user_data)
+{
+    GtkWidget *columns = GTK_WIDGET(user_data);
+    (void)btn;
+    shortcut_reset_all();
+    refresh_shortcut_rows(columns);
+}
+
 /* ── Public API ────────────────────────────────────────────────── */
 
 void
 shortcuts_overlay_toggle(GtkOverlay *overlay)
 {
     g_return_if_fail(GTK_IS_OVERLAY(overlay));
+    shortcuts_init();
 
     GtkWidget *existing = find_existing(overlay);
     if (existing) {
@@ -442,37 +654,34 @@ shortcuts_overlay_toggle(GtkOverlay *overlay)
     gtk_widget_set_hexpand(col3, TRUE);
     gtk_box_append(GTK_BOX(columns), col3);
 
-    /* Column targets: [col1=workspaces+terminal, col2=splits+browser, col3=tools+fixed] */
+    /* Column targets: [col1=workspaces+terminal, col2=splits+browser, col3=tools] */
     GtkWidget *col_targets[] = { col1, col1, col2, col2, col3 };
 
     /* Add section headers */
     gboolean section_added[N_CATEGORIES] = {0};
 
     /* Populate from shortcuts table */
-    for (int i = 0; default_shortcuts[i].action != NULL; i++) {
-        int cat = categorize(default_shortcuts[i].action);
-        GtkWidget *col = col_targets[cat];
+    for (int i = 0; i < shortcut_count(); i++) {
+        const ShortcutDef *binding = shortcut_get_at(i);
+        int cat;
+        GtkWidget *col;
+
+        if (!binding)
+            continue;
+        cat = categorize(binding->action);
+        col = col_targets[cat];
 
         if (!section_added[cat]) {
             add_section(col, categories[cat].section);
             section_added[cat] = TRUE;
         }
 
-        GtkWidget *badges = make_key_badges(default_shortcuts[i].keyval,
-                                             default_shortcuts[i].mods);
-        add_row(col,
-                default_shortcuts[i].label ? default_shortcuts[i].label
-                                           : default_shortcuts[i].action,
+        GtkWidget *badges = make_key_badges(binding->keyval, binding->mods);
+        add_row(col, backdrop,
+                binding->action,
+                binding->label ? binding->label : binding->action,
                 badges);
     }
-
-    /* Fixed shortcuts in col3 */
-    add_section(col3, "NAVIGATION");
-    add_row(col3, "Switch workspace 1-9", make_text_badges("Ctrl + 1-9"));
-    add_row(col3, "Navigate panes", make_text_badges("Alt + Arrow"));
-    add_row(col3, "Fullscreen", make_text_badges("F11"));
-    add_row(col3, "Close browser tab", make_text_badges("Ctrl + W"));
-    add_row(col3, "New browser tab", make_text_badges("Ctrl + T"));
 
     /* ── Footer ── */
     GtkWidget *footer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
@@ -483,6 +692,11 @@ shortcuts_overlay_toggle(GtkOverlay *overlay)
     GtkWidget *esc_hint = gtk_label_new("Press Esc or Ctrl+Shift+K to close");
     gtk_widget_add_css_class(esc_hint, "shortcuts-esc-hint");
     gtk_box_append(GTK_BOX(footer), esc_hint);
+
+    GtkWidget *reset_btn = gtk_button_new_with_label("Reset to Factory");
+    gtk_widget_add_css_class(reset_btn, "shortcuts-reset");
+    g_signal_connect(reset_btn, "clicked", G_CALLBACK(on_reset_clicked), columns);
+    gtk_box_append(GTK_BOX(footer), reset_btn);
 
     GtkWidget *close_btn = gtk_button_new_with_label("Done");
     gtk_widget_add_css_class(close_btn, "shortcuts-close");

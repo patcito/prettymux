@@ -329,7 +329,12 @@ on_clipboard_text_received(GObject *source, GAsyncResult *result,
 static void save_session_now(void);
 
 static void handle_action(const char *action) {
-    if (strcmp(action, "workspace.new") == 0) {
+    if (g_str_has_prefix(action, "workspace.focus.")) {
+        const char *suffix = action + strlen("workspace.focus.");
+        int idx = atoi(suffix) - 1;
+        if (workspaces && idx >= 0 && idx < (int)workspaces->len)
+            workspace_switch(idx, ui.terminal_stack, ui.workspace_list);
+    } else if (strcmp(action, "workspace.new") == 0) {
         workspace_add(ui.terminal_stack, ui.workspace_list, g_ghostty_app);
     } else if (strcmp(action, "workspace.close") == 0) {
         workspace_remove(current_workspace, ui.terminal_stack, ui.workspace_list);
@@ -355,12 +360,37 @@ static void handle_action(const char *action) {
                 workspace_add_terminal(ws, g_ghostty_app);
             }
         }
+    } else if (strcmp(action, "pane.focus.left") == 0) {
+        Workspace *ws = workspace_get_current();
+        if (ws) workspace_navigate_pane(ws, -1, 0);
+    } else if (strcmp(action, "pane.focus.right") == 0) {
+        Workspace *ws = workspace_get_current();
+        if (ws) workspace_navigate_pane(ws, 1, 0);
+    } else if (strcmp(action, "pane.focus.up") == 0) {
+        Workspace *ws = workspace_get_current();
+        if (ws) workspace_navigate_pane(ws, 0, -1);
+    } else if (strcmp(action, "pane.focus.down") == 0) {
+        Workspace *ws = workspace_get_current();
+        if (ws) workspace_navigate_pane(ws, 0, 1);
     } else if (strcmp(action, "browser.toggle") == 0) {
         gboolean vis = gtk_widget_get_visible(ui.browser_notebook);
         gtk_widget_set_visible(ui.browser_notebook, !vis);
     } else if (strcmp(action, "browser.new") == 0) {
         add_browser_tab("https://prettymux-web.vercel.app/?prettymux=t");
         gtk_widget_set_visible(ui.browser_notebook, TRUE);
+    } else if (strcmp(action, "browser.tab.new") == 0) {
+        add_browser_tab("https://prettymux-web.vercel.app/?prettymux=t");
+        gtk_widget_set_visible(ui.browser_notebook, TRUE);
+    } else if (strcmp(action, "browser.tab.close") == 0) {
+        if (gtk_widget_get_visible(ui.browser_notebook)) {
+            int n = gtk_notebook_get_n_pages(GTK_NOTEBOOK(ui.browser_notebook));
+            if (n > 1) {
+                int pg = gtk_notebook_get_current_page(
+                    GTK_NOTEBOOK(ui.browser_notebook));
+                if (pg >= 0)
+                    gtk_notebook_remove_page(GTK_NOTEBOOK(ui.browser_notebook), pg);
+            }
+        }
     } else if (strcmp(action, "devtools.docked") == 0 || strcmp(action, "devtools.window") == 0) {
         int pg = gtk_notebook_get_current_page(GTK_NOTEBOOK(ui.browser_notebook));
         if (pg >= 0) {
@@ -392,15 +422,18 @@ static void handle_action(const char *action) {
                 }
             }
         }
-    } else if (strcmp(action, "pane.close") == 0) {
+    } else if (strcmp(action, "tab.close") == 0) {
         Workspace *ws = workspace_get_current();
         if (ws) {
             GtkNotebook *focused = workspace_get_focused_pane(ws);
             if (focused && GTK_IS_NOTEBOOK(focused)) {
                 int n_pages = gtk_notebook_get_n_pages(focused);
                 int pg = gtk_notebook_get_current_page(focused);
-                if (n_pages > 1 && pg >= 0) {
-                    /* Close the current tab in this pane */
+                if (pg >= 0) {
+                    if (n_pages <= 1 &&
+                        (!ws->pane_notebooks || ws->pane_notebooks->len <= 1))
+                        return;
+
                     GtkWidget *child = gtk_notebook_get_nth_page(focused, pg);
                     GtkWidget *terminal = page_linked_terminal(child);
                     if (terminal) {
@@ -410,12 +443,20 @@ static void handle_action(const char *action) {
                                                        terminal);
                     }
                     gtk_notebook_remove_page(focused, pg);
-                } else if (n_pages <= 1 && ws->pane_notebooks &&
-                           ws->pane_notebooks->len > 1) {
-                    /* Last tab in this pane — close the entire pane */
-                    workspace_close_pane(ws, focused);
+
+                    if (gtk_notebook_get_n_pages(focused) == 0 &&
+                        ws->pane_notebooks && ws->pane_notebooks->len > 1)
+                        workspace_close_pane(ws, focused);
                 }
             }
+        }
+    } else if (strcmp(action, "pane.close") == 0) {
+        Workspace *ws = workspace_get_current();
+        if (ws) {
+            GtkNotebook *focused = workspace_get_focused_pane(ws);
+            if (focused && GTK_IS_NOTEBOOK(focused) &&
+                ws->pane_notebooks && ws->pane_notebooks->len > 1)
+                workspace_close_pane(ws, focused);
         }
     } else if (strcmp(action, "broadcast.toggle") == 0) {
         Workspace *ws = workspace_get_current();
@@ -426,6 +467,11 @@ static void handle_action(const char *action) {
     } else if (strcmp(action, "split.vertical") == 0) {
         Workspace *ws = workspace_get_current();
         if (ws) workspace_split_pane(ws, GTK_ORIENTATION_VERTICAL, g_ghostty_app);
+    } else if (strcmp(action, "window.fullscreen") == 0) {
+        if (gtk_window_is_fullscreen(g_main_window))
+            gtk_window_unfullscreen(g_main_window);
+        else
+            gtk_window_fullscreen(g_main_window);
     } else if (strcmp(action, "search.show") == 0) {
         if (ui.command_palette)
             command_palette_toggle(COMMAND_PALETTE(ui.command_palette));
@@ -541,38 +587,6 @@ static gboolean on_key_pressed(GtkEventControllerKey *ctrl, guint keyval,
                                      GDK_ALT_MASK | GDK_SUPER_MASK);
     guint lower = gdk_keyval_to_lower(keyval);
 
-    /* ── Ctrl+1-9: direct workspace switch ── */
-    if (mods == GDK_CONTROL_MASK &&
-        lower >= GDK_KEY_1 && lower <= GDK_KEY_9) {
-        int idx = (int)(lower - GDK_KEY_1);
-        if (workspaces && idx < (int)workspaces->len)
-            workspace_switch(idx, ui.terminal_stack, ui.workspace_list);
-        return TRUE;
-    }
-
-    /* ── Alt+Arrow: pane navigation ── */
-    if (mods == GDK_ALT_MASK) {
-        Workspace *ws = workspace_get_current();
-        if (ws) {
-            switch (keyval) {
-            case GDK_KEY_Left:  workspace_navigate_pane(ws, -1,  0); return TRUE;
-            case GDK_KEY_Right: workspace_navigate_pane(ws,  1,  0); return TRUE;
-            case GDK_KEY_Up:    workspace_navigate_pane(ws,  0, -1); return TRUE;
-            case GDK_KEY_Down:  workspace_navigate_pane(ws,  0,  1); return TRUE;
-            default: break;
-            }
-        }
-    }
-
-    /* ── F11: fullscreen toggle ── */
-    if (keyval == GDK_KEY_F11 && mods == 0) {
-        if (gtk_window_is_fullscreen(g_main_window))
-            gtk_window_unfullscreen(g_main_window);
-        else
-            gtk_window_fullscreen(g_main_window);
-        return TRUE;
-    }
-
     /* ── Ctrl+Tab / Ctrl+Shift+Tab: cycle terminal tabs ── */
     if ((lower == GDK_KEY_Tab || keyval == GDK_KEY_ISO_Left_Tab) &&
         (mods == GDK_CONTROL_MASK ||
@@ -593,34 +607,6 @@ static gboolean on_key_pressed(GtkEventControllerKey *ctrl, guint keyval,
                 }
             }
         }
-        return TRUE;
-    }
-
-    /* ── Ctrl+W (no shift): close current browser tab ── */
-    if (mods == GDK_CONTROL_MASK && lower == GDK_KEY_w) {
-        if (gtk_widget_get_visible(ui.browser_notebook)) {
-            int n = gtk_notebook_get_n_pages(GTK_NOTEBOOK(ui.browser_notebook));
-            if (n > 1) {
-                int pg = gtk_notebook_get_current_page(
-                    GTK_NOTEBOOK(ui.browser_notebook));
-                if (pg >= 0) {
-                    GtkWidget *child = gtk_notebook_get_nth_page(
-                        GTK_NOTEBOOK(ui.browser_notebook), pg);
-                    gtk_notebook_remove_page(
-                        GTK_NOTEBOOK(ui.browser_notebook), pg);
-                    (void)child;
-                    session_queue_save();
-                }
-                return TRUE;
-            }
-        }
-    }
-
-    /* ── Ctrl+T (no shift): new browser tab ── */
-    if (mods == GDK_CONTROL_MASK && lower == GDK_KEY_t) {
-        add_browser_tab("https://prettymux-web.vercel.app/?prettymux=t");
-        gtk_widget_set_visible(ui.browser_notebook, TRUE);
-        session_queue_save();
         return TRUE;
     }
 
