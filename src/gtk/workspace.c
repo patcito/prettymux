@@ -693,6 +693,7 @@ on_notebook_drop(GtkDropTarget *target, const GValue *value,
         g_ptr_array_add(dest_ws->terminals, terminal);
         gtk_notebook_append_page(dest_nb, terminal, tab_widget);
         gtk_notebook_set_tab_reorderable(dest_nb, terminal, TRUE);
+    gtk_notebook_set_tab_detachable(dest_nb, terminal, TRUE);
 
         int last_page = gtk_notebook_get_n_pages(dest_nb) - 1;
         gtk_notebook_set_current_page(dest_nb, last_page);
@@ -779,6 +780,7 @@ on_ws_sidebar_drop(GtkDropTarget *target, const GValue *value,
     g_ptr_array_add(dest_ws->terminals, terminal);
     gtk_notebook_append_page(dest_nb, terminal, tab_widget);
     gtk_notebook_set_tab_reorderable(dest_nb, terminal, TRUE);
+    gtk_notebook_set_tab_detachable(dest_nb, terminal, TRUE);
 
     int last_page = gtk_notebook_get_n_pages(dest_nb) - 1;
     gtk_notebook_set_current_page(dest_nb, last_page);
@@ -865,6 +867,7 @@ workspace_add_terminal_to_notebook_cwd(Workspace *ws, GtkNotebook *notebook,
 
     gtk_notebook_append_page(notebook, terminal, tab_label);
     gtk_notebook_set_tab_reorderable(notebook, terminal, TRUE);
+    gtk_notebook_set_tab_detachable(notebook, terminal, TRUE);
 
     /* Connect title-changed to update the inner label (auto-disconnect on label destroy) */
     g_signal_connect_object(terminal, "title-changed",
