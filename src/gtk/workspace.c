@@ -608,6 +608,29 @@ on_tab_drag_begin(GtkDragSource *source, GdkDrag *drag, gpointer user_data)
 /* ── Feature 1: DnD - Notebook drop target callbacks ────────────── */
 
 static gboolean
+dnd_restore_cwd_cb(gpointer data)
+{
+    GtkWidget *term = GTK_WIDGET(data);
+    if (GHOSTTY_IS_TERMINAL(term)) {
+        const char *cmd = g_object_get_data(G_OBJECT(term), "restore-cwd");
+        if (cmd && cmd[0]) {
+            ghostty_surface_t surface =
+                ghostty_terminal_get_surface(GHOSTTY_TERMINAL(term));
+            if (surface) {
+                ghostty_input_key_s ke = {0};
+                ke.action = GHOSTTY_ACTION_PRESS;
+                ke.keycode = 0;
+                ke.text = cmd;
+                ghostty_surface_key(surface, ke);
+            }
+            g_object_set_data(G_OBJECT(term), "restore-cwd", NULL);
+        }
+    }
+    g_object_unref(term);
+    return G_SOURCE_REMOVE;
+}
+
+static gboolean
 on_notebook_drop(GtkDropTarget *target, const GValue *value,
                  double x, double y, gpointer user_data)
 {
@@ -652,17 +675,23 @@ on_notebook_drop(GtkDropTarget *target, const GValue *value,
     char saved_text[64];
     snprintf(saved_text, sizeof(saved_text), "%s", tab_text);
 
-    /* Remove terminal from source workspace's terminals list */
+    /* GTK4 cannot reparent GtkGLArea widgets without losing the GL context,
+     * which kills ghostty's surface and process. Instead: create a new
+     * terminal in the destination with the same CWD, then close the old one. */
+    const char *src_cwd = NULL;
+    if (GHOSTTY_IS_TERMINAL(terminal))
+        src_cwd = ghostty_terminal_get_cwd(GHOSTTY_TERMINAL(terminal));
+    char cwd_buf[512] = "";
+    if (src_cwd && src_cwd[0])
+        snprintf(cwd_buf, sizeof(cwd_buf), "%s", src_cwd);
+
+    /* Remove old terminal from source */
     Workspace *src_ws = NULL;
     if (dd->source_ws_idx >= 0 && dd->source_ws_idx < (int)workspaces->len)
         src_ws = g_ptr_array_index(workspaces, dd->source_ws_idx);
     if (src_ws)
         g_ptr_array_remove(src_ws->terminals, terminal);
-
-    /* Detach the terminal from the source notebook without destroying it.
-     * gtk_notebook_detach_tab refs internally and removes cleanly. */
-    g_object_ref(terminal);
-    gtk_notebook_detach_tab(src_nb, terminal);
+    gtk_notebook_remove_page(src_nb, src_page);
 
     /* Find the destination workspace */
     Workspace *dest_ws = NULL;
@@ -679,38 +708,49 @@ on_notebook_drop(GtkDropTarget *target, const GValue *value,
         if (dest_ws) break;
     }
 
-    /* Create new tab label for destination */
-    GtkWidget *new_label = NULL;
-    GtkWidget *tab_label_widget = create_editable_tab_label(
-        saved_text, terminal, dest_ws, FALSE, &new_label);
+    /* Create a new terminal in the destination */
+    if (dest_ws) {
+        workspace_add_terminal_to_notebook_external(dest_ws, dest_nb, g_ghostty_app);
 
-    gtk_notebook_append_page(dest_nb, terminal, tab_label_widget);
-    gtk_notebook_set_tab_reorderable(dest_nb, terminal, TRUE);
+        /* cd to the old CWD after a short delay */
+        if (cwd_buf[0]) {
+            int last_page = gtk_notebook_get_n_pages(dest_nb) - 1;
+            if (last_page >= 0) {
+                GtkWidget *new_term = gtk_notebook_get_nth_page(dest_nb, last_page);
+                if (new_term && GHOSTTY_IS_TERMINAL(new_term)) {
+                    char *cmd = g_strdup_printf("cd '%s' && clear\n", cwd_buf);
+                    g_object_set_data_full(G_OBJECT(new_term),
+                        "restore-cwd", cmd, g_free);
+                }
+            }
+        }
 
-    if (dest_ws)
-        g_ptr_array_add(dest_ws->terminals, terminal);
+        /* Set the tab title to what the old one had */
+        int last_page = gtk_notebook_get_n_pages(dest_nb) - 1;
+        if (last_page >= 0) {
+            GtkWidget *child = gtk_notebook_get_nth_page(dest_nb, last_page);
+            GtkWidget *tab_w = gtk_notebook_get_tab_label(dest_nb, child);
+            if (tab_w) {
+                GtkWidget *inner = gtk_widget_get_first_child(tab_w);
+                if (GTK_IS_LABEL(inner)) {
+                    gtk_label_set_text(GTK_LABEL(inner), saved_text);
+                    if (cwd_buf[0])
+                        gtk_widget_set_tooltip_text(inner, cwd_buf);
+                }
+            }
+        }
 
-    /* Set up DnD on the new tab label */
-    if (dest_ws)
-        setup_tab_label_dnd(tab_label_widget, terminal, dest_nb, dest_ws);
+        gtk_notebook_set_current_page(dest_nb, last_page);
 
-    /* Connect title-changed to the new label (auto-disconnect on label destroy).
-     * Don't mark as user-renamed so future title changes will update normally. */
-    if (new_label && GHOSTTY_IS_TERMINAL(terminal))
-        g_signal_connect_object(terminal, "title-changed",
-                                G_CALLBACK(on_title_changed), new_label, 0);
-
-    /* Set tooltip to the terminal's CWD */
-    if (new_label && GHOSTTY_IS_TERMINAL(terminal)) {
-        const char *cwd = ghostty_terminal_get_cwd(GHOSTTY_TERMINAL(terminal));
-        if (cwd && cwd[0])
-            gtk_widget_set_tooltip_text(new_label, cwd);
+        /* After 800ms, type the cd command into the new terminal */
+        if (cwd_buf[0] && last_page >= 0) {
+            GtkWidget *new_term = gtk_notebook_get_nth_page(dest_nb, last_page);
+            if (new_term && GHOSTTY_IS_TERMINAL(new_term)) {
+                g_object_ref(new_term);
+                g_timeout_add(800, dnd_restore_cwd_cb, new_term);
+            }
+        }
     }
-
-    g_object_unref(terminal);
-
-    gtk_notebook_set_current_page(dest_nb,
-        gtk_notebook_get_n_pages(dest_nb) - 1);
 
     return TRUE;
 }
@@ -771,31 +811,49 @@ on_ws_sidebar_drop(GtkDropTarget *target, const GValue *value,
     char saved_text[64];
     snprintf(saved_text, sizeof(saved_text), "%s", tab_text);
 
-    /* Remove from source */
+    /* Save CWD from source terminal */
+    const char *src_cwd = NULL;
+    if (GHOSTTY_IS_TERMINAL(terminal))
+        src_cwd = ghostty_terminal_get_cwd(GHOSTTY_TERMINAL(terminal));
+    char cwd_buf[512] = "";
+    if (src_cwd && src_cwd[0])
+        snprintf(cwd_buf, sizeof(cwd_buf), "%s", src_cwd);
+
+    /* Remove old terminal from source */
     if (src_ws)
         g_ptr_array_remove(src_ws->terminals, terminal);
+    gtk_notebook_remove_page(src_nb, src_page);
 
-    g_object_ref(terminal);
-    gtk_notebook_detach_tab(src_nb, terminal);
-
-    /* Add to destination workspace's first notebook */
+    /* Create new terminal in destination workspace */
     GtkNotebook *dest_nb = GTK_NOTEBOOK(dest_ws->notebook);
+    workspace_add_terminal_to_notebook_external(dest_ws, dest_nb, g_ghostty_app);
 
-    GtkWidget *new_label = NULL;
-    GtkWidget *tab_label_widget = create_editable_tab_label(
-        saved_text, terminal, dest_ws, FALSE, &new_label);
-
-    gtk_notebook_append_page(dest_nb, terminal, tab_label_widget);
-    gtk_notebook_set_tab_reorderable(dest_nb, terminal, TRUE);
-    g_ptr_array_add(dest_ws->terminals, terminal);
-
-    setup_tab_label_dnd(tab_label_widget, terminal, dest_nb, dest_ws);
-
-    if (new_label && GHOSTTY_IS_TERMINAL(terminal))
-        g_signal_connect_object(terminal, "title-changed",
-                                G_CALLBACK(on_title_changed), new_label, 0);
-
-    g_object_unref(terminal);
+    /* Restore CWD and tab title */
+    int last_page = gtk_notebook_get_n_pages(dest_nb) - 1;
+    if (last_page >= 0) {
+        GtkWidget *new_term = gtk_notebook_get_nth_page(dest_nb, last_page);
+        if (new_term) {
+            /* Set tab title */
+            GtkWidget *tab_w = gtk_notebook_get_tab_label(dest_nb, new_term);
+            if (tab_w) {
+                GtkWidget *inner = gtk_widget_get_first_child(tab_w);
+                if (GTK_IS_LABEL(inner)) {
+                    gtk_label_set_text(GTK_LABEL(inner), saved_text);
+                    if (cwd_buf[0])
+                        gtk_widget_set_tooltip_text(inner, cwd_buf);
+                }
+            }
+            /* Queue cd to CWD after terminal starts */
+            if (cwd_buf[0] && GHOSTTY_IS_TERMINAL(new_term)) {
+                char *cmd = g_strdup_printf("cd '%s' && clear\n", cwd_buf);
+                g_object_set_data_full(G_OBJECT(new_term),
+                    "restore-cwd", cmd, g_free);
+                g_object_ref(new_term);
+                g_timeout_add(800, dnd_restore_cwd_cb, new_term);
+            }
+        }
+    }
+    gtk_notebook_set_current_page(dest_nb, last_page);
 
     /* Switch to dest workspace */
     if (g_terminal_stack && g_workspace_list)
