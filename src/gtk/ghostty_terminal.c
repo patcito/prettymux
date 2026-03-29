@@ -104,6 +104,15 @@ on_gl_realize(GtkGLArea *area, gpointer user_data)
         return;
     }
 
+    /* If we already have a surface, the widget was reparented (e.g. DnD).
+     * Don't create a new surface (which kills the process).
+     * Just re-init OpenGL for the new context. */
+    if (self->surface) {
+        ghostty_surface_init_opengl(self->surface);
+        gtk_gl_area_queue_render(area);
+        return;
+    }
+
     ghostty_surface_config_s config = ghostty_surface_config_new();
     config.platform_tag = GHOSTTY_PLATFORM_LINUX;
     config.platform.gtk.gtk_widget = (void *)self->gl_area;

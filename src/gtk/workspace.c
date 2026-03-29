@@ -654,32 +654,27 @@ on_notebook_drop(GtkDropTarget *target, const GValue *value,
     char saved_text[64];
     snprintf(saved_text, sizeof(saved_text), "%s", tab_text);
 
-    /* GTK4 cannot reparent GtkGLArea widgets without losing the GL context,
-     * which kills ghostty's surface and process. Instead: create a new
-     * terminal in the destination with the same CWD, then close the old one. */
-    const char *src_cwd = NULL;
-    if (GHOSTTY_IS_TERMINAL(terminal))
-        src_cwd = ghostty_terminal_get_cwd(GHOSTTY_TERMINAL(terminal));
-    char cwd_buf[512] = "";
-    if (src_cwd && src_cwd[0])
-        snprintf(cwd_buf, sizeof(cwd_buf), "%s", src_cwd);
+    /* True reparenting: move the actual terminal widget to the destination.
+     * The on_gl_realize guard prevents ghostty from destroying the surface. */
+    GtkWidget *tab_widget = gtk_notebook_get_tab_label(src_nb, terminal);
+    if (tab_widget) g_object_ref(tab_widget);
+    g_object_ref(terminal);
 
-    /* Remove old terminal from source */
     Workspace *src_ws = NULL;
     if (dd->source_ws_idx >= 0 && dd->source_ws_idx < (int)workspaces->len)
         src_ws = g_ptr_array_index(workspaces, dd->source_ws_idx);
     if (src_ws)
         g_ptr_array_remove(src_ws->terminals, terminal);
+
     gtk_notebook_remove_page(src_nb, src_page);
 
-    /* Bug 7 fix: if source notebook is now empty and there are other
-     * panes in its workspace, close the empty pane. */
+    /* Close empty source pane if needed */
     if (src_ws && gtk_notebook_get_n_pages(src_nb) == 0 &&
         src_ws->pane_notebooks && src_ws->pane_notebooks->len > 1) {
         workspace_close_pane(src_ws, src_nb);
     }
 
-    /* Find the destination workspace */
+    /* Find destination workspace */
     Workspace *dest_ws = NULL;
     guint wi;
     for (wi = 0; wi < workspaces->len; wi++) {
@@ -694,29 +689,17 @@ on_notebook_drop(GtkDropTarget *target, const GValue *value,
         if (dest_ws) break;
     }
 
-    /* Create a new terminal in the destination with the source CWD */
     if (dest_ws) {
-        workspace_add_terminal_to_notebook_with_cwd(
-            dest_ws, dest_nb, g_ghostty_app,
-            cwd_buf[0] ? cwd_buf : NULL);
+        g_ptr_array_add(dest_ws->terminals, terminal);
+        gtk_notebook_append_page(dest_nb, terminal, tab_widget);
+        gtk_notebook_set_tab_reorderable(dest_nb, terminal, TRUE);
 
-        /* Set the tab title to what the old one had */
         int last_page = gtk_notebook_get_n_pages(dest_nb) - 1;
-        if (last_page >= 0) {
-            GtkWidget *child = gtk_notebook_get_nth_page(dest_nb, last_page);
-            GtkWidget *tab_w = gtk_notebook_get_tab_label(dest_nb, child);
-            if (tab_w) {
-                GtkWidget *inner = gtk_widget_get_first_child(tab_w);
-                if (GTK_IS_LABEL(inner)) {
-                    gtk_label_set_text(GTK_LABEL(inner), saved_text);
-                    if (cwd_buf[0])
-                        gtk_widget_set_tooltip_text(inner, cwd_buf);
-                }
-            }
-        }
-
         gtk_notebook_set_current_page(dest_nb, last_page);
     }
+
+    if (tab_widget) g_object_unref(tab_widget);
+    g_object_unref(terminal);
 
     return TRUE;
 }
@@ -777,49 +760,31 @@ on_ws_sidebar_drop(GtkDropTarget *target, const GValue *value,
     char saved_text[64];
     snprintf(saved_text, sizeof(saved_text), "%s", tab_text);
 
-    /* Save CWD from source terminal */
-    const char *src_cwd = NULL;
-    if (GHOSTTY_IS_TERMINAL(terminal))
-        src_cwd = ghostty_terminal_get_cwd(GHOSTTY_TERMINAL(terminal));
-    char cwd_buf[512] = "";
-    if (src_cwd && src_cwd[0])
-        snprintf(cwd_buf, sizeof(cwd_buf), "%s", src_cwd);
+    /* True reparenting: move the terminal widget to the destination workspace */
+    GtkWidget *tab_widget = gtk_notebook_get_tab_label(src_nb, terminal);
+    if (tab_widget) g_object_ref(tab_widget);
+    g_object_ref(terminal);
 
-    /* Remove old terminal from source */
     if (src_ws)
         g_ptr_array_remove(src_ws->terminals, terminal);
     gtk_notebook_remove_page(src_nb, src_page);
 
-    /* Bug 7 fix: if source notebook is now empty and there are other
-     * panes in its workspace, close the empty pane. */
+    /* Close empty source pane if needed */
     if (src_ws && gtk_notebook_get_n_pages(src_nb) == 0 &&
         src_ws->pane_notebooks && src_ws->pane_notebooks->len > 1) {
         workspace_close_pane(src_ws, src_nb);
     }
 
-    /* Create new terminal in destination workspace with source CWD */
     GtkNotebook *dest_nb = GTK_NOTEBOOK(dest_ws->notebook);
-    workspace_add_terminal_to_notebook_with_cwd(
-        dest_ws, dest_nb, g_ghostty_app,
-        cwd_buf[0] ? cwd_buf : NULL);
+    g_ptr_array_add(dest_ws->terminals, terminal);
+    gtk_notebook_append_page(dest_nb, terminal, tab_widget);
+    gtk_notebook_set_tab_reorderable(dest_nb, terminal, TRUE);
 
-    /* Set tab title */
     int last_page = gtk_notebook_get_n_pages(dest_nb) - 1;
-    if (last_page >= 0) {
-        GtkWidget *new_term = gtk_notebook_get_nth_page(dest_nb, last_page);
-        if (new_term) {
-            GtkWidget *tab_w = gtk_notebook_get_tab_label(dest_nb, new_term);
-            if (tab_w) {
-                GtkWidget *inner = gtk_widget_get_first_child(tab_w);
-                if (GTK_IS_LABEL(inner)) {
-                    gtk_label_set_text(GTK_LABEL(inner), saved_text);
-                    if (cwd_buf[0])
-                        gtk_widget_set_tooltip_text(inner, cwd_buf);
-                }
-            }
-        }
-    }
     gtk_notebook_set_current_page(dest_nb, last_page);
+
+    if (tab_widget) g_object_unref(tab_widget);
+    g_object_unref(terminal);
 
     /* Switch to dest workspace */
     if (g_terminal_stack && g_workspace_list)
