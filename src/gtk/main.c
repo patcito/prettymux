@@ -1707,7 +1707,7 @@ int main(int argc, char *argv[]) {
     // be available in all environments. Disable it for now.
     g_setenv("WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS", "1", FALSE);
 
-    AdwApplication *app = adw_application_new("com.prettymux.app", G_APPLICATION_FLAGS_NONE);
+    AdwApplication *app = adw_application_new(NULL, G_APPLICATION_FLAGS_NONE);
     g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
     g_signal_connect(app, "shutdown", G_CALLBACK(on_close_request), NULL);
 
