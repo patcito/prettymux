@@ -1166,6 +1166,10 @@ on_notebook_page_added(GtkNotebook *notebook, GtkWidget *child,
         /* Only add if not already in this workspace's array */
         if (!g_ptr_array_find(ws->terminals, child, NULL))
             g_ptr_array_add(ws->terminals, child);
+
+        /* Native notebook DnD can leave focus on the tab label after the drop.
+         * Pull it back into the terminal once the page has landed. */
+        focus_terminal_page_later(child);
     }
 }
 
