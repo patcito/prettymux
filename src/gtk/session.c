@@ -400,9 +400,18 @@ void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
                                 if (tab_w) {
                                     GtkWidget *inner =
                                         gtk_widget_get_first_child(tab_w);
-                                    if (GTK_IS_LABEL(inner))
+                                    if (GTK_IS_LABEL(inner)) {
                                         gtk_label_set_text(
                                             GTK_LABEL(inner), tab_name);
+                                        /* If not default "Terminal", mark as
+                                         * user-renamed so ghostty's title
+                                         * updates don't overwrite it */
+                                        if (strcmp(tab_name, "Terminal") != 0)
+                                            g_object_set_data(
+                                                G_OBJECT(inner),
+                                                "user-renamed",
+                                                GINT_TO_POINTER(1));
+                                    }
                                 }
                             }
                         }
