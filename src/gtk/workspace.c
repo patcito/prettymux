@@ -610,24 +610,6 @@ on_tab_drag_begin(GtkDragSource *source, GdkDrag *drag, gpointer user_data)
 /* ── Feature 1: DnD - Notebook drop target callbacks ────────────── */
 
 static gboolean
-dnd_restore_cwd_cb(gpointer data)
-{
-    GtkWidget *term = GTK_WIDGET(data);
-    if (GHOSTTY_IS_TERMINAL(term)) {
-        const char *cmd = g_object_get_data(G_OBJECT(term), "restore-cwd");
-        if (cmd && cmd[0]) {
-            ghostty_surface_t surface =
-                ghostty_terminal_get_surface(GHOSTTY_TERMINAL(term));
-            if (surface)
-                ghostty_surface_text(surface, cmd, strlen(cmd));
-            g_object_set_data(G_OBJECT(term), "restore-cwd", NULL);
-        }
-    }
-    g_object_unref(term);
-    return G_SOURCE_REMOVE;
-}
-
-static gboolean
 on_notebook_drop(GtkDropTarget *target, const GValue *value,
                  double x, double y, gpointer user_data)
 {
@@ -712,22 +694,11 @@ on_notebook_drop(GtkDropTarget *target, const GValue *value,
         if (dest_ws) break;
     }
 
-    /* Create a new terminal in the destination */
+    /* Create a new terminal in the destination with the source CWD */
     if (dest_ws) {
-        workspace_add_terminal_to_notebook_external(dest_ws, dest_nb, g_ghostty_app);
-
-        /* cd to the old CWD after a short delay */
-        if (cwd_buf[0]) {
-            int last_page = gtk_notebook_get_n_pages(dest_nb) - 1;
-            if (last_page >= 0) {
-                GtkWidget *new_term = gtk_notebook_get_nth_page(dest_nb, last_page);
-                if (new_term && GHOSTTY_IS_TERMINAL(new_term)) {
-                    char *cmd = g_strdup_printf("cd '%s' && clear\n", cwd_buf);
-                    g_object_set_data_full(G_OBJECT(new_term),
-                        "restore-cwd", cmd, g_free);
-                }
-            }
-        }
+        workspace_add_terminal_to_notebook_with_cwd(
+            dest_ws, dest_nb, g_ghostty_app,
+            cwd_buf[0] ? cwd_buf : NULL);
 
         /* Set the tab title to what the old one had */
         int last_page = gtk_notebook_get_n_pages(dest_nb) - 1;
@@ -745,15 +716,6 @@ on_notebook_drop(GtkDropTarget *target, const GValue *value,
         }
 
         gtk_notebook_set_current_page(dest_nb, last_page);
-
-        /* After 800ms, type the cd command into the new terminal */
-        if (cwd_buf[0] && last_page >= 0) {
-            GtkWidget *new_term = gtk_notebook_get_nth_page(dest_nb, last_page);
-            if (new_term && GHOSTTY_IS_TERMINAL(new_term)) {
-                g_object_ref(new_term);
-                g_timeout_add(800, dnd_restore_cwd_cb, new_term);
-            }
-        }
     }
 
     return TRUE;
@@ -835,16 +797,17 @@ on_ws_sidebar_drop(GtkDropTarget *target, const GValue *value,
         workspace_close_pane(src_ws, src_nb);
     }
 
-    /* Create new terminal in destination workspace */
+    /* Create new terminal in destination workspace with source CWD */
     GtkNotebook *dest_nb = GTK_NOTEBOOK(dest_ws->notebook);
-    workspace_add_terminal_to_notebook_external(dest_ws, dest_nb, g_ghostty_app);
+    workspace_add_terminal_to_notebook_with_cwd(
+        dest_ws, dest_nb, g_ghostty_app,
+        cwd_buf[0] ? cwd_buf : NULL);
 
-    /* Restore CWD and tab title */
+    /* Set tab title */
     int last_page = gtk_notebook_get_n_pages(dest_nb) - 1;
     if (last_page >= 0) {
         GtkWidget *new_term = gtk_notebook_get_nth_page(dest_nb, last_page);
         if (new_term) {
-            /* Set tab title */
             GtkWidget *tab_w = gtk_notebook_get_tab_label(dest_nb, new_term);
             if (tab_w) {
                 GtkWidget *inner = gtk_widget_get_first_child(tab_w);
@@ -853,14 +816,6 @@ on_ws_sidebar_drop(GtkDropTarget *target, const GValue *value,
                     if (cwd_buf[0])
                         gtk_widget_set_tooltip_text(inner, cwd_buf);
                 }
-            }
-            /* Queue cd to CWD after terminal starts */
-            if (cwd_buf[0] && GHOSTTY_IS_TERMINAL(new_term)) {
-                char *cmd = g_strdup_printf("cd '%s' && clear\n", cwd_buf);
-                g_object_set_data_full(G_OBJECT(new_term),
-                    "restore-cwd", cmd, g_free);
-                g_object_ref(new_term);
-                g_timeout_add(800, dnd_restore_cwd_cb, new_term);
             }
         }
     }
