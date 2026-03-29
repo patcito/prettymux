@@ -8,6 +8,8 @@
 #include <string.h>
 #include <unistd.h>
 #include <libgen.h>
+#include <signal.h>
+#include <glib-unix.h>
 
 #include "ghostty.h"
 #include "ghostty_terminal.h"
@@ -297,6 +299,8 @@ on_clipboard_text_received(GObject *source, GAsyncResult *result,
 
 // ── Action dispatch ──
 
+static void save_session_now(void);
+
 static void handle_action(const char *action) {
     if (strcmp(action, "workspace.new") == 0) {
         workspace_add(ui.terminal_stack, ui.workspace_list, g_ghostty_app);
@@ -490,6 +494,9 @@ static void handle_action(const char *action) {
             }
         }
     }
+
+    /* Auto-save after any state-modifying action */
+    save_session_now();
 }
 
 // ── Keyboard handler (capture phase) ──
@@ -770,6 +777,40 @@ on_socket_command(const char  *command,
             json_builder_set_member_name(response, "status");
             json_builder_add_string_value(response, "error");
         }
+    } else if (strcmp(command, "tab.rename") == 0) {
+        /* Rename current tab: {"command":"tab.rename","name":"my-tab"} */
+        const char *name = json_object_get_string_member_with_default(msg, "name", "");
+        if (name && name[0]) {
+            Workspace *ws = workspace_get_current();
+            if (ws) {
+                GtkNotebook *nb = workspace_get_focused_pane(ws);
+                if (nb && GTK_IS_NOTEBOOK(nb)) {
+                    int pg = gtk_notebook_get_current_page(nb);
+                    if (pg >= 0) {
+                        GtkWidget *child = gtk_notebook_get_nth_page(nb, pg);
+                        GtkWidget *tab_w = gtk_notebook_get_tab_label(nb, child);
+                        if (tab_w) {
+                            for (GtkWidget *w = gtk_widget_get_first_child(tab_w);
+                                 w; w = gtk_widget_get_next_sibling(w)) {
+                                if (GTK_IS_LABEL(w)) {
+                                    gtk_label_set_text(GTK_LABEL(w), name);
+                                    g_object_set_data(G_OBJECT(w), "user-renamed",
+                                                      GINT_TO_POINTER(1));
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "ok");
+        } else {
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "error");
+            json_builder_set_member_name(response, "message");
+            json_builder_add_string_value(response, "missing name");
+        }
     } else if (strcmp(command, "action") == 0) {
         /* Run any prettymux action by name, e.g. {"command":"action","action":"split.horizontal"} */
         const char *act = json_object_get_string_member_with_default(msg, "action", "");
@@ -926,6 +967,9 @@ on_socket_command(const char  *command,
         json_builder_set_member_name(response, "message");
         json_builder_add_string_value(response, "unknown command");
     }
+
+    /* Auto-save after any socket command that modifies state */
+    save_session_now();
 }
 
 // ── Ghostty action callback (marshaled to GTK main thread) ──
@@ -1333,9 +1377,16 @@ static gboolean autosave_tick(gpointer d) {
     return G_SOURCE_CONTINUE;
 }
 
+/* Save session immediately — call after any state-modifying action */
+static void save_session_now(void) {
+    if (g_main_window)
+        session_save(g_main_window, ui.browser_notebook,
+                     ui.terminal_stack, ui.workspace_list);
+}
+
 static gboolean on_close_request(GtkWindow *w, gpointer d) {
-    (void)d;
-    session_save(w, ui.browser_notebook, ui.terminal_stack, ui.workspace_list);
+    (void)w; (void)d;
+    save_session_now();
     port_scanner_stop();
     socket_server_stop();
     return FALSE;
@@ -1638,6 +1689,12 @@ int main(int argc, char *argv[]) {
 
     AdwApplication *app = adw_application_new("com.prettymux.app", G_APPLICATION_FLAGS_NONE);
     g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
+    g_signal_connect(app, "shutdown", G_CALLBACK(on_close_request), NULL);
+
+    /* Save session on SIGTERM/SIGINT */
+    g_unix_signal_add(SIGTERM, (GSourceFunc)on_close_request, NULL);
+    g_unix_signal_add(SIGINT, (GSourceFunc)on_close_request, NULL);
+
     int status = g_application_run(G_APPLICATION(app), argc, argv);
     g_object_unref(app);
     if (g_ghostty_app) ghostty_app_free(g_ghostty_app);

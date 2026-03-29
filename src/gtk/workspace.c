@@ -120,9 +120,13 @@ workspace_refresh_tab_labels(Workspace *ws)
                 continue;
             if (g_object_get_data(G_OBJECT(tab_widget), "rename-in-progress"))
                 continue;
-            /* The tab widget is a GtkBox containing a GtkLabel */
-            GtkWidget *inner = gtk_widget_get_first_child(tab_widget);
-            if (!GTK_IS_LABEL(inner))
+            /* Find GtkLabel in the tab widget box */
+            GtkWidget *inner = NULL;
+            for (GtkWidget *w = gtk_widget_get_first_child(tab_widget);
+                 w; w = gtk_widget_get_next_sibling(w)) {
+                if (GTK_IS_LABEL(w)) { inner = w; break; }
+            }
+            if (!inner)
                 continue;
             if (!gtk_widget_get_parent(inner))
                 continue;
