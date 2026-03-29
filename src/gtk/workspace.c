@@ -659,9 +659,10 @@ on_notebook_drop(GtkDropTarget *target, const GValue *value,
     if (src_ws)
         g_ptr_array_remove(src_ws->terminals, terminal);
 
-    /* Ref the terminal so it survives reparenting */
+    /* Detach the terminal from the source notebook without destroying it.
+     * gtk_notebook_detach_tab refs internally and removes cleanly. */
     g_object_ref(terminal);
-    gtk_notebook_remove_page(src_nb, src_page);
+    gtk_notebook_detach_tab(src_nb, terminal);
 
     /* Find the destination workspace */
     Workspace *dest_ws = NULL;
@@ -775,7 +776,7 @@ on_ws_sidebar_drop(GtkDropTarget *target, const GValue *value,
         g_ptr_array_remove(src_ws->terminals, terminal);
 
     g_object_ref(terminal);
-    gtk_notebook_remove_page(src_nb, src_page);
+    gtk_notebook_detach_tab(src_nb, terminal);
 
     /* Add to destination workspace's first notebook */
     GtkNotebook *dest_nb = GTK_NOTEBOOK(dest_ws->notebook);
