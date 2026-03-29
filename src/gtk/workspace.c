@@ -6,6 +6,7 @@
 
 GPtrArray *workspaces = NULL;
 int current_workspace = 0;
+static gboolean app_shutting_down = FALSE;
 
 /* Idle callback: set a GtkPaned position to 50% of its allocated size. */
 static gboolean set_paned_half(gpointer data) {
@@ -935,6 +936,10 @@ void workspace_add_terminal_to_notebook_with_cwd(Workspace *ws,
     workspace_add_terminal_to_notebook_cwd(ws, notebook, app, cwd);
 }
 
+void workspace_set_shutting_down(void) {
+    app_shutting_down = TRUE;
+}
+
 void workspace_start_tab_rename(Workspace *ws) {
     if (!ws) return;
     GtkNotebook *nb = workspace_get_focused_pane(ws);
@@ -1014,6 +1019,11 @@ on_notebook_page_removed(GtkNotebook *notebook, GtkWidget *child,
 {
     (void)child; (void)page_num;
     Workspace *ws = user_data;
+
+    /* During shutdown, GTK removes pages as it destroys widgets.
+     * Don't modify the terminals array or close panes — session was
+     * already saved before shutdown started. */
+    if (app_shutting_down) return;
 
     /* Also update the terminals array — the child was moved out */
     if (ws && GHOSTTY_IS_TERMINAL(child))

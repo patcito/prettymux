@@ -126,6 +126,7 @@ void workspace_refresh_tab_labels(Workspace *ws);
  * Check if any terminal in the workspace has unread activity.
  */
 gboolean workspace_has_activity(Workspace *ws);
+void workspace_set_shutting_down(void);
 
 /* Trigger inline rename on the current tab's label */
 void workspace_start_tab_rename(Workspace *ws);

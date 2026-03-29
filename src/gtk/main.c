@@ -1407,6 +1407,7 @@ static void save_session_now(void) {
 static gboolean on_close_request(GtkWindow *w, gpointer d) {
     (void)w; (void)d;
     save_session_now();
+    workspace_set_shutting_down(); /* Prevent page-removed from clearing tabs */
     port_scanner_stop();
     socket_server_stop();
     return FALSE;
@@ -1551,7 +1552,6 @@ on_navigate_to_terminal(GSimpleAction *action_obj, GVariant *parameter,
 
 static void on_activate(GtkApplication *app, gpointer user_data) {
     (void)user_data;
-
     // Init ghostty
     if (ghostty_init(0, NULL) != 0) { fprintf(stderr, "ghostty_init failed\n"); return; }
 

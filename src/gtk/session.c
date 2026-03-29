@@ -120,14 +120,14 @@ void session_save(GtkWindow *window, GtkWidget *browser_notebook,
 
                     /* Active tab in this pane */
                     json_builder_set_member_name(b, "activeTab");
+                    int n_pages = GTK_IS_NOTEBOOK(nb) ? gtk_notebook_get_n_pages(nb) : 0;
                     json_builder_add_int_value(b,
-                        gtk_notebook_get_current_page(nb));
+                        GTK_IS_NOTEBOOK(nb) ? gtk_notebook_get_current_page(nb) : 0);
 
                     /* Tabs array */
                     json_builder_set_member_name(b, "tabs");
                     json_builder_begin_array(b);
                     {
-                        int n_pages = gtk_notebook_get_n_pages(nb);
                         int ti;
                         for (ti = 0; ti < n_pages; ti++) {
                             GtkWidget *child = gtk_notebook_get_nth_page(
