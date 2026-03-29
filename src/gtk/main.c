@@ -530,8 +530,9 @@ static gboolean on_key_pressed(GtkEventControllerKey *ctrl, guint keyval,
     }
 
     /* ── Ctrl+Tab / Ctrl+Shift+Tab: cycle terminal tabs ── */
-    if (lower == GDK_KEY_Tab && (mods == GDK_CONTROL_MASK ||
-                                  mods == (GDK_CONTROL_MASK | GDK_SHIFT_MASK))) {
+    if ((lower == GDK_KEY_Tab || keyval == GDK_KEY_ISO_Left_Tab) &&
+        (mods == GDK_CONTROL_MASK ||
+         mods == (GDK_CONTROL_MASK | GDK_SHIFT_MASK))) {
         Workspace *ws = workspace_get_current();
         if (ws) {
             GtkNotebook *nb = workspace_get_focused_pane(ws);

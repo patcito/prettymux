@@ -693,10 +693,18 @@ on_notebook_drop(GtkDropTarget *target, const GValue *value,
     if (dest_ws)
         setup_tab_label_dnd(tab_label_widget, terminal, dest_nb, dest_ws);
 
-    /* Connect title-changed to the new label (auto-disconnect on label destroy) */
+    /* Connect title-changed to the new label (auto-disconnect on label destroy).
+     * Don't mark as user-renamed so future title changes will update normally. */
     if (new_label && GHOSTTY_IS_TERMINAL(terminal))
         g_signal_connect_object(terminal, "title-changed",
                                 G_CALLBACK(on_title_changed), new_label, 0);
+
+    /* Set tooltip to the terminal's CWD */
+    if (new_label && GHOSTTY_IS_TERMINAL(terminal)) {
+        const char *cwd = ghostty_terminal_get_cwd(GHOSTTY_TERMINAL(terminal));
+        if (cwd && cwd[0])
+            gtk_widget_set_tooltip_text(new_label, cwd);
+    }
 
     g_object_unref(terminal);
 
