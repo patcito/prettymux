@@ -6,7 +6,8 @@
 typedef struct {
     char name[64];
     GtkWidget *container;        /* Root widget for this workspace in the stack.
-                                  * Either the notebook (no splits) or a GtkPaned tree. */
+                                  * Always the workspace overlay. */
+    GtkWidget *overlay;          /* Root overlay: pane tree child + floating terminals */
     GtkWidget *notebook;         /* The *first* terminal tab notebook (kept for
                                   * backwards compat; same as pane_notebooks[0]). */
     GPtrArray *terminals;        /* Flat array of ALL GhosttyTerminal widgets */

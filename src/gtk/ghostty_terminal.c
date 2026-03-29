@@ -59,6 +59,7 @@ struct _GhosttyTerminal {
     GtkWidget         *status_bar;      /* GtkBox at bottom */
     GtkWidget         *status_cwd;      /* GtkLabel: full CWD path */
     GtkWidget         *status_git;      /* GtkLabel: git branch */
+    GtkWidget         *dummy_target;    /* Linked notebook placeholder */
 };
 
 G_DEFINE_FINAL_TYPE(GhosttyTerminal, ghostty_terminal, GTK_TYPE_WIDGET)
@@ -217,6 +218,27 @@ tick_callback(gpointer user_data)
         && !self->exit_emitted) {
         self->exit_emitted = TRUE;
         g_signal_emit(self, signals[SIGNAL_PROCESS_EXITED], 0, self->exit_code);
+    }
+
+    if (self->dummy_target && gtk_widget_get_mapped(self->dummy_target)) {
+        GtkWidget *overlay = gtk_widget_get_ancestor(GTK_WIDGET(self),
+                                                     GTK_TYPE_OVERLAY);
+        if (overlay) {
+            graphene_point_t p;
+            if (gtk_widget_compute_point(self->dummy_target, overlay,
+                                         &GRAPHENE_POINT_INIT(0, 0), &p)) {
+                int w = gtk_widget_get_width(self->dummy_target);
+                int h = gtk_widget_get_height(self->dummy_target);
+
+                gtk_widget_set_margin_start(GTK_WIDGET(self), (int)p.x);
+                gtk_widget_set_margin_top(GTK_WIDGET(self), (int)p.y);
+                gtk_widget_set_size_request(GTK_WIDGET(self), w, h);
+                if (!gtk_widget_get_visible(GTK_WIDGET(self)))
+                    gtk_widget_set_visible(GTK_WIDGET(self), TRUE);
+            }
+        }
+    } else if (self->dummy_target) {
+        gtk_widget_set_visible(GTK_WIDGET(self), FALSE);
     }
 
     return G_SOURCE_CONTINUE;
@@ -601,6 +623,10 @@ ghostty_terminal_init(GhosttyTerminal *self)
     self->has_new_output = FALSE;
     self->progress_state = -1;
     self->progress_percent = -1;
+    self->dummy_target = NULL;
+
+    gtk_widget_set_halign(GTK_WIDGET(self), GTK_ALIGN_START);
+    gtk_widget_set_valign(GTK_WIDGET(self), GTK_ALIGN_START);
 
     /* ── Create the vertical box container ── */
 
@@ -794,6 +820,13 @@ ghostty_terminal_notify_child_exited(GhosttyTerminal *self,
         self->exit_emitted = TRUE;
         g_signal_emit(self, signals[SIGNAL_PROCESS_EXITED], 0, (int)exit_code);
     }
+}
+
+void
+ghostty_terminal_set_dummy_target(GhosttyTerminal *self, GtkWidget *dummy)
+{
+    g_return_if_fail(GHOSTTY_IS_TERMINAL(self));
+    self->dummy_target = dummy;
 }
 
 void

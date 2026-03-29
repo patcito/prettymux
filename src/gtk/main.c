@@ -61,6 +61,28 @@ static void notification_entry_free(gpointer data) {
 
 static GPtrArray *g_notifications = NULL;
 
+static GtkWidget *
+page_linked_terminal(GtkWidget *page)
+{
+    GtkWidget *terminal;
+
+    if (!page)
+        return NULL;
+    if (GHOSTTY_IS_TERMINAL(page))
+        return page;
+
+    terminal = g_object_get_data(G_OBJECT(page), "linked-terminal");
+    return (terminal && GHOSTTY_IS_TERMINAL(terminal)) ? terminal : NULL;
+}
+
+static GhosttyTerminal *
+notebook_terminal_at(GtkNotebook *notebook, int page_num)
+{
+    GtkWidget *terminal = page_linked_terminal(
+        gtk_notebook_get_nth_page(notebook, page_num));
+    return terminal ? GHOSTTY_TERMINAL(terminal) : NULL;
+}
+
 static void notifications_init(void) {
     if (!g_notifications)
         g_notifications = g_ptr_array_new_with_free_func(notification_entry_free);
@@ -142,10 +164,10 @@ on_notif_row_clicked(GtkButton *btn, gpointer user_data)
         nav->tab_idx >= 0 &&
         nav->tab_idx < gtk_notebook_get_n_pages(nav->pane_notebook)) {
         gtk_notebook_set_current_page(nav->pane_notebook, nav->tab_idx);
-        GtkWidget *page = gtk_notebook_get_nth_page(nav->pane_notebook,
-                                                     nav->tab_idx);
-        if (page && GHOSTTY_IS_TERMINAL(page))
-            ghostty_terminal_focus(GHOSTTY_TERMINAL(page));
+        GhosttyTerminal *term =
+            notebook_terminal_at(nav->pane_notebook, nav->tab_idx);
+        if (term)
+            ghostty_terminal_focus(term);
     }
 
     /* Bring window to front */
@@ -380,7 +402,13 @@ static void handle_action(const char *action) {
                 if (n_pages > 1 && pg >= 0) {
                     /* Close the current tab in this pane */
                     GtkWidget *child = gtk_notebook_get_nth_page(focused, pg);
-                    g_ptr_array_remove(ws->terminals, child);
+                    GtkWidget *terminal = page_linked_terminal(child);
+                    if (terminal) {
+                        g_ptr_array_remove(ws->terminals, terminal);
+                        if (ws->overlay)
+                            gtk_overlay_remove_overlay(GTK_OVERLAY(ws->overlay),
+                                                       terminal);
+                    }
                     gtk_notebook_remove_page(focused, pg);
                 } else if (n_pages <= 1 && ws->pane_notebooks &&
                            ws->pane_notebooks->len > 1) {
@@ -425,10 +453,10 @@ static void handle_action(const char *action) {
             if (focused && GTK_IS_NOTEBOOK(focused)) {
                 int pg = gtk_notebook_get_current_page(focused);
                 if (pg >= 0) {
-                    GtkWidget *child = gtk_notebook_get_nth_page(focused, pg);
-                    if (child && GHOSTTY_IS_TERMINAL(child)) {
+                    GhosttyTerminal *term = notebook_terminal_at(focused, pg);
+                    if (term) {
                         ghostty_surface_t surface =
-                            ghostty_terminal_get_surface(GHOSTTY_TERMINAL(child));
+                            ghostty_terminal_get_surface(term);
                         if (surface)
                             ghostty_surface_binding_action(surface,
                                                            "search_forward", 14);
@@ -455,10 +483,10 @@ static void handle_action(const char *action) {
             if (focused && GTK_IS_NOTEBOOK(focused)) {
                 int pg = gtk_notebook_get_current_page(focused);
                 if (pg >= 0) {
-                    GtkWidget *child = gtk_notebook_get_nth_page(focused, pg);
-                    if (child && GHOSTTY_IS_TERMINAL(child)) {
+                    GhosttyTerminal *term = notebook_terminal_at(focused, pg);
+                    if (term) {
                         ghostty_surface_t surface =
-                            ghostty_terminal_get_surface(GHOSTTY_TERMINAL(child));
+                            ghostty_terminal_get_surface(term);
                         if (surface && ghostty_surface_has_selection(surface)) {
                             ghostty_text_s text = {0};
                             if (ghostty_surface_read_selection(surface, &text)) {
@@ -482,10 +510,10 @@ static void handle_action(const char *action) {
             if (focused && GTK_IS_NOTEBOOK(focused)) {
                 int pg = gtk_notebook_get_current_page(focused);
                 if (pg >= 0) {
-                    GtkWidget *child = gtk_notebook_get_nth_page(focused, pg);
-                    if (child && GHOSTTY_IS_TERMINAL(child)) {
+                    GhosttyTerminal *term = notebook_terminal_at(focused, pg);
+                    if (term) {
                         ghostty_surface_t surface =
-                            ghostty_terminal_get_surface(GHOSTTY_TERMINAL(child));
+                            ghostty_terminal_get_surface(term);
                         if (surface) {
                             GdkClipboard *clip = gdk_display_get_clipboard(
                                 gdk_display_get_default());
@@ -636,7 +664,8 @@ find_terminal_for_surface(ghostty_surface_t surface)
                         int n_pages = gtk_notebook_get_n_pages(nb);
                         int pg;
                         for (pg = 0; pg < n_pages; pg++) {
-                            if (gtk_notebook_get_nth_page(nb, pg) == GTK_WIDGET(term)) {
+                            if (GTK_WIDGET(notebook_terminal_at(nb, pg)) ==
+                                GTK_WIDGET(term)) {
                                 result.pane_notebook = nb;
                                 result.tab_idx = pg;
                                 return result;
@@ -768,8 +797,10 @@ on_socket_command(const char  *command,
                                 }
 
                                 const char *pwd = NULL;
-                                if (GHOSTTY_IS_TERMINAL(child))
-                                    pwd = ghostty_terminal_get_cwd(GHOSTTY_TERMINAL(child));
+                                GtkWidget *terminal = page_linked_terminal(child);
+                                if (terminal)
+                                    pwd = ghostty_terminal_get_cwd(
+                                        GHOSTTY_TERMINAL(terminal));
 
                                 json_builder_begin_object(response);
                                 json_builder_set_member_name(response, "index");
@@ -979,11 +1010,8 @@ on_socket_command(const char  *command,
             GhosttyTerminal *term = NULL;
             if (nb) {
                 int pg = (tab_idx >= 0) ? tab_idx : gtk_notebook_get_current_page(GTK_NOTEBOOK(nb));
-                if (pg >= 0 && pg < gtk_notebook_get_n_pages(GTK_NOTEBOOK(nb))) {
-                    GtkWidget *page = gtk_notebook_get_nth_page(GTK_NOTEBOOK(nb), pg);
-                    if (GHOSTTY_IS_TERMINAL(page))
-                        term = GHOSTTY_TERMINAL(page);
-                }
+                if (pg >= 0 && pg < gtk_notebook_get_n_pages(GTK_NOTEBOOK(nb)))
+                    term = notebook_terminal_at(GTK_NOTEBOOK(nb), pg);
             }
             if (term) {
                 ghostty_surface_t surface = ghostty_terminal_get_surface(term);
@@ -1033,11 +1061,8 @@ on_socket_command(const char  *command,
             GhosttyTerminal *term = NULL;
             if (nb) {
                 int pg = (tab_idx >= 0) ? tab_idx : gtk_notebook_get_current_page(GTK_NOTEBOOK(nb));
-                if (pg >= 0 && pg < gtk_notebook_get_n_pages(GTK_NOTEBOOK(nb))) {
-                    GtkWidget *page = gtk_notebook_get_nth_page(GTK_NOTEBOOK(nb), pg);
-                    if (GHOSTTY_IS_TERMINAL(page))
-                        term = GHOSTTY_TERMINAL(page);
-                }
+                if (pg >= 0 && pg < gtk_notebook_get_n_pages(GTK_NOTEBOOK(nb)))
+                    term = notebook_terminal_at(GTK_NOTEBOOK(nb), pg);
             }
             if (term) {
                 ghostty_surface_t surface = ghostty_terminal_get_surface(term);
@@ -1390,10 +1415,10 @@ static gboolean action_idle_handler(gpointer user_data)
                 GtkNotebook *focused = workspace_get_focused_pane(loc.workspace);
                 if (focused) {
                     int pg = gtk_notebook_get_current_page(focused);
-                    GtkWidget *visible_page = (pg >= 0)
-                        ? gtk_notebook_get_nth_page(focused, pg)
+                    GtkWidget *visible_terminal = (pg >= 0)
+                        ? GTK_WIDGET(notebook_terminal_at(focused, pg))
                         : NULL;
-                    if (visible_page != GTK_WIDGET(loc.terminal)) {
+                    if (visible_terminal != GTK_WIDGET(loc.terminal)) {
                         ghostty_terminal_mark_activity(loc.terminal);
                         workspace_refresh_tab_labels(loc.workspace);
                     }
@@ -1669,9 +1694,9 @@ on_navigate_to_terminal(GSimpleAction *action_obj, GVariant *parameter,
         if (nb && tab_idx >= 0 &&
             tab_idx < gtk_notebook_get_n_pages(nb)) {
             gtk_notebook_set_current_page(nb, tab_idx);
-            GtkWidget *page = gtk_notebook_get_nth_page(nb, tab_idx);
-            if (page && GHOSTTY_IS_TERMINAL(page))
-                ghostty_terminal_focus(GHOSTTY_TERMINAL(page));
+            GhosttyTerminal *term = notebook_terminal_at(nb, tab_idx);
+            if (term)
+                ghostty_terminal_focus(term);
         }
     }
 
