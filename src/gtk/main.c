@@ -144,13 +144,8 @@ on_notif_row_clicked(GtkButton *btn, gpointer user_data)
         gtk_notebook_set_current_page(nav->pane_notebook, nav->tab_idx);
         GtkWidget *page = gtk_notebook_get_nth_page(nav->pane_notebook,
                                                      nav->tab_idx);
-        if (page) {
-            GtkWidget *child = gtk_widget_get_first_child(page);
-            if (child)
-                gtk_widget_grab_focus(child);
-            else
-                gtk_widget_grab_focus(page);
-        }
+        if (page && GHOSTTY_IS_TERMINAL(page))
+            ghostty_terminal_focus(GHOSTTY_TERMINAL(page));
     }
 
     /* Bring window to front */
@@ -874,6 +869,34 @@ on_socket_command(const char  *command,
             json_builder_set_member_name(response, "status");
             json_builder_add_string_value(response, "error");
         }
+    } else if (strcmp(command, "tab.move") == 0) {
+        int from_ws = (int)json_object_get_int_member_with_default(msg, "fromWorkspace", -1);
+        int from_pane = (int)json_object_get_int_member_with_default(msg, "fromPane", -1);
+        int from_tab = (int)json_object_get_int_member_with_default(msg, "fromTab", -1);
+        int to_ws = (int)json_object_get_int_member_with_default(msg, "toWorkspace", -1);
+        int to_pane = (int)json_object_get_int_member_with_default(msg, "toPane", -1);
+        if (workspace_move_tab(from_ws, from_pane, from_tab, to_ws, to_pane)) {
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "ok");
+        } else {
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "error");
+            json_builder_set_member_name(response, "message");
+            json_builder_add_string_value(response, "move failed");
+        }
+    } else if (strcmp(command, "tab.select") == 0) {
+        int ws_idx = (int)json_object_get_int_member_with_default(msg, "workspace", -1);
+        int pane_idx = (int)json_object_get_int_member_with_default(msg, "pane", -1);
+        int tab_idx = (int)json_object_get_int_member_with_default(msg, "tab", -1);
+        if (workspace_select_tab(ws_idx, pane_idx, tab_idx)) {
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "ok");
+        } else {
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "error");
+            json_builder_set_member_name(response, "message");
+            json_builder_add_string_value(response, "select failed");
+        }
     } else if (strcmp(command, "tab.rename") == 0) {
         /* Rename current tab: {"command":"tab.rename","name":"my-tab"} */
         const char *name = json_object_get_string_member_with_default(msg, "name", "");
@@ -1074,6 +1097,8 @@ on_socket_command(const char  *command,
         json_builder_add_string_value(response, "workspace.switch");
         json_builder_add_string_value(response, "tabs.list");
         json_builder_add_string_value(response, "tab.new");
+        json_builder_add_string_value(response, "tab.move");
+        json_builder_add_string_value(response, "tab.select");
         json_builder_add_string_value(response, "app.quit");
         json_builder_add_string_value(response, "exec");
         json_builder_add_string_value(response, "type");
@@ -1645,13 +1670,8 @@ on_navigate_to_terminal(GSimpleAction *action_obj, GVariant *parameter,
             tab_idx < gtk_notebook_get_n_pages(nb)) {
             gtk_notebook_set_current_page(nb, tab_idx);
             GtkWidget *page = gtk_notebook_get_nth_page(nb, tab_idx);
-            if (page) {
-                GtkWidget *child = gtk_widget_get_first_child(page);
-                if (child)
-                    gtk_widget_grab_focus(child);
-                else
-                    gtk_widget_grab_focus(page);
-            }
+            if (page && GHOSTTY_IS_TERMINAL(page))
+                ghostty_terminal_focus(GHOSTTY_TERMINAL(page));
         }
     }
 

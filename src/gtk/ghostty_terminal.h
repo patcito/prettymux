@@ -75,6 +75,11 @@ void ghostty_terminal_notify_child_exited(GhosttyTerminal *self,
                                           uint32_t exit_code);
 
 /*
+ * Give keyboard focus to the terminal's GtkGLArea.
+ */
+void ghostty_terminal_focus(GhosttyTerminal *self);
+
+/*
  * ghostty_terminal_queue_render:
  *
  * Queue a render on this terminal's GtkGLArea.  Called from the global

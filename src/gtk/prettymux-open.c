@@ -12,6 +12,8 @@
  *   prettymux-open --exec <cmd> -w 0 -p 1 -t 0   Target specific workspace/pane/tab
  *   prettymux-open --new-workspace [name]         Create a new workspace
  *   prettymux-open --new-tab                      Create a new terminal tab
+ *   prettymux-open --move-tab ...                 Move a terminal tab to another pane
+ *   prettymux-open --select-tab -w 0 -p 1 -t 0    Select a specific terminal tab
  *   prettymux-open --list-workspaces              List all workspaces
  *   prettymux-open --list-tabs                    List workspaces/panes/tabs
  *   prettymux-open --list-actions                 List all available actions
@@ -37,6 +39,8 @@ usage(void)
         "       prettymux-open --type <text>            Type text into terminal\n"
         "       prettymux-open --new-workspace [name]   Create workspace\n"
         "       prettymux-open --new-tab                New terminal tab\n"
+        "       prettymux-open --move-tab --from-w <n> --from-p <n> --from-t <n> --to-w <n> --to-p <n>\n"
+        "       prettymux-open --select-tab -w <n> -p <n> -t <n>\n"
         "       prettymux-open --list-workspaces        List workspaces\n"
         "       prettymux-open --list-tabs              List workspaces, panes, tabs\n"
         "       prettymux-open --list-actions           List all actions\n"
@@ -283,6 +287,40 @@ main(int argc, char *argv[])
 
     if (strcmp(arg, "--new-tab") == 0) {
         return send_command("{\"command\":\"tab.new\"}");
+    }
+
+    if (strcmp(arg, "--move-tab") == 0) {
+        int from_w = -1, from_p = -1, from_t = -1, to_w = -1, to_p = -1;
+        for (int i = 2; i + 1 < argc; i += 2) {
+            if (strcmp(argv[i], "--from-w") == 0) from_w = atoi(argv[i + 1]);
+            else if (strcmp(argv[i], "--from-p") == 0) from_p = atoi(argv[i + 1]);
+            else if (strcmp(argv[i], "--from-t") == 0) from_t = atoi(argv[i + 1]);
+            else if (strcmp(argv[i], "--to-w") == 0) to_w = atoi(argv[i + 1]);
+            else if (strcmp(argv[i], "--to-p") == 0) to_p = atoi(argv[i + 1]);
+        }
+        if (from_w < 0 || from_p < 0 || from_t < 0 || to_w < 0 || to_p < 0) {
+            fprintf(stderr, "prettymux-open: --move-tab requires --from-w --from-p --from-t --to-w --to-p\n");
+            return 1;
+        }
+        char msg[256];
+        snprintf(msg, sizeof(msg),
+            "{\"command\":\"tab.move\",\"fromWorkspace\":%d,\"fromPane\":%d,\"fromTab\":%d,\"toWorkspace\":%d,\"toPane\":%d}",
+            from_w, from_p, from_t, to_w, to_p);
+        return send_command(msg);
+    }
+
+    if (strcmp(arg, "--select-tab") == 0) {
+        int ws, pane, tab, idx = 2;
+        parse_targeting(argc, argv, &idx, &ws, &pane, &tab);
+        if (ws < 0 || pane < 0 || tab < 0) {
+            fprintf(stderr, "prettymux-open: --select-tab requires -w -p -t\n");
+            return 1;
+        }
+        char msg[256];
+        snprintf(msg, sizeof(msg),
+            "{\"command\":\"tab.select\",\"workspace\":%d,\"pane\":%d,\"tab\":%d}",
+            ws, pane, tab);
+        return send_command(msg);
     }
 
     if (strcmp(arg, "--list-workspaces") == 0) {

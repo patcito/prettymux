@@ -58,6 +58,13 @@ static void finish_rename(GtkEntry *entry, RenameData *rd);
 static void build_tab_label_text(GhosttyTerminal *term, const char *title,
                                  char *buf, size_t bufsz);
 static void on_terminal_state_changed(GObject *obj, gpointer user_data);
+static void focus_terminal_page(GtkWidget *page);
+static void focus_terminal_page_later(GtkWidget *page);
+static void update_tab_drag_data(GtkWidget *label_widget, GtkWidget *terminal,
+                                 GtkNotebook *notebook, Workspace *ws);
+static gboolean move_terminal_to_notebook(Workspace *src_ws, GtkNotebook *src_nb,
+                                          GtkWidget *terminal, Workspace *dest_ws,
+                                          GtkNotebook *dest_nb);
 
 /* Context menu data for sidebar rows (defined later) */
 typedef struct {
@@ -360,6 +367,104 @@ on_terminal_state_changed(GObject *obj, gpointer user_data)
     session_queue_save();
 }
 
+static void
+focus_terminal_page(GtkWidget *page)
+{
+    if (!page || !GHOSTTY_IS_TERMINAL(page))
+        return;
+    ghostty_terminal_focus(GHOSTTY_TERMINAL(page));
+    ghostty_terminal_queue_render(GHOSTTY_TERMINAL(page));
+}
+
+static gboolean
+focus_terminal_page_idle_cb(gpointer user_data)
+{
+    GtkWidget *page = GTK_WIDGET(user_data);
+    focus_terminal_page(page);
+    g_object_unref(page);
+    return G_SOURCE_REMOVE;
+}
+
+static void
+focus_terminal_page_later(GtkWidget *page)
+{
+    if (!page || !GHOSTTY_IS_TERMINAL(page))
+        return;
+
+    g_object_ref(page);
+    g_idle_add(focus_terminal_page_idle_cb, page);
+}
+
+static void
+update_tab_drag_data(GtkWidget *label_widget, GtkWidget *terminal,
+                     GtkNotebook *notebook, Workspace *ws)
+{
+    TabDragData *dd;
+
+    if (!label_widget)
+        return;
+
+    dd = g_object_get_data(G_OBJECT(label_widget), "tab-drag-data");
+    if (dd) {
+        dd->terminal = terminal;
+        dd->source_notebook = GTK_WIDGET(notebook);
+        dd->source_ws_idx = workspace_index_of(ws);
+        return;
+    }
+
+    setup_tab_label_dnd(label_widget, terminal, notebook, ws);
+}
+
+static gboolean
+move_terminal_to_notebook(Workspace *src_ws, GtkNotebook *src_nb,
+                          GtkWidget *terminal, Workspace *dest_ws,
+                          GtkNotebook *dest_nb)
+{
+    if (!src_ws || !dest_ws || !GTK_IS_NOTEBOOK(src_nb) ||
+        !GTK_IS_NOTEBOOK(dest_nb) || !GHOSTTY_IS_TERMINAL(terminal))
+        return FALSE;
+
+    if (src_nb == dest_nb)
+        return FALSE;
+
+    int src_page = gtk_notebook_page_num(src_nb, terminal);
+    if (src_page < 0)
+        return FALSE;
+
+    GtkWidget *tab_widget = gtk_notebook_get_tab_label(src_nb, terminal);
+    if (tab_widget)
+        g_object_ref(tab_widget);
+    g_object_ref(terminal);
+
+    g_ptr_array_remove(src_ws->terminals, terminal);
+    gtk_notebook_remove_page(src_nb, src_page);
+
+    if (gtk_notebook_get_n_pages(src_nb) == 0 &&
+        src_ws->pane_notebooks && src_ws->pane_notebooks->len > 1) {
+        workspace_close_pane(src_ws, src_nb);
+    }
+
+    if (!g_ptr_array_find(dest_ws->terminals, terminal, NULL))
+        g_ptr_array_add(dest_ws->terminals, terminal);
+
+    gtk_notebook_append_page(dest_nb, terminal, tab_widget);
+    gtk_notebook_set_tab_reorderable(dest_nb, terminal, TRUE);
+    gtk_notebook_set_tab_detachable(dest_nb, terminal, FALSE);
+    update_tab_drag_data(tab_widget, terminal, dest_nb, dest_ws);
+
+    int dest_page = gtk_notebook_get_n_pages(dest_nb) - 1;
+    gtk_notebook_set_current_page(dest_nb, dest_page);
+    focus_terminal_page(terminal);
+    focus_terminal_page_later(terminal);
+
+    if (tab_widget)
+        g_object_unref(tab_widget);
+    g_object_unref(terminal);
+
+    session_queue_save();
+    return TRUE;
+}
+
 static void on_title_changed(GhosttyTerminal *term, const char *title, gpointer label_ptr) {
     /* Skip if rename is in progress or label was destroyed/unparented */
     if (!GTK_IS_LABEL(label_ptr)) return;
@@ -592,6 +697,7 @@ create_editable_tab_label(const char *text, GtkWidget *terminal,
 {
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     GtkWidget *label = gtk_label_new(text);
+    gtk_widget_set_focusable(box, FALSE);
     gtk_label_set_xalign(GTK_LABEL(label), 0);
     gtk_box_append(GTK_BOX(box), label);
 
@@ -615,6 +721,7 @@ create_editable_tab_label(const char *text, GtkWidget *terminal,
     if (!is_workspace_row && terminal) {
         GtkWidget *close_btn = gtk_button_new_from_icon_name("window-close-symbolic");
         gtk_button_set_has_frame(GTK_BUTTON(close_btn), FALSE);
+        gtk_widget_set_focusable(close_btn, FALSE);
         gtk_widget_set_valign(close_btn, GTK_ALIGN_CENTER);
         gtk_widget_set_margin_start(close_btn, 4);
         g_object_set_data(G_OBJECT(close_btn), "terminal-widget", terminal);
@@ -693,36 +800,9 @@ on_notebook_drop(GtkDropTarget *target, const GValue *value,
     if (src_page < 0)
         return FALSE;
 
-    /* Get the tab label text before removal */
-    GtkWidget *old_tab_widget = gtk_notebook_get_tab_label(src_nb, terminal);
-    const char *tab_text = "Terminal";
-    if (old_tab_widget) {
-        GtkWidget *inner = gtk_widget_get_first_child(old_tab_widget);
-        if (GTK_IS_LABEL(inner))
-            tab_text = gtk_label_get_text(GTK_LABEL(inner));
-    }
-    char saved_text[64];
-    snprintf(saved_text, sizeof(saved_text), "%s", tab_text);
-
-    /* True reparenting: move the actual terminal widget to the destination.
-     * The on_gl_realize guard prevents ghostty from destroying the surface. */
-    GtkWidget *tab_widget = gtk_notebook_get_tab_label(src_nb, terminal);
-    if (tab_widget) g_object_ref(tab_widget);
-    g_object_ref(terminal);
-
     Workspace *src_ws = NULL;
     if (dd->source_ws_idx >= 0 && dd->source_ws_idx < (int)workspaces->len)
         src_ws = g_ptr_array_index(workspaces, dd->source_ws_idx);
-    if (src_ws)
-        g_ptr_array_remove(src_ws->terminals, terminal);
-
-    gtk_notebook_remove_page(src_nb, src_page);
-
-    /* Close empty source pane if needed */
-    if (src_ws && gtk_notebook_get_n_pages(src_nb) == 0 &&
-        src_ws->pane_notebooks && src_ws->pane_notebooks->len > 1) {
-        workspace_close_pane(src_ws, src_nb);
-    }
 
     /* Find destination workspace */
     Workspace *dest_ws = NULL;
@@ -739,22 +819,9 @@ on_notebook_drop(GtkDropTarget *target, const GValue *value,
         if (dest_ws) break;
     }
 
-    if (dest_ws) {
-        g_ptr_array_add(dest_ws->terminals, terminal);
-        gtk_notebook_append_page(dest_nb, terminal, tab_widget);
-        gtk_notebook_set_tab_reorderable(dest_nb, terminal, TRUE);
-    gtk_notebook_set_tab_detachable(dest_nb, terminal, TRUE);
-
-        int last_page = gtk_notebook_get_n_pages(dest_nb) - 1;
-        gtk_notebook_set_current_page(dest_nb, last_page);
-    }
-
-    if (tab_widget) g_object_unref(tab_widget);
-    g_object_unref(terminal);
-
-    session_queue_save();
-
-    return TRUE;
+    return src_ws && dest_ws
+        ? move_terminal_to_notebook(src_ws, src_nb, terminal, dest_ws, dest_nb)
+        : FALSE;
 }
 
 /* ── Feature 1: DnD - Workspace sidebar drop target callbacks ───── */
@@ -802,54 +869,13 @@ on_ws_sidebar_drop(GtkDropTarget *target, const GValue *value,
     if (src_page < 0)
         return FALSE;
 
-    /* Save tab text */
-    GtkWidget *old_tab_widget = gtk_notebook_get_tab_label(src_nb, terminal);
-    const char *tab_text = "Terminal";
-    if (old_tab_widget) {
-        GtkWidget *inner = gtk_widget_get_first_child(old_tab_widget);
-        if (GTK_IS_LABEL(inner))
-            tab_text = gtk_label_get_text(GTK_LABEL(inner));
-    }
-    char saved_text[64];
-    snprintf(saved_text, sizeof(saved_text), "%s", tab_text);
-
-    /* True reparenting: move the terminal widget to the destination workspace */
-    GtkWidget *tab_widget = gtk_notebook_get_tab_label(src_nb, terminal);
-    if (tab_widget) g_object_ref(tab_widget);
-    g_object_ref(terminal);
-
-    if (src_ws)
-        g_ptr_array_remove(src_ws->terminals, terminal);
-    gtk_notebook_remove_page(src_nb, src_page);
-
-    /* Close empty source pane if needed */
-    if (src_ws && gtk_notebook_get_n_pages(src_nb) == 0 &&
-        src_ws->pane_notebooks && src_ws->pane_notebooks->len > 1) {
-        workspace_close_pane(src_ws, src_nb);
-    }
-
     GtkNotebook *dest_nb = GTK_NOTEBOOK(dest_ws->notebook);
-    g_ptr_array_add(dest_ws->terminals, terminal);
-    gtk_notebook_append_page(dest_nb, terminal, tab_widget);
-    gtk_notebook_set_tab_reorderable(dest_nb, terminal, TRUE);
-    gtk_notebook_set_tab_detachable(dest_nb, terminal, TRUE);
-
-    int last_page = gtk_notebook_get_n_pages(dest_nb) - 1;
-    gtk_notebook_set_current_page(dest_nb, last_page);
-
-    if (tab_widget) g_object_unref(tab_widget);
-    g_object_unref(terminal);
 
     /* Switch to dest workspace */
     if (g_terminal_stack && g_workspace_list)
         workspace_switch(dest_ws_idx, g_terminal_stack, g_workspace_list);
 
-    gtk_notebook_set_current_page(dest_nb,
-        gtk_notebook_get_n_pages(dest_nb) - 1);
-
-    session_queue_save();
-
-    return TRUE;
+    return move_terminal_to_notebook(src_ws, src_nb, terminal, dest_ws, dest_nb);
 }
 
 /* ── DnD: Setup drag source on tab labels ───────────────────────── */
@@ -921,7 +947,8 @@ workspace_add_terminal_to_notebook_cwd(Workspace *ws, GtkNotebook *notebook,
 
     gtk_notebook_append_page(notebook, terminal, tab_label);
     gtk_notebook_set_tab_reorderable(notebook, terminal, TRUE);
-    gtk_notebook_set_tab_detachable(notebook, terminal, TRUE);
+    gtk_notebook_set_tab_detachable(notebook, terminal, FALSE);
+    setup_tab_label_dnd(tab_label, terminal, notebook, ws);
 
     /* Connect title-changed to update the inner label (auto-disconnect on label destroy) */
     g_signal_connect_object(terminal, "title-changed",
@@ -964,6 +991,69 @@ void workspace_add_terminal_to_notebook_with_cwd(Workspace *ws,
 
 void workspace_set_shutting_down(void) {
     app_shutting_down = TRUE;
+}
+
+gboolean
+workspace_move_tab(int src_ws_idx, int src_pane_idx, int src_tab_idx,
+                   int dest_ws_idx, int dest_pane_idx)
+{
+    if (!workspaces ||
+        src_ws_idx < 0 || src_ws_idx >= (int)workspaces->len ||
+        dest_ws_idx < 0 || dest_ws_idx >= (int)workspaces->len)
+        return FALSE;
+
+    Workspace *src_ws = g_ptr_array_index(workspaces, src_ws_idx);
+    Workspace *dest_ws = g_ptr_array_index(workspaces, dest_ws_idx);
+    if (!src_ws || !dest_ws || !src_ws->pane_notebooks || !dest_ws->pane_notebooks)
+        return FALSE;
+
+    if (src_pane_idx < 0 || src_pane_idx >= (int)src_ws->pane_notebooks->len)
+        return FALSE;
+    if (dest_pane_idx < 0 || dest_pane_idx >= (int)dest_ws->pane_notebooks->len)
+        return FALSE;
+
+    GtkNotebook *src_nb = g_ptr_array_index(src_ws->pane_notebooks, src_pane_idx);
+    GtkNotebook *dest_nb = g_ptr_array_index(dest_ws->pane_notebooks, dest_pane_idx);
+    if (!GTK_IS_NOTEBOOK(src_nb) || !GTK_IS_NOTEBOOK(dest_nb))
+        return FALSE;
+    if (src_tab_idx < 0 || src_tab_idx >= gtk_notebook_get_n_pages(src_nb))
+        return FALSE;
+
+    GtkWidget *terminal = gtk_notebook_get_nth_page(src_nb, src_tab_idx);
+    if (!terminal)
+        return FALSE;
+
+    return move_terminal_to_notebook(src_ws, src_nb, terminal, dest_ws, dest_nb);
+}
+
+gboolean
+workspace_select_tab(int ws_idx, int pane_idx, int tab_idx)
+{
+    Workspace *ws;
+    GtkNotebook *nb;
+    GtkWidget *page;
+
+    if (!workspaces || ws_idx < 0 || ws_idx >= (int)workspaces->len)
+        return FALSE;
+
+    ws = g_ptr_array_index(workspaces, ws_idx);
+    if (!ws || !ws->pane_notebooks || pane_idx < 0 ||
+        pane_idx >= (int)ws->pane_notebooks->len)
+        return FALSE;
+
+    nb = g_ptr_array_index(ws->pane_notebooks, pane_idx);
+    if (!GTK_IS_NOTEBOOK(nb) || tab_idx < 0 ||
+        tab_idx >= gtk_notebook_get_n_pages(nb))
+        return FALSE;
+
+    if (ws_idx != current_workspace && g_terminal_stack && g_workspace_list)
+        workspace_switch(ws_idx, g_terminal_stack, g_workspace_list);
+
+    gtk_notebook_set_current_page(nb, tab_idx);
+    page = gtk_notebook_get_nth_page(nb, tab_idx);
+    focus_terminal_page(page);
+    focus_terminal_page_later(page);
+    return TRUE;
 }
 
 void workspace_start_tab_rename(Workspace *ws) {
@@ -1095,8 +1185,8 @@ create_pane_notebook(Workspace *ws, ghostty_app_t app)
     gtk_notebook_set_action_widget(GTK_NOTEBOOK(notebook), add_btn, GTK_PACK_END);
     gtk_widget_set_visible(add_btn, TRUE);
 
-    /* Enable native cross-pane tab dragging via notebook groups */
-    gtk_notebook_set_group_name(GTK_NOTEBOOK(notebook), "prettymux-panes");
+    /* Custom cross-pane dragging uses label DnD + notebook drop targets. */
+    setup_notebook_drop_target(GTK_NOTEBOOK(notebook));
 
     /* Track tabs being dragged in/out for workspace terminal arrays */
     g_signal_connect(notebook, "page-removed",
@@ -1375,13 +1465,8 @@ workspace_split_pane(Workspace *ws, GtkOrientation orientation,
         int last = gtk_notebook_get_n_pages(GTK_NOTEBOOK(new_nb)) - 1;
         if (last >= 0) {
             GtkWidget *page = gtk_notebook_get_nth_page(GTK_NOTEBOOK(new_nb), last);
-            if (page) {
-                GtkWidget *child = gtk_widget_get_first_child(page);
-                if (child)
-                    gtk_widget_grab_focus(child);
-                else
-                    gtk_widget_grab_focus(page);
-            }
+            if (page && GHOSTTY_IS_TERMINAL(page))
+                focus_terminal_page_later(page);
         }
     }
 }
@@ -1591,13 +1676,8 @@ workspace_navigate_pane(Workspace *ws, int dx, int dy)
     int pg = gtk_notebook_get_current_page(best);
     if (pg >= 0) {
         GtkWidget *page = gtk_notebook_get_nth_page(best, pg);
-        if (page) {
-            GtkWidget *child = gtk_widget_get_first_child(page);
-            if (child)
-                gtk_widget_grab_focus(child);
-            else
-                gtk_widget_grab_focus(page);
-        }
+        if (page && GHOSTTY_IS_TERMINAL(page))
+            focus_terminal_page_later(page);
     }
 }
 
@@ -1701,10 +1781,8 @@ workspace_close_pane(Workspace *ws, GtkNotebook *pane)
         int pg = gtk_notebook_get_current_page(GTK_NOTEBOOK(sibling));
         if (pg >= 0) {
             GtkWidget *page = gtk_notebook_get_nth_page(GTK_NOTEBOOK(sibling), pg);
-            if (page) {
-                GtkWidget *child = gtk_widget_get_first_child(page);
-                gtk_widget_grab_focus(child ? child : page);
-            }
+            if (page && GHOSTTY_IS_TERMINAL(page))
+                focus_terminal_page_later(page);
         }
     }
 }
@@ -1722,6 +1800,8 @@ on_notebook_switch_page(GtkNotebook *nb, GtkWidget *page,
     Workspace *ws = user_data;
 
     if (GHOSTTY_IS_TERMINAL(page)) {
+        focus_terminal_page(page);
+        focus_terminal_page_later(page);
         ghostty_terminal_clear_activity(GHOSTTY_TERMINAL(page));
         /* Refresh tab labels + sidebar to remove the dot */
         workspace_refresh_tab_labels(ws);

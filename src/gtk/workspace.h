@@ -127,6 +127,9 @@ void workspace_refresh_tab_labels(Workspace *ws);
  */
 gboolean workspace_has_activity(Workspace *ws);
 void workspace_set_shutting_down(void);
+gboolean workspace_move_tab(int src_ws_idx, int src_pane_idx, int src_tab_idx,
+                            int dest_ws_idx, int dest_pane_idx);
+gboolean workspace_select_tab(int ws_idx, int pane_idx, int tab_idx);
 
 /* Trigger inline rename on the current tab's label */
 void workspace_start_tab_rename(Workspace *ws);

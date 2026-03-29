@@ -470,6 +470,7 @@ on_focus_enter(GtkEventControllerFocus *controller, gpointer user_data)
         ghostty_surface_set_focus(self->surface, true);
 
     gtk_im_context_focus_in(self->im_context);
+    gtk_gl_area_queue_render(self->gl_area);
 }
 
 static void
@@ -482,6 +483,7 @@ on_focus_leave(GtkEventControllerFocus *controller, gpointer user_data)
         ghostty_surface_set_focus(self->surface, false);
 
     gtk_im_context_focus_out(self->im_context);
+    gtk_gl_area_queue_render(self->gl_area);
 }
 
 /* ── GObject lifecycle ─────────────────────────────────────────── */
@@ -791,6 +793,18 @@ ghostty_terminal_notify_child_exited(GhosttyTerminal *self,
     if (!self->exit_emitted) {
         self->exit_emitted = TRUE;
         g_signal_emit(self, signals[SIGNAL_PROCESS_EXITED], 0, (int)exit_code);
+    }
+}
+
+void
+ghostty_terminal_focus(GhosttyTerminal *self)
+{
+    g_return_if_fail(GHOSTTY_IS_TERMINAL(self));
+    if (self->gl_area) {
+        gtk_widget_grab_focus(GTK_WIDGET(self->gl_area));
+        if (self->surface)
+            ghostty_surface_set_focus(self->surface, true);
+        gtk_gl_area_queue_render(self->gl_area);
     }
 }
 
