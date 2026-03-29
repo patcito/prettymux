@@ -870,9 +870,6 @@ workspace_add_terminal_to_notebook_cwd(Workspace *ws, GtkNotebook *notebook,
     g_signal_connect_object(terminal, "title-changed",
                             G_CALLBACK(on_title_changed), inner_label, 0);
 
-    /* Set up DnD on the tab label */
-    setup_tab_label_dnd(tab_label, terminal, notebook, ws);
-
     gtk_widget_set_visible(terminal, TRUE);
     gtk_notebook_set_current_page(notebook,
         gtk_notebook_get_n_pages(notebook) - 1);
@@ -945,6 +942,57 @@ static void on_ws_add_tab_clicked(GtkButton *btn, gpointer data) {
     workspace_add_terminal(w, a);
 }
 
+/* ── Native DnD: close empty pane after tab is dragged out ──────── */
+
+static gboolean
+close_pane_idle_cb(gpointer user_data)
+{
+    GtkNotebook *notebook = GTK_NOTEBOOK(user_data);
+    Workspace *ws = g_object_get_data(G_OBJECT(notebook), "workspace-ptr");
+
+    if (ws && GTK_IS_NOTEBOOK(notebook) &&
+        gtk_notebook_get_n_pages(notebook) == 0 &&
+        ws->pane_notebooks && ws->pane_notebooks->len > 1) {
+        workspace_close_pane(ws, notebook);
+    }
+    g_object_unref(notebook);
+    return G_SOURCE_REMOVE;
+}
+
+static void
+on_notebook_page_removed(GtkNotebook *notebook, GtkWidget *child,
+                         guint page_num, gpointer user_data)
+{
+    (void)child; (void)page_num;
+    Workspace *ws = user_data;
+
+    /* Also update the terminals array — the child was moved out */
+    if (ws && GHOSTTY_IS_TERMINAL(child))
+        g_ptr_array_remove(ws->terminals, child);
+
+    if (gtk_notebook_get_n_pages(notebook) == 0 &&
+        ws && ws->pane_notebooks && ws->pane_notebooks->len > 1) {
+        g_object_set_data(G_OBJECT(notebook), "workspace-ptr", ws);
+        g_object_ref(notebook);
+        g_idle_add(close_pane_idle_cb, notebook);
+    }
+}
+
+static void
+on_notebook_page_added(GtkNotebook *notebook, GtkWidget *child,
+                       guint page_num, gpointer user_data)
+{
+    (void)notebook; (void)page_num;
+    Workspace *ws = user_data;
+
+    /* When a tab is dragged into this notebook, add it to our terminals array */
+    if (ws && GHOSTTY_IS_TERMINAL(child)) {
+        /* Only add if not already in this workspace's array */
+        if (!g_ptr_array_find(ws->terminals, child, NULL))
+            g_ptr_array_add(ws->terminals, child);
+    }
+}
+
 /* Helper: create a notebook for a new pane and wire up the "+" button. */
 static GtkWidget *
 create_pane_notebook(Workspace *ws, ghostty_app_t app)
@@ -961,8 +1009,14 @@ create_pane_notebook(Workspace *ws, ghostty_app_t app)
     gtk_notebook_set_action_widget(GTK_NOTEBOOK(notebook), add_btn, GTK_PACK_END);
     gtk_widget_set_visible(add_btn, TRUE);
 
-    /* Set up drop target so tabs can be dropped onto this notebook */
-    setup_notebook_drop_target(GTK_NOTEBOOK(notebook));
+    /* Enable native cross-pane tab dragging via notebook groups */
+    gtk_notebook_set_group_name(GTK_NOTEBOOK(notebook), "prettymux-panes");
+
+    /* Track tabs being dragged in/out for workspace terminal arrays */
+    g_signal_connect(notebook, "page-removed",
+                     G_CALLBACK(on_notebook_page_removed), ws);
+    g_signal_connect(notebook, "page-added",
+                     G_CALLBACK(on_notebook_page_added), ws);
 
     /* On tab switch, clear activity on the newly selected terminal */
     g_signal_connect(notebook, "switch-page",
