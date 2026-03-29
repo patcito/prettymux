@@ -392,7 +392,7 @@ focus_terminal_page_later(GtkWidget *page)
         return;
 
     g_object_ref(page);
-    g_idle_add(focus_terminal_page_idle_cb, page);
+    g_timeout_add(50, focus_terminal_page_idle_cb, page);
 }
 
 static void
