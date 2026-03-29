@@ -213,6 +213,48 @@ on_create_new_view(WebKitWebView *web_view G_GNUC_UNUSED,
     return GTK_WIDGET(temp);
 }
 
+/* ---------- Inspector embed handlers ---------- */
+
+static gboolean
+on_inspector_attach(WebKitWebInspector *inspector, gpointer user_data)
+{
+    BrowserTab *self = BROWSER_TAB(user_data);
+    GtkWidget *inspector_view = GTK_WIDGET(webkit_web_inspector_get_web_view(inspector));
+
+    gtk_widget_set_size_request(inspector_view, -1, 350);
+    gtk_widget_set_vexpand(inspector_view, FALSE);
+
+    /* Set 1.5x zoom on the inspector view for bigger fonts */
+    WebKitSettings *isettings = webkit_web_view_get_settings(
+        webkit_web_inspector_get_web_view(inspector));
+    webkit_settings_set_default_font_size(isettings, 24);
+
+    gtk_box_append(GTK_BOX(self), inspector_view);
+    return TRUE;
+}
+
+static gboolean
+on_inspector_detach(WebKitWebInspector *inspector, gpointer user_data)
+{
+    BrowserTab *self = BROWSER_TAB(user_data);
+    GtkWidget *inspector_view = GTK_WIDGET(webkit_web_inspector_get_web_view(inspector));
+
+    if (inspector_view && gtk_widget_get_parent(inspector_view) == GTK_WIDGET(self))
+        gtk_box_remove(GTK_BOX(self), inspector_view);
+    return FALSE;
+}
+
+static gboolean
+on_inspector_closed(WebKitWebInspector *inspector, gpointer user_data)
+{
+    BrowserTab *self = BROWSER_TAB(user_data);
+    GtkWidget *inspector_view = GTK_WIDGET(webkit_web_inspector_get_web_view(inspector));
+
+    if (inspector_view && gtk_widget_get_parent(inspector_view) == GTK_WIDGET(self))
+        gtk_box_remove(GTK_BOX(self), inspector_view);
+    return FALSE;
+}
+
 /* ---------- GObject boilerplate ---------- */
 
 static void
@@ -288,11 +330,17 @@ browser_tab_init(BrowserTab *self)
     gtk_widget_set_vexpand(GTK_WIDGET(self->web_view), TRUE);
     gtk_widget_set_hexpand(GTK_WIDGET(self->web_view), TRUE);
 
-    /* Enable developer tools (Web Inspector) */
+    /* Enable developer tools (Web Inspector) with 2x font size */
     WebKitSettings *settings = webkit_web_view_get_settings(self->web_view);
     webkit_settings_set_enable_developer_extras(settings, TRUE);
 
     gtk_box_append(GTK_BOX(self), GTK_WIDGET(self->web_view));
+
+    /* Wire inspector signals for embedded attach */
+    WebKitWebInspector *inspector = webkit_web_view_get_inspector(self->web_view);
+    g_signal_connect(inspector, "attach", G_CALLBACK(on_inspector_attach), self);
+    g_signal_connect(inspector, "detach", G_CALLBACK(on_inspector_detach), self);
+    g_signal_connect(inspector, "closed", G_CALLBACK(on_inspector_closed), self);
 
     /* --- connect signals --- */
     g_signal_connect(self->back_btn, "clicked",
@@ -381,6 +429,7 @@ browser_tab_show_inspector(BrowserTab *self)
 {
     g_return_if_fail(BROWSER_IS_TAB(self));
     WebKitWebInspector *inspector = webkit_web_view_get_inspector(self->web_view);
+    webkit_web_inspector_attach(inspector);
     webkit_web_inspector_show(inspector);
 }
 
