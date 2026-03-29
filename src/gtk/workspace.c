@@ -616,13 +616,8 @@ dnd_restore_cwd_cb(gpointer data)
         if (cmd && cmd[0]) {
             ghostty_surface_t surface =
                 ghostty_terminal_get_surface(GHOSTTY_TERMINAL(term));
-            if (surface) {
-                ghostty_input_key_s ke = {0};
-                ke.action = GHOSTTY_ACTION_PRESS;
-                ke.keycode = 0;
-                ke.text = cmd;
-                ghostty_surface_key(surface, ke);
-            }
+            if (surface)
+                ghostty_surface_text(surface, cmd, strlen(cmd));
             g_object_set_data(G_OBJECT(term), "restore-cwd", NULL);
         }
     }

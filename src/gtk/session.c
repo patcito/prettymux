@@ -436,12 +436,7 @@ session_restore_cwds_cb(gpointer data)
                 ghostty_surface_t surface =
                     ghostty_terminal_get_surface(GHOSTTY_TERMINAL(child));
                 if (surface) {
-                    /* Use ghostty_surface_key with text to type the command */
-                    ghostty_input_key_s ke = {0};
-                    ke.action = GHOSTTY_ACTION_PRESS;
-                    ke.keycode = 0;
-                    ke.text = cmd;
-                    ghostty_surface_key(surface, ke);
+                    ghostty_surface_text(surface, cmd, strlen(cmd));
                 }
                 /* Clear the restore data */
                 g_object_set_data(G_OBJECT(child), "restore-cwd", NULL);
