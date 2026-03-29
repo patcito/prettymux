@@ -148,6 +148,18 @@ void session_save(GtkWindow *window, GtkWidget *browser_notebook,
                             json_builder_set_member_name(b, "name");
                             json_builder_add_string_value(b, tab_name);
 
+                            /* Save whether this was a user-set custom name */
+                            gboolean is_custom = FALSE;
+                            if (tab_widget) {
+                                GtkWidget *inner2 =
+                                    gtk_widget_get_first_child(tab_widget);
+                                if (inner2 && g_object_get_data(
+                                        G_OBJECT(inner2), "user-renamed"))
+                                    is_custom = TRUE;
+                            }
+                            json_builder_set_member_name(b, "customName");
+                            json_builder_add_boolean_value(b, is_custom);
+
                             /* CWD */
                             const char *cwd = NULL;
                             if (GHOSTTY_IS_TERMINAL(child))
@@ -397,16 +409,18 @@ void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
                                     gtk_notebook_get_nth_page(nb, page_idx);
                                 GtkWidget *tab_w =
                                     gtk_notebook_get_tab_label(nb, child);
+                                gboolean is_custom =
+                                    json_object_get_boolean_member_with_default(
+                                        tab_obj, "customName", FALSE);
                                 if (tab_w) {
                                     GtkWidget *inner =
                                         gtk_widget_get_first_child(tab_w);
                                     if (GTK_IS_LABEL(inner)) {
                                         gtk_label_set_text(
                                             GTK_LABEL(inner), tab_name);
-                                        /* If not default "Terminal", mark as
-                                         * user-renamed so ghostty's title
-                                         * updates don't overwrite it */
-                                        if (strcmp(tab_name, "Terminal") != 0)
+                                        /* Only mark as user-renamed if
+                                         * the user explicitly set it */
+                                        if (is_custom)
                                             g_object_set_data(
                                                 G_OBJECT(inner),
                                                 "user-renamed",
