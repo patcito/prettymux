@@ -45,6 +45,8 @@ typedef struct {
 /* ── Forward declarations ───────────────────────────────────────── */
 
 static GtkWidget *create_pane_notebook(Workspace *ws, ghostty_app_t app);
+static void workspace_add_terminal_to_notebook_cwd(Workspace *ws,
+    GtkNotebook *notebook, ghostty_app_t app, const char *cwd);
 static void setup_tab_label_dnd(GtkWidget *label, GtkWidget *terminal,
                                 GtkNotebook *notebook, Workspace *ws);
 static void on_notebook_switch_page(GtkNotebook *nb, GtkWidget *page,
@@ -925,8 +927,16 @@ static void
 workspace_add_terminal_to_notebook(Workspace *ws, GtkNotebook *notebook,
                                    ghostty_app_t app)
 {
+    workspace_add_terminal_to_notebook_cwd(ws, notebook, app, NULL);
+}
+
+/* Add a terminal with a specific starting CWD */
+static void
+workspace_add_terminal_to_notebook_cwd(Workspace *ws, GtkNotebook *notebook,
+                                       ghostty_app_t app, const char *cwd)
+{
     (void)app;
-    GtkWidget *terminal = ghostty_terminal_new(NULL);
+    GtkWidget *terminal = ghostty_terminal_new(cwd);
     g_ptr_array_add(ws->terminals, terminal);
 
     GtkWidget *inner_label = NULL;
@@ -965,6 +975,13 @@ void workspace_add_terminal_to_notebook_external(Workspace *ws,
                                                   GtkNotebook *notebook,
                                                   ghostty_app_t app) {
     workspace_add_terminal_to_notebook(ws, notebook, app);
+}
+
+void workspace_add_terminal_to_notebook_with_cwd(Workspace *ws,
+                                                  GtkNotebook *notebook,
+                                                  ghostty_app_t app,
+                                                  const char *cwd) {
+    workspace_add_terminal_to_notebook_cwd(ws, notebook, app, cwd);
 }
 
 /* ── Workspace sidebar row ──────────────────────────────────────── */

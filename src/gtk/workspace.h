@@ -41,6 +41,10 @@ void workspace_add_terminal_to_focused(Workspace *ws, ghostty_app_t app);
 void workspace_add_terminal_to_notebook_external(Workspace *ws,
                                                   GtkNotebook *notebook,
                                                   ghostty_app_t app);
+void workspace_add_terminal_to_notebook_with_cwd(Workspace *ws,
+                                                  GtkNotebook *notebook,
+                                                  ghostty_app_t app,
+                                                  const char *cwd);
 
 /*
  * Git branch detection (async).

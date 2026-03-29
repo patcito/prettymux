@@ -6,7 +6,6 @@
 #include <json-glib/json-glib.h>
 #include <string.h>
 
-static gboolean session_restore_cwds_cb(gpointer data);
 
 static char *session_path(void) {
     char *dir = g_build_filename(g_get_home_dir(), ".prettymux", "sessions", NULL);
@@ -337,13 +336,50 @@ void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
                         guint n_tabs = json_array_get_length(tabs_arr);
                         guint ti;
 
-                        /* Create additional tabs */
-                        for (ti = 1; ti < n_tabs; ti++) {
-                            workspace_add_terminal_to_notebook_external(
-                                ws, nb, ghostty_app);
+                        /* Replace the auto-created first tab with one
+                         * that has the correct CWD, then create the rest. */
+                        if (n_tabs > 0) {
+                            JsonNode *first_node =
+                                json_array_get_element(tabs_arr, 0);
+                            const char *first_cwd = "";
+                            if (first_node && JSON_NODE_HOLDS_OBJECT(first_node)) {
+                                JsonObject *fo = json_node_get_object(first_node);
+                                first_cwd =
+                                    json_object_get_string_member_with_default(
+                                        fo, "cwd", "");
+                            }
+                            if (first_cwd[0]) {
+                                /* Remove the placeholder tab and create
+                                 * a new one with the correct CWD */
+                                int n_existing = gtk_notebook_get_n_pages(nb);
+                                if (n_existing > 0) {
+                                    GtkWidget *old = gtk_notebook_get_nth_page(nb, 0);
+                                    g_ptr_array_remove(ws->terminals, old);
+                                    gtk_notebook_remove_page(nb, 0);
+                                }
+                                workspace_add_terminal_to_notebook_with_cwd(
+                                    ws, nb, ghostty_app, first_cwd);
+                            }
                         }
 
-                        /* Set tab names + restore CWD */
+                        /* Create additional tabs (ti=1+) with saved CWD */
+                        for (ti = 1; ti < n_tabs; ti++) {
+                            JsonNode *tab_node =
+                                json_array_get_element(tabs_arr, ti);
+                            const char *saved_cwd = "";
+                            if (tab_node && JSON_NODE_HOLDS_OBJECT(tab_node)) {
+                                JsonObject *tab_obj =
+                                    json_node_get_object(tab_node);
+                                saved_cwd =
+                                    json_object_get_string_member_with_default(
+                                        tab_obj, "cwd", "");
+                            }
+                            workspace_add_terminal_to_notebook_with_cwd(
+                                ws, nb, ghostty_app,
+                                saved_cwd[0] ? saved_cwd : NULL);
+                        }
+
+                        /* Set tab names (CWD already handled above) */
                         for (ti = 0; ti < n_tabs; ti++) {
                             JsonNode *tab_node =
                                 json_array_get_element(tabs_arr, ti);
@@ -354,16 +390,11 @@ void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
                             const char *tab_name =
                                 json_object_get_string_member_with_default(
                                     tab_obj, "name", "Terminal");
-                            const char *saved_cwd =
-                                json_object_get_string_member_with_default(
-                                    tab_obj, "cwd", "");
 
                             int page_idx = (int)ti;
                             if (page_idx < gtk_notebook_get_n_pages(nb)) {
                                 GtkWidget *child =
                                     gtk_notebook_get_nth_page(nb, page_idx);
-
-                                /* Set tab name */
                                 GtkWidget *tab_w =
                                     gtk_notebook_get_tab_label(nb, child);
                                 if (tab_w) {
@@ -372,16 +403,6 @@ void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
                                     if (GTK_IS_LABEL(inner))
                                         gtk_label_set_text(
                                             GTK_LABEL(inner), tab_name);
-                                }
-
-                                /* Restore CWD: type cd command after delay */
-                                if (saved_cwd[0] && GHOSTTY_IS_TERMINAL(child)) {
-                                    char *cmd = g_strdup_printf(
-                                        "cd '%s' && clear\n",
-                                        saved_cwd);
-                                    /* Store cmd on the widget, type it after 800ms */
-                                    g_object_set_data_full(G_OBJECT(child),
-                                        "restore-cwd", cmd, g_free);
                                 }
                             }
                         }
@@ -407,41 +428,6 @@ void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
 
     g_object_unref(parser);
 
-    /* After 800ms, type 'cd <path> && clear' into terminals that had a saved CWD */
-    g_timeout_add(800, session_restore_cwds_cb, NULL);
+    /* CWD is now set via ghostty_terminal_new(cwd) — no cd hack needed */
 }
 
-static gboolean
-session_restore_cwds_cb(gpointer data)
-{
-    (void)data;
-    if (!workspaces) return G_SOURCE_REMOVE;
-
-    for (guint wi = 0; wi < workspaces->len; wi++) {
-        Workspace *ws = g_ptr_array_index(workspaces, wi);
-        if (!ws || !ws->pane_notebooks) continue;
-
-        for (guint pi = 0; pi < ws->pane_notebooks->len; pi++) {
-            GtkNotebook *nb = g_ptr_array_index(ws->pane_notebooks, pi);
-            if (!GTK_IS_NOTEBOOK(nb)) continue;
-
-            int n = gtk_notebook_get_n_pages(nb);
-            for (int ti = 0; ti < n; ti++) {
-                GtkWidget *child = gtk_notebook_get_nth_page(nb, ti);
-                if (!child || !GHOSTTY_IS_TERMINAL(child)) continue;
-
-                const char *cmd = g_object_get_data(G_OBJECT(child), "restore-cwd");
-                if (!cmd || !cmd[0]) continue;
-
-                ghostty_surface_t surface =
-                    ghostty_terminal_get_surface(GHOSTTY_TERMINAL(child));
-                if (surface) {
-                    ghostty_surface_text(surface, cmd, strlen(cmd));
-                }
-                /* Clear the restore data */
-                g_object_set_data(G_OBJECT(child), "restore-cwd", NULL);
-            }
-        }
-    }
-    return G_SOURCE_REMOVE;
-}
