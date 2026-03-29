@@ -250,7 +250,9 @@ static void add_browser_tab(const char *url);
 
 static void on_browser_title_changed(BrowserTab *bt, const char *title, gpointer lbl) {
     (void)bt;
-    char s[24]; snprintf(s, sizeof(s), "%.20s", title);
+    /* Bug 12 fix: guard against NULL title */
+    const char *safe_title = title ? title : "";
+    char s[24]; snprintf(s, sizeof(s), "%.20s", safe_title);
     gtk_label_set_text(GTK_LABEL(lbl), s);
 }
 
@@ -263,7 +265,10 @@ static void add_browser_tab(const char *url) {
     GtkWidget *tab = browser_tab_new(url);
     GtkWidget *label = gtk_label_new("Loading...");
 
-    g_signal_connect(tab, "title-changed", G_CALLBACK(on_browser_title_changed), label);
+    /* Bug 11 fix: tie signal lifetime to the label widget so the handler
+     * is automatically disconnected if the label is destroyed first. */
+    g_signal_connect_object(tab, "title-changed",
+                            G_CALLBACK(on_browser_title_changed), label, 0);
     g_signal_connect(tab, "new-tab-requested", G_CALLBACK(on_browser_new_tab_requested), NULL);
 
     int idx = gtk_notebook_append_page(GTK_NOTEBOOK(ui.browser_notebook), tab, label);
@@ -923,17 +928,83 @@ on_socket_command(const char  *command,
     }
 }
 
-// ── Ghostty action callback ──
+// ── Ghostty action callback (marshaled to GTK main thread) ──
+
+/*
+ * Bug 1 fix: action_cb is called from ghostty's renderer thread.
+ * GTK is not thread-safe, so we must marshal the entire action to the
+ * GTK main thread via g_idle_add.  We deep-copy any strings that the
+ * action references because they are only valid for the duration of
+ * the original callback.
+ */
+
+typedef struct {
+    ghostty_surface_t surface;
+    ghostty_action_s  action;
+    /* Deep-copied strings (freed in idle handler) */
+    char *str1;   /* url / title / pwd / body / needle */
+    char *str2;   /* notification title */
+} ActionIdleData;
+
+static void action_idle_data_free(ActionIdleData *d) {
+    g_free(d->str1);
+    g_free(d->str2);
+    g_free(d);
+}
+
+static gboolean action_idle_handler(gpointer user_data);
 
 static bool action_cb(ghostty_app_t app, ghostty_target_s target,
                        ghostty_action_s action)
 {
     (void)app;
 
-    /* Extract surface pointer from the target */
     ghostty_surface_t surface = NULL;
     if (target.tag == GHOSTTY_TARGET_SURFACE)
         surface = target.target.surface;
+
+    ActionIdleData *d = g_new0(ActionIdleData, 1);
+    d->surface = surface;
+    d->action  = action;   /* shallow copy of the struct */
+
+    /* Deep-copy any strings the action references, then patch the
+     * pointers inside the copy so the idle handler sees valid data. */
+    switch (action.tag) {
+    case GHOSTTY_ACTION_OPEN_URL:
+        d->str1 = g_strdup(action.action.open_url.url);
+        d->action.action.open_url.url = d->str1;
+        break;
+    case GHOSTTY_ACTION_DESKTOP_NOTIFICATION:
+        d->str1 = g_strdup(action.action.desktop_notification.body);
+        d->str2 = g_strdup(action.action.desktop_notification.title);
+        d->action.action.desktop_notification.body  = d->str1;
+        d->action.action.desktop_notification.title = d->str2;
+        break;
+    case GHOSTTY_ACTION_SET_TITLE:
+        d->str1 = g_strdup(action.action.set_title.title);
+        d->action.action.set_title.title = d->str1;
+        break;
+    case GHOSTTY_ACTION_PWD:
+        d->str1 = g_strdup(action.action.pwd.pwd);
+        d->action.action.pwd.pwd = d->str1;
+        break;
+    case GHOSTTY_ACTION_START_SEARCH:
+        d->str1 = g_strdup(action.action.start_search.needle);
+        d->action.action.start_search.needle = d->str1;
+        break;
+    default:
+        break;
+    }
+
+    g_idle_add(action_idle_handler, d);
+    return true;
+}
+
+static gboolean action_idle_handler(gpointer user_data)
+{
+    ActionIdleData *d = user_data;
+    ghostty_surface_t surface = d->surface;
+    ghostty_action_s action = d->action;
 
     switch (action.tag) {
 
@@ -942,7 +1013,7 @@ static bool action_cb(ghostty_app_t app, ghostty_target_s target,
             add_browser_tab(action.action.open_url.url);
             gtk_widget_set_visible(ui.browser_notebook, TRUE);
         }
-        return true;
+        break;
 
     case GHOSTTY_ACTION_DESKTOP_NOTIFICATION: {
         GError *nerr = NULL;
@@ -953,12 +1024,12 @@ static bool action_cb(ghostty_app_t app, ghostty_target_s target,
             "--app-name=prettymux", NULL);
         if (nproc) g_object_unref(nproc);
         else if (nerr) g_error_free(nerr);
-        return true;
+        break;
     }
 
     case GHOSTTY_ACTION_SET_TITLE: {
         if (!action.action.set_title.title)
-            return true;
+            break;
         SurfaceLookup loc = find_terminal_for_surface(surface);
         if (loc.terminal) {
             ghostty_terminal_set_title(loc.terminal,
@@ -970,12 +1041,12 @@ static bool action_cb(ghostty_app_t app, ghostty_target_s target,
                 workspace_refresh_sidebar_label(loc.workspace);
             }
         }
-        return true;
+        break;
     }
 
     case GHOSTTY_ACTION_PWD: {
         if (!action.action.pwd.pwd)
-            return true;
+            break;
         SurfaceLookup loc = find_terminal_for_surface(surface);
         if (loc.terminal) {
             ghostty_terminal_set_cwd(loc.terminal,
@@ -990,7 +1061,7 @@ static bool action_cb(ghostty_app_t app, ghostty_target_s target,
                                             loc.workspace->git_branch);
             }
         }
-        return true;
+        break;
     }
 
     case GHOSTTY_ACTION_COMMAND_FINISHED: {
@@ -1059,7 +1130,7 @@ static bool action_cb(ghostty_app_t app, ghostty_target_s target,
                 }
             }
         }
-        return true;
+        break;
     }
 
     case GHOSTTY_ACTION_RING_BELL: {
@@ -1106,7 +1177,7 @@ static bool action_cb(ghostty_app_t app, ghostty_target_s target,
                 else if (nerr) g_error_free(nerr);
             }
         }
-        return true;
+        break;
     }
 
     case GHOSTTY_ACTION_RENDER: {
@@ -1135,7 +1206,7 @@ static bool action_cb(ghostty_app_t app, ghostty_target_s target,
                 }
             }
         }
-        return true;
+        break;
     }
 
     case GHOSTTY_ACTION_SHOW_CHILD_EXITED: {
@@ -1145,7 +1216,7 @@ static bool action_cb(ghostty_app_t app, ghostty_target_s target,
                 loc.terminal,
                 action.action.child_exited.exit_code);
         }
-        return true;
+        break;
     }
 
     case GHOSTTY_ACTION_PROGRESS_REPORT: {
@@ -1164,19 +1235,20 @@ static bool action_cb(ghostty_app_t app, ghostty_target_s target,
             ghostty_terminal_set_progress(loc.terminal, state, pct);
             workspace_refresh_tab_labels(loc.workspace);
         }
-        return true;
+        break;
     }
 
     case GHOSTTY_ACTION_START_SEARCH:
     case GHOSTTY_ACTION_SEARCH_TOTAL:
     case GHOSTTY_ACTION_SEARCH_SELECTED:
-        return true;
+        break;
 
     default:
         break;
     }
 
-    return false;
+    action_idle_data_free(d);
+    return G_SOURCE_REMOVE;
 }
 
 // ── Sidebar ──

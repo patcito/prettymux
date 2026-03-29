@@ -688,6 +688,13 @@ on_notebook_drop(GtkDropTarget *target, const GValue *value,
         g_ptr_array_remove(src_ws->terminals, terminal);
     gtk_notebook_remove_page(src_nb, src_page);
 
+    /* Bug 7 fix: if source notebook is now empty and there are other
+     * panes in its workspace, close the empty pane. */
+    if (src_ws && gtk_notebook_get_n_pages(src_nb) == 0 &&
+        src_ws->pane_notebooks && src_ws->pane_notebooks->len > 1) {
+        workspace_close_pane(src_ws, src_nb);
+    }
+
     /* Find the destination workspace */
     Workspace *dest_ws = NULL;
     guint wi;
@@ -818,6 +825,13 @@ on_ws_sidebar_drop(GtkDropTarget *target, const GValue *value,
     if (src_ws)
         g_ptr_array_remove(src_ws->terminals, terminal);
     gtk_notebook_remove_page(src_nb, src_page);
+
+    /* Bug 7 fix: if source notebook is now empty and there are other
+     * panes in its workspace, close the empty pane. */
+    if (src_ws && gtk_notebook_get_n_pages(src_nb) == 0 &&
+        src_ws->pane_notebooks && src_ws->pane_notebooks->len > 1) {
+        workspace_close_pane(src_ws, src_nb);
+    }
 
     /* Create new terminal in destination workspace */
     GtkNotebook *dest_nb = GTK_NOTEBOOK(dest_ws->notebook);
@@ -1100,9 +1114,11 @@ void workspace_switch(int index, GtkWidget *terminal_stack, GtkWidget *workspace
         return;
     current_workspace = index;
 
-    char stack_name[32];
-    snprintf(stack_name, sizeof(stack_name), "ws-%d", index);
-    gtk_stack_set_visible_child_name(GTK_STACK(terminal_stack), stack_name);
+    /* Bug 9 fix: use the workspace's container widget directly instead of
+     * building a name string.  workspace_remove doesn't renumber stack
+     * children, so "ws-N" can become stale after deletions. */
+    Workspace *target = g_ptr_array_index(workspaces, index);
+    gtk_stack_set_visible_child(GTK_STACK(terminal_stack), target->container);
 
     GtkListBoxRow *row = gtk_list_box_get_row_at_index(GTK_LIST_BOX(workspace_list), index);
     if (row)
