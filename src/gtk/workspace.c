@@ -60,8 +60,8 @@ static void build_tab_label_text(GhosttyTerminal *term, const char *title,
 static void on_terminal_state_changed(GObject *obj, gpointer user_data);
 static void focus_terminal_page(GtkWidget *page);
 static void focus_terminal_page_later(GtkWidget *page);
-static void update_tab_drag_data(GtkWidget *label_widget, GtkWidget *terminal,
-                                 GtkNotebook *notebook, Workspace *ws);
+static GtkWidget *create_terminal_tab(Workspace *ws, GtkNotebook *notebook,
+                                      const char *cwd, int page_num);
 static gboolean move_terminal_to_notebook(Workspace *src_ws, GtkNotebook *src_nb,
                                           GtkWidget *terminal, Workspace *dest_ws,
                                           GtkNotebook *dest_nb);
@@ -395,31 +395,15 @@ focus_terminal_page_later(GtkWidget *page)
     g_timeout_add(50, focus_terminal_page_idle_cb, page);
 }
 
-static void
-update_tab_drag_data(GtkWidget *label_widget, GtkWidget *terminal,
-                     GtkNotebook *notebook, Workspace *ws)
-{
-    TabDragData *dd;
-
-    if (!label_widget)
-        return;
-
-    dd = g_object_get_data(G_OBJECT(label_widget), "tab-drag-data");
-    if (dd) {
-        dd->terminal = terminal;
-        dd->source_notebook = GTK_WIDGET(notebook);
-        dd->source_ws_idx = workspace_index_of(ws);
-        return;
-    }
-
-    setup_tab_label_dnd(label_widget, terminal, notebook, ws);
-}
-
 static gboolean
 move_terminal_to_notebook(Workspace *src_ws, GtkNotebook *src_nb,
                           GtkWidget *terminal, Workspace *dest_ws,
                           GtkNotebook *dest_nb)
 {
+    GtkWidget *new_terminal;
+    const char *cwd;
+    int dest_page;
+
     if (!src_ws || !dest_ws || !GTK_IS_NOTEBOOK(src_nb) ||
         !GTK_IS_NOTEBOOK(dest_nb) || !GHOSTTY_IS_TERMINAL(terminal))
         return FALSE;
@@ -431,10 +415,7 @@ move_terminal_to_notebook(Workspace *src_ws, GtkNotebook *src_nb,
     if (src_page < 0)
         return FALSE;
 
-    GtkWidget *tab_widget = gtk_notebook_get_tab_label(src_nb, terminal);
-    if (tab_widget)
-        g_object_ref(tab_widget);
-    g_object_ref(terminal);
+    cwd = ghostty_terminal_get_cwd(GHOSTTY_TERMINAL(terminal));
 
     g_ptr_array_remove(src_ws->terminals, terminal);
     gtk_notebook_remove_page(src_nb, src_page);
@@ -444,22 +425,11 @@ move_terminal_to_notebook(Workspace *src_ws, GtkNotebook *src_nb,
         workspace_close_pane(src_ws, src_nb);
     }
 
-    if (!g_ptr_array_find(dest_ws->terminals, terminal, NULL))
-        g_ptr_array_add(dest_ws->terminals, terminal);
-
-    gtk_notebook_append_page(dest_nb, terminal, tab_widget);
-    gtk_notebook_set_tab_reorderable(dest_nb, terminal, TRUE);
-    gtk_notebook_set_tab_detachable(dest_nb, terminal, FALSE);
-    update_tab_drag_data(tab_widget, terminal, dest_nb, dest_ws);
-
-    int dest_page = gtk_notebook_get_n_pages(dest_nb) - 1;
+    new_terminal = create_terminal_tab(dest_ws, dest_nb, cwd, -1);
+    dest_page = gtk_notebook_page_num(dest_nb, new_terminal);
     gtk_notebook_set_current_page(dest_nb, dest_page);
-    focus_terminal_page(terminal);
-    focus_terminal_page_later(terminal);
-
-    if (tab_widget)
-        g_object_unref(tab_widget);
-    g_object_unref(terminal);
+    focus_terminal_page(new_terminal);
+    focus_terminal_page_later(new_terminal);
 
     session_queue_save();
     return TRUE;
@@ -736,6 +706,36 @@ create_editable_tab_label(const char *text, GtkWidget *terminal,
     return box;
 }
 
+static GtkWidget *
+create_terminal_tab(Workspace *ws, GtkNotebook *notebook,
+                    const char *cwd, int page_num)
+{
+    GtkWidget *terminal = ghostty_terminal_new((cwd && cwd[0]) ? cwd : NULL);
+    GtkWidget *inner_label = NULL;
+    GtkWidget *tab_label = create_editable_tab_label(
+        "Terminal", terminal, ws, FALSE, &inner_label);
+
+    g_ptr_array_add(ws->terminals, terminal);
+
+    if (page_num >= 0)
+        gtk_notebook_insert_page(notebook, terminal, tab_label, page_num);
+    else
+        gtk_notebook_append_page(notebook, terminal, tab_label);
+
+    gtk_notebook_set_tab_reorderable(notebook, terminal, TRUE);
+    gtk_notebook_set_tab_detachable(notebook, terminal, TRUE);
+
+    g_signal_connect_object(terminal, "title-changed",
+                            G_CALLBACK(on_title_changed), inner_label, 0);
+    g_signal_connect(terminal, "title-changed",
+                     G_CALLBACK(on_terminal_state_changed), NULL);
+    g_signal_connect(terminal, "pwd-changed",
+                     G_CALLBACK(on_terminal_state_changed), NULL);
+
+    gtk_widget_set_visible(terminal, TRUE);
+    return terminal;
+}
+
 /* ── Feature 1: DnD - Tab drag source callbacks ─────────────────── */
 
 static GdkContentProvider *
@@ -937,30 +937,12 @@ static void
 workspace_add_terminal_to_notebook_cwd(Workspace *ws, GtkNotebook *notebook,
                                        ghostty_app_t app, const char *cwd)
 {
+    GtkWidget *terminal;
+
     (void)app;
-    GtkWidget *terminal = ghostty_terminal_new(cwd);
-    g_ptr_array_add(ws->terminals, terminal);
-
-    GtkWidget *inner_label = NULL;
-    GtkWidget *tab_label = create_editable_tab_label(
-        "Terminal", terminal, ws, FALSE, &inner_label);
-
-    gtk_notebook_append_page(notebook, terminal, tab_label);
-    gtk_notebook_set_tab_reorderable(notebook, terminal, TRUE);
-    gtk_notebook_set_tab_detachable(notebook, terminal, FALSE);
-    setup_tab_label_dnd(tab_label, terminal, notebook, ws);
-
-    /* Connect title-changed to update the inner label (auto-disconnect on label destroy) */
-    g_signal_connect_object(terminal, "title-changed",
-                            G_CALLBACK(on_title_changed), inner_label, 0);
-    g_signal_connect(terminal, "title-changed",
-                     G_CALLBACK(on_terminal_state_changed), NULL);
-    g_signal_connect(terminal, "pwd-changed",
-                     G_CALLBACK(on_terminal_state_changed), NULL);
-
-    gtk_widget_set_visible(terminal, TRUE);
+    terminal = create_terminal_tab(ws, notebook, cwd, -1);
     gtk_notebook_set_current_page(notebook,
-        gtk_notebook_get_n_pages(notebook) - 1);
+        gtk_notebook_page_num(notebook, terminal));
 }
 
 void workspace_add_terminal(Workspace *ws, ghostty_app_t app) {
@@ -1142,9 +1124,13 @@ on_notebook_page_removed(GtkNotebook *notebook, GtkWidget *child,
      * already saved before shutdown started. */
     if (app_shutting_down) return;
 
-    /* Also update the terminals array — the child was moved out */
-    if (ws && GHOSTTY_IS_TERMINAL(child))
+    /* Native cross-pane moves unrealize the terminal widget and kill the
+     * embedded ghostty surface. Tag it so the destination can hot-swap it. */
+    if (ws && GHOSTTY_IS_TERMINAL(child)) {
         g_ptr_array_remove(ws->terminals, child);
+        g_object_set_data(G_OBJECT(child), "cross-pane-drop",
+                          GINT_TO_POINTER(1));
+    }
 
     if (gtk_notebook_get_n_pages(notebook) == 0 &&
         ws && ws->pane_notebooks && ws->pane_notebooks->len > 1) {
@@ -1152,6 +1138,50 @@ on_notebook_page_removed(GtkNotebook *notebook, GtkWidget *child,
         g_object_ref(notebook);
         g_idle_add(close_pane_idle_cb, notebook);
     }
+}
+
+typedef struct {
+    GtkNotebook *notebook;
+    GtkWidget *frozen_child;
+    Workspace *ws;
+    char *cwd;
+} ReplaceData;
+
+static gboolean
+replace_frozen_tab_idle_cb(gpointer user_data)
+{
+    ReplaceData *rd = user_data;
+    GtkWidget *new_terminal = NULL;
+    int page_num;
+
+    if (!GTK_IS_NOTEBOOK(rd->notebook) || !GTK_IS_WIDGET(rd->frozen_child))
+        goto done;
+
+    page_num = gtk_notebook_page_num(rd->notebook, rd->frozen_child);
+    if (page_num >= 0) {
+        int frozen_page;
+
+        new_terminal = create_terminal_tab(rd->ws, rd->notebook, rd->cwd, page_num);
+        frozen_page = gtk_notebook_page_num(rd->notebook, rd->frozen_child);
+        if (frozen_page >= 0)
+            gtk_notebook_remove_page(rd->notebook, frozen_page);
+
+        page_num = gtk_notebook_page_num(rd->notebook, new_terminal);
+        if (page_num >= 0) {
+            gtk_notebook_set_current_page(rd->notebook, page_num);
+            focus_terminal_page(new_terminal);
+            focus_terminal_page_later(new_terminal);
+        }
+
+        session_queue_save();
+    }
+
+done:
+    g_object_unref(rd->frozen_child);
+    g_object_unref(rd->notebook);
+    g_free(rd->cwd);
+    g_free(rd);
+    return G_SOURCE_REMOVE;
 }
 
 static void
@@ -1163,6 +1193,21 @@ on_notebook_page_added(GtkNotebook *notebook, GtkWidget *child,
 
     /* When a tab is dragged into this notebook, add it to our terminals array */
     if (ws && GHOSTTY_IS_TERMINAL(child)) {
+        if (g_object_get_data(G_OBJECT(child), "cross-pane-drop")) {
+            ReplaceData *rd;
+            const char *cwd = ghostty_terminal_get_cwd(GHOSTTY_TERMINAL(child));
+
+            g_object_set_data(G_OBJECT(child), "cross-pane-drop", NULL);
+
+            rd = g_new0(ReplaceData, 1);
+            rd->notebook = g_object_ref(notebook);
+            rd->frozen_child = g_object_ref(child);
+            rd->ws = ws;
+            rd->cwd = g_strdup((cwd && cwd[0]) ? cwd : ws->cwd);
+            g_idle_add(replace_frozen_tab_idle_cb, rd);
+            return;
+        }
+
         /* Only add if not already in this workspace's array */
         if (!g_ptr_array_find(ws->terminals, child, NULL))
             g_ptr_array_add(ws->terminals, child);
@@ -1189,8 +1234,8 @@ create_pane_notebook(Workspace *ws, ghostty_app_t app)
     gtk_notebook_set_action_widget(GTK_NOTEBOOK(notebook), add_btn, GTK_PACK_END);
     gtk_widget_set_visible(add_btn, TRUE);
 
-    /* Custom cross-pane dragging uses label DnD + notebook drop targets. */
-    setup_notebook_drop_target(GTK_NOTEBOOK(notebook));
+    /* Native notebook DnD gives proper tab tear/reorder visuals. */
+    gtk_notebook_set_group_name(GTK_NOTEBOOK(notebook), "prettymux-panes");
 
     /* Track tabs being dragged in/out for workspace terminal arrays */
     g_signal_connect(notebook, "page-removed",
