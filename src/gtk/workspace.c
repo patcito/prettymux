@@ -1,6 +1,7 @@
 #include "workspace.h"
 #include "ghostty_terminal.h"
 #include "resize_overlay.h"
+#include "session.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -56,6 +57,7 @@ typedef struct _RenameData RenameData;
 static void finish_rename(GtkEntry *entry, RenameData *rd);
 static void build_tab_label_text(GhosttyTerminal *term, const char *title,
                                  char *buf, size_t bufsz);
+static void on_terminal_state_changed(GObject *obj, gpointer user_data);
 
 /* Context menu data for sidebar rows (defined later) */
 typedef struct {
@@ -350,6 +352,14 @@ build_tab_label_text(GhosttyTerminal *term, const char *title, char *buf, size_t
     snprintf(buf, bufsz, "%s%s%s", activity_prefix, short_title, progress_suffix);
 }
 
+static void
+on_terminal_state_changed(GObject *obj, gpointer user_data)
+{
+    (void)obj;
+    (void)user_data;
+    session_queue_save();
+}
+
 static void on_title_changed(GhosttyTerminal *term, const char *title, gpointer label_ptr) {
     /* Skip if rename is in progress or label was destroyed/unparented */
     if (!GTK_IS_LABEL(label_ptr)) return;
@@ -458,7 +468,10 @@ finish_rename(GtkEntry *entry, RenameData *rd)
 
     GtkEntryBuffer *buf = gtk_entry_get_buffer(GTK_ENTRY(entry));
     const char *new_text = gtk_entry_buffer_get_text(buf);
+    const char *old_text = gtk_label_get_text(GTK_LABEL(rd->label));
+    gboolean changed = FALSE;
     if (new_text && new_text[0]) {
+        changed = g_strcmp0(new_text, old_text) != 0;
         gtk_label_set_text(GTK_LABEL(rd->label), new_text);
         /* Mark as user-renamed so ghostty title changes don't overwrite */
         if (!rd->is_workspace_row)
@@ -487,6 +500,9 @@ finish_rename(GtkEntry *entry, RenameData *rd)
     /* Now safe to refresh sidebar */
     if (rd->is_workspace_row && rd->workspace)
         workspace_refresh_sidebar_label(rd->workspace);
+
+    if (changed)
+        session_queue_save();
 }
 
 static void
@@ -565,6 +581,8 @@ on_tab_close_clicked(GtkButton *btn, gpointer user_data)
         ws->pane_notebooks && ws->pane_notebooks->len > 1) {
         workspace_close_pane(ws, nb);
     }
+
+    session_queue_save();
 }
 
 static GtkWidget *
@@ -734,6 +752,8 @@ on_notebook_drop(GtkDropTarget *target, const GValue *value,
     if (tab_widget) g_object_unref(tab_widget);
     g_object_unref(terminal);
 
+    session_queue_save();
+
     return TRUE;
 }
 
@@ -827,6 +847,8 @@ on_ws_sidebar_drop(GtkDropTarget *target, const GValue *value,
     gtk_notebook_set_current_page(dest_nb,
         gtk_notebook_get_n_pages(dest_nb) - 1);
 
+    session_queue_save();
+
     return TRUE;
 }
 
@@ -904,6 +926,10 @@ workspace_add_terminal_to_notebook_cwd(Workspace *ws, GtkNotebook *notebook,
     /* Connect title-changed to update the inner label (auto-disconnect on label destroy) */
     g_signal_connect_object(terminal, "title-changed",
                             G_CALLBACK(on_title_changed), inner_label, 0);
+    g_signal_connect(terminal, "title-changed",
+                     G_CALLBACK(on_terminal_state_changed), NULL);
+    g_signal_connect(terminal, "pwd-changed",
+                     G_CALLBACK(on_terminal_state_changed), NULL);
 
     gtk_widget_set_visible(terminal, TRUE);
     gtk_notebook_set_current_page(notebook,
@@ -994,6 +1020,7 @@ static void on_ws_add_tab_clicked(GtkButton *btn, gpointer data) {
     Workspace *w = g_object_get_data(G_OBJECT(btn), "workspace");
     ghostty_app_t a = g_object_get_data(G_OBJECT(btn), "app");
     workspace_add_terminal(w, a);
+    session_queue_save();
 }
 
 /* ── Native DnD: close empty pane after tab is dragged out ──────── */

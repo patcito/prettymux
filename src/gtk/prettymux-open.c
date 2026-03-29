@@ -13,7 +13,9 @@
  *   prettymux-open --new-workspace [name]         Create a new workspace
  *   prettymux-open --new-tab                      Create a new terminal tab
  *   prettymux-open --list-workspaces              List all workspaces
+ *   prettymux-open --list-tabs                    List workspaces/panes/tabs
  *   prettymux-open --list-actions                 List all available actions
+ *   prettymux-open --quit                         Close prettymux cleanly
  *   prettymux-open --switch-workspace <n>         Switch to workspace N
  */
 
@@ -36,7 +38,9 @@ usage(void)
         "       prettymux-open --new-workspace [name]   Create workspace\n"
         "       prettymux-open --new-tab                New terminal tab\n"
         "       prettymux-open --list-workspaces        List workspaces\n"
+        "       prettymux-open --list-tabs              List workspaces, panes, tabs\n"
         "       prettymux-open --list-actions           List all actions\n"
+        "       prettymux-open --quit                   Close prettymux cleanly\n"
         "       prettymux-open --switch-workspace <n>   Switch to workspace N\n"
         "\n"
         "Targeting (for --exec, --type):\n"
@@ -285,8 +289,16 @@ main(int argc, char *argv[])
         return send_command("{\"command\":\"workspace.list\"}");
     }
 
+    if (strcmp(arg, "--list-tabs") == 0) {
+        return send_command("{\"command\":\"tabs.list\"}");
+    }
+
     if (strcmp(arg, "--list-actions") == 0) {
         return send_command("{\"command\":\"list.actions\"}");
+    }
+
+    if (strcmp(arg, "--quit") == 0) {
+        return send_command("{\"command\":\"app.quit\"}");
     }
 
     if (strcmp(arg, "--switch-workspace") == 0) {

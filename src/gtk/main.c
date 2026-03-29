@@ -102,6 +102,15 @@ static void bell_button_update(void) {
     }
 }
 
+static gboolean
+quit_window_idle_cb(gpointer data)
+{
+    (void)data;
+    if (g_main_window)
+        gtk_window_close(g_main_window);
+    return G_SOURCE_REMOVE;
+}
+
 /* ── Notification click-to-navigate ── */
 
 /*
@@ -261,6 +270,7 @@ static void on_browser_title_changed(BrowserTab *bt, const char *title, gpointer
 static void on_browser_new_tab_requested(BrowserTab *bt, const char *url, gpointer d) {
     (void)bt; (void)d;
     add_browser_tab(url);
+    session_queue_save();
 }
 
 static void add_browser_tab(const char *url) {
@@ -300,11 +310,6 @@ on_clipboard_text_received(GObject *source, GAsyncResult *result,
 // ── Action dispatch ──
 
 static void save_session_now(void);
-static gboolean save_session_idle(gpointer d) {
-    (void)d;
-    save_session_now();
-    return G_SOURCE_REMOVE;
-}
 
 static void handle_action(const char *action) {
     if (strcmp(action, "workspace.new") == 0) {
@@ -500,8 +505,7 @@ static void handle_action(const char *action) {
         }
     }
 
-    /* Defer session save to idle so we don't block the current handler */
-    g_idle_add((GSourceFunc)save_session_idle, NULL);
+    session_queue_save();
 }
 
 // ── Keyboard handler (capture phase) ──
@@ -582,6 +586,7 @@ static gboolean on_key_pressed(GtkEventControllerKey *ctrl, guint keyval,
                     gtk_notebook_remove_page(
                         GTK_NOTEBOOK(ui.browser_notebook), pg);
                     (void)child;
+                    session_queue_save();
                 }
                 return TRUE;
             }
@@ -592,6 +597,7 @@ static gboolean on_key_pressed(GtkEventControllerKey *ctrl, guint keyval,
     if (mods == GDK_CONTROL_MASK && lower == GDK_KEY_t) {
         add_browser_tab("https://prettymux-web.vercel.app/?prettymux=t");
         gtk_widget_set_visible(ui.browser_notebook, TRUE);
+        session_queue_save();
         return TRUE;
     }
 
@@ -709,7 +715,93 @@ on_socket_command(const char  *command,
 {
     (void)user_data;
 
-    if (strcmp(command, "browser.open") == 0) {
+    if (strcmp(command, "tabs.list") == 0) {
+        json_builder_set_member_name(response, "status");
+        json_builder_add_string_value(response, "ok");
+        json_builder_set_member_name(response, "activeWorkspace");
+        json_builder_add_int_value(response, current_workspace);
+        json_builder_set_member_name(response, "workspaces");
+        json_builder_begin_array(response);
+        if (workspaces) {
+            guint wi;
+            for (wi = 0; wi < workspaces->len; wi++) {
+                Workspace *ws = g_ptr_array_index(workspaces, wi);
+                json_builder_begin_object(response);
+                json_builder_set_member_name(response, "index");
+                json_builder_add_int_value(response, (int)wi);
+                json_builder_set_member_name(response, "name");
+                json_builder_add_string_value(response, ws->name);
+                json_builder_set_member_name(response, "active");
+                json_builder_add_boolean_value(response,
+                    (int)wi == current_workspace);
+                json_builder_set_member_name(response, "panes");
+                json_builder_begin_array(response);
+                if (ws->pane_notebooks) {
+                    guint pi;
+                    for (pi = 0; pi < ws->pane_notebooks->len; pi++) {
+                        GtkNotebook *nb = g_ptr_array_index(ws->pane_notebooks, pi);
+                        json_builder_begin_object(response);
+                        json_builder_set_member_name(response, "index");
+                        json_builder_add_int_value(response, (int)pi);
+                        json_builder_set_member_name(response, "activeTab");
+                        json_builder_add_int_value(response,
+                            GTK_IS_NOTEBOOK(nb)
+                                ? gtk_notebook_get_current_page(nb)
+                                : -1);
+                        json_builder_set_member_name(response, "tabs");
+                        json_builder_begin_array(response);
+                        if (GTK_IS_NOTEBOOK(nb)) {
+                            int n_pages = gtk_notebook_get_n_pages(nb);
+                            int ti;
+                            for (ti = 0; ti < n_pages; ti++) {
+                                GtkWidget *child =
+                                    gtk_notebook_get_nth_page(nb, ti);
+                                const char *tab_name = "Terminal";
+                                gboolean is_custom = FALSE;
+                                GtkWidget *tab_widget =
+                                    gtk_notebook_get_tab_label(nb, child);
+                                if (tab_widget) {
+                                    for (GtkWidget *w = gtk_widget_get_first_child(tab_widget);
+                                         w; w = gtk_widget_get_next_sibling(w)) {
+                                        if (GTK_IS_LABEL(w)) {
+                                            tab_name = gtk_label_get_text(GTK_LABEL(w));
+                                            if (g_object_get_data(G_OBJECT(w), "user-renamed"))
+                                                is_custom = TRUE;
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                const char *pwd = NULL;
+                                if (GHOSTTY_IS_TERMINAL(child))
+                                    pwd = ghostty_terminal_get_cwd(GHOSTTY_TERMINAL(child));
+
+                                json_builder_begin_object(response);
+                                json_builder_set_member_name(response, "index");
+                                json_builder_add_int_value(response, ti);
+                                json_builder_set_member_name(response, "name");
+                                json_builder_add_string_value(response,
+                                    tab_name ? tab_name : "Terminal");
+                                json_builder_set_member_name(response, "customName");
+                                json_builder_add_boolean_value(response, is_custom);
+                                json_builder_set_member_name(response, "pwd");
+                                json_builder_add_string_value(response, pwd ? pwd : "");
+                                json_builder_set_member_name(response, "active");
+                                json_builder_add_boolean_value(response,
+                                    ti == gtk_notebook_get_current_page(nb));
+                                json_builder_end_object(response);
+                            }
+                        }
+                        json_builder_end_array(response);
+                        json_builder_end_object(response);
+                    }
+                }
+                json_builder_end_array(response);
+                json_builder_end_object(response);
+            }
+        }
+        json_builder_end_array(response);
+    } else if (strcmp(command, "browser.open") == 0) {
         const char *url = json_object_get_string_member_with_default(
             msg, "url", "");
         if (url && url[0]) {
@@ -959,6 +1051,13 @@ on_socket_command(const char  *command,
         g_free(dir);
         json_builder_set_member_name(response, "status");
         json_builder_add_string_value(response, "ok");
+    } else if (strcmp(command, "app.quit") == 0) {
+        session_begin_shutdown();
+        workspace_set_shutting_down();
+        save_session_now();
+        json_builder_set_member_name(response, "status");
+        json_builder_add_string_value(response, "ok");
+        g_idle_add(quit_window_idle_cb, NULL);
     } else if (strcmp(command, "list.actions") == 0) {
         /* List all available actions */
         json_builder_set_member_name(response, "status");
@@ -973,7 +1072,9 @@ on_socket_command(const char  *command,
         json_builder_add_string_value(response, "workspace.new");
         json_builder_add_string_value(response, "workspace.list");
         json_builder_add_string_value(response, "workspace.switch");
+        json_builder_add_string_value(response, "tabs.list");
         json_builder_add_string_value(response, "tab.new");
+        json_builder_add_string_value(response, "app.quit");
         json_builder_add_string_value(response, "exec");
         json_builder_add_string_value(response, "type");
         json_builder_end_array(response);
@@ -986,9 +1087,11 @@ on_socket_command(const char  *command,
 
     /* Defer session save to idle — don't block the socket handler */
     if (strcmp(command, "workspace.list") != 0 &&
+        strcmp(command, "tabs.list") != 0 &&
         strcmp(command, "list.actions") != 0 &&
+        strcmp(command, "app.quit") != 0 &&
         strcmp(command, "tab.edit") != 0) {
-        g_idle_add((GSourceFunc)save_session_idle, NULL);
+        session_queue_save();
     }
 }
 
@@ -1092,7 +1195,8 @@ static gboolean action_idle_handler(gpointer user_data)
     }
 
     case GHOSTTY_ACTION_SET_TITLE: {
-        if (!action.action.set_title.title)
+        if (!action.action.set_title.title ||
+            !action.action.set_title.title[0])
             break;
         SurfaceLookup loc = find_terminal_for_surface(surface);
         if (loc.terminal) {
@@ -1109,7 +1213,8 @@ static gboolean action_idle_handler(gpointer user_data)
     }
 
     case GHOSTTY_ACTION_PWD: {
-        if (!action.action.pwd.pwd)
+        if (!action.action.pwd.pwd ||
+            !action.action.pwd.pwd[0])
             break;
         SurfaceLookup loc = find_terminal_for_surface(surface);
         if (loc.terminal) {
@@ -1320,6 +1425,7 @@ static gboolean action_idle_handler(gpointer user_data)
 static void on_workspace_row_activated(GtkListBox *list, GtkListBoxRow *row, gpointer d) {
     (void)list; (void)d;
     workspace_switch(gtk_list_box_row_get_index(row), ui.terminal_stack, ui.workspace_list);
+    session_queue_save();
 }
 
 // ── Build window ──
@@ -1378,6 +1484,7 @@ static void build_sidebar(void) {
 static void on_new_browser_tab_clicked(GtkButton *b, gpointer d) {
     (void)b; (void)d;
     add_browser_tab("https://prettymux-web.vercel.app/?prettymux=t");
+    session_queue_save();
 }
 
 static void build_browser(void) {
@@ -1406,10 +1513,13 @@ static void save_session_now(void) {
 
 static gboolean on_close_request(GtkWindow *w, gpointer d) {
     (void)w; (void)d;
-    save_session_now();
+    session_begin_shutdown();
     workspace_set_shutting_down(); /* Prevent page-removed from clearing tabs */
     port_scanner_stop();
     socket_server_stop();
+    GApplication *app = g_application_get_default();
+    if (app)
+        g_application_quit(app);
     return FALSE;
 }
 
@@ -1640,6 +1750,9 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
                                              ui.workspace_list);
     gtk_widget_set_visible(ui.command_palette, FALSE);
     gtk_overlay_add_overlay(GTK_OVERLAY(ui.overlay), ui.command_palette);
+
+    session_set_context(GTK_WINDOW(window), ui.browser_notebook,
+                        ui.terminal_stack, ui.workspace_list);
 
     // Create initial workspace + restore or create defaults
     workspace_add(ui.terminal_stack, ui.workspace_list, g_ghostty_app);

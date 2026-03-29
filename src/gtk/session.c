@@ -6,6 +6,12 @@
 #include <json-glib/json-glib.h>
 #include <string.h>
 
+static GtkWindow *session_window = NULL;
+static GtkWidget *session_browser_notebook = NULL;
+static GtkWidget *session_terminal_stack = NULL;
+static GtkWidget *session_workspace_list = NULL;
+static guint session_save_source_id = 0;
+static gboolean session_shutting_down = FALSE;
 
 static char *session_path(void) {
     char *dir = g_build_filename(g_get_home_dir(), ".prettymux", "sessions", NULL);
@@ -20,6 +26,53 @@ gboolean session_exists(void) {
     gboolean exists = g_file_test(path, G_FILE_TEST_EXISTS);
     g_free(path);
     return exists;
+}
+
+static gboolean session_save_idle_cb(gpointer data) {
+    (void)data;
+    session_save_source_id = 0;
+
+    if (session_window && session_browser_notebook &&
+        session_terminal_stack && session_workspace_list) {
+        session_save(session_window, session_browser_notebook,
+                     session_terminal_stack, session_workspace_list);
+    }
+
+    return G_SOURCE_REMOVE;
+}
+
+void session_set_context(GtkWindow *window, GtkWidget *browser_notebook,
+                         GtkWidget *terminal_stack, GtkWidget *workspace_list)
+{
+    session_window = window;
+    session_browser_notebook = browser_notebook;
+    session_terminal_stack = terminal_stack;
+    session_workspace_list = workspace_list;
+    session_shutting_down = FALSE;
+}
+
+void session_begin_shutdown(void)
+{
+    session_shutting_down = TRUE;
+    if (session_save_source_id != 0) {
+        g_source_remove(session_save_source_id);
+        session_save_source_id = 0;
+    }
+}
+
+void session_queue_save(void)
+{
+    if (session_shutting_down)
+        return;
+
+    if (!session_window || !session_browser_notebook ||
+        !session_terminal_stack || !session_workspace_list)
+        return;
+
+    if (session_save_source_id != 0)
+        return;
+
+    session_save_source_id = g_idle_add(session_save_idle_cb, NULL);
 }
 
 void session_save(GtkWindow *window, GtkWidget *browser_notebook,
@@ -151,6 +204,9 @@ void session_save(GtkWindow *window, GtkWidget *browser_notebook,
                                     }
                                 }
                             }
+                            json_builder_set_member_name(b, "name");
+                            json_builder_add_string_value(b,
+                                tab_name ? tab_name : "Terminal");
                             json_builder_set_member_name(b, "customName");
                             json_builder_add_boolean_value(b, is_custom);
 
@@ -446,4 +502,3 @@ void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
 
     /* CWD is now set via ghostty_terminal_new(cwd) — no cd hack needed */
 }
-

@@ -7,6 +7,10 @@
  * Allows the caller (main.c) to wire up signal handlers. */
 typedef void (*SessionAddBrowserTabFunc)(const char *url);
 
+void session_set_context(GtkWindow *window, GtkWidget *browser_notebook,
+                         GtkWidget *terminal_stack, GtkWidget *workspace_list);
+void session_begin_shutdown(void);
+void session_queue_save(void);
 void session_save(GtkWindow *window, GtkWidget *browser_notebook,
                   GtkWidget *terminal_stack, GtkWidget *workspace_list);
 void session_restore(GtkWindow *window, GtkWidget *browser_notebook,

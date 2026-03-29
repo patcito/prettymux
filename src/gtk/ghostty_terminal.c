@@ -712,8 +712,10 @@ GtkWidget *
 ghostty_terminal_new(const char *start_cwd)
 {
     GhosttyTerminal *self = g_object_new(GHOSTTY_TYPE_TERMINAL, NULL);
-    if (start_cwd && *start_cwd)
+    if (start_cwd && *start_cwd) {
         self->start_cwd = g_strdup(start_cwd);
+        self->cwd = g_strdup(start_cwd);
+    }
     return GTK_WIDGET(self);
 }
 
