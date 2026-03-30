@@ -96,7 +96,13 @@ elif is_macos
   platform_link_args += [
     ghostty_macos_lib,
     '-framework', 'Cocoa',
+    '-framework', 'Carbon',
+    '-framework', 'CoreVideo',
+    '-framework', 'IOSurface',
+    '-framework', 'Metal',
+    '-framework', 'QuartzCore',
     '-framework', 'WebKit',
+    '-lc++',
   ]
 elif is_windows
   webview2_sdk_dir = get_option('webview2_sdk_dir')
