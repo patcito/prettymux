@@ -8,7 +8,7 @@ if(APPLE)
     enable_language(OBJCXX)
 endif()
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGLWidgets Network)
+find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGLWidgets)
 if(NOT APPLE AND NOT WIN32)
     find_package(Qt6 REQUIRED COMPONENTS WebEngineWidgets)
 endif()
@@ -62,7 +62,6 @@ target_link_directories(prettymux PRIVATE ${GHOSTTY_LIB_DIR})
 target_link_libraries(prettymux PRIVATE
     Qt6::Widgets
     Qt6::OpenGLWidgets
-    Qt6::Network
     ghostty
 )
 
