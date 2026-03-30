@@ -18,6 +18,7 @@
 #include "shortcuts.h"
 #include "workspace.h"
 #include "session.h"
+#include "close_confirm.h"
 #include "command_palette.h"
 #include "port_scanner.h"
 #include "socket_server.h"
@@ -29,6 +30,7 @@
 
 ghostty_app_t g_ghostty_app = NULL;
 static GtkWindow *g_main_window = NULL;
+static gboolean g_app_quit_in_progress = FALSE;
 
 // Widget references for the main window layout
 static struct {
@@ -122,15 +124,6 @@ static void bell_button_update(void) {
     } else {
         gtk_button_set_label(GTK_BUTTON(ui.bell_button), "\360\237\224\224");
     }
-}
-
-static gboolean
-quit_window_idle_cb(gpointer data)
-{
-    (void)data;
-    if (g_main_window)
-        gtk_window_close(g_main_window);
-    return G_SOURCE_REMOVE;
 }
 
 /* ── Notification click-to-navigate ── */
@@ -327,6 +320,10 @@ on_clipboard_text_received(GObject *source, GAsyncResult *result,
 // ── Action dispatch ──
 
 static void save_session_now(void);
+static gboolean quit_window_idle_cb(gpointer data);
+static void request_close_current_browser_tab(void);
+static void request_close_current_tab(Workspace *ws);
+static void request_close_current_pane(Workspace *ws);
 
 static void handle_action(const char *action) {
     if (g_str_has_prefix(action, "workspace.focus.")) {
@@ -382,15 +379,7 @@ static void handle_action(const char *action) {
         add_browser_tab("https://prettymux-web.vercel.app/?prettymux=t");
         gtk_widget_set_visible(ui.browser_notebook, TRUE);
     } else if (strcmp(action, "browser.tab.close") == 0) {
-        if (gtk_widget_get_visible(ui.browser_notebook)) {
-            int n = gtk_notebook_get_n_pages(GTK_NOTEBOOK(ui.browser_notebook));
-            if (n > 1) {
-                int pg = gtk_notebook_get_current_page(
-                    GTK_NOTEBOOK(ui.browser_notebook));
-                if (pg >= 0)
-                    gtk_notebook_remove_page(GTK_NOTEBOOK(ui.browser_notebook), pg);
-            }
-        }
+        request_close_current_browser_tab();
     } else if (strcmp(action, "devtools.docked") == 0 || strcmp(action, "devtools.window") == 0) {
         int pg = gtk_notebook_get_current_page(GTK_NOTEBOOK(ui.browser_notebook));
         if (pg >= 0) {
@@ -423,41 +412,9 @@ static void handle_action(const char *action) {
             }
         }
     } else if (strcmp(action, "tab.close") == 0) {
-        Workspace *ws = workspace_get_current();
-        if (ws) {
-            GtkNotebook *focused = workspace_get_focused_pane(ws);
-            if (focused && GTK_IS_NOTEBOOK(focused)) {
-                int n_pages = gtk_notebook_get_n_pages(focused);
-                int pg = gtk_notebook_get_current_page(focused);
-                if (pg >= 0) {
-                    if (n_pages <= 1 &&
-                        (!ws->pane_notebooks || ws->pane_notebooks->len <= 1))
-                        return;
-
-                    GtkWidget *child = gtk_notebook_get_nth_page(focused, pg);
-                    GtkWidget *terminal = page_linked_terminal(child);
-                    if (terminal) {
-                        g_ptr_array_remove(ws->terminals, terminal);
-                        if (ws->overlay)
-                            gtk_overlay_remove_overlay(GTK_OVERLAY(ws->overlay),
-                                                       terminal);
-                    }
-                    gtk_notebook_remove_page(focused, pg);
-
-                    if (gtk_notebook_get_n_pages(focused) == 0 &&
-                        ws->pane_notebooks && ws->pane_notebooks->len > 1)
-                        workspace_close_pane(ws, focused);
-                }
-            }
-        }
+        request_close_current_tab(workspace_get_current());
     } else if (strcmp(action, "pane.close") == 0) {
-        Workspace *ws = workspace_get_current();
-        if (ws) {
-            GtkNotebook *focused = workspace_get_focused_pane(ws);
-            if (focused && GTK_IS_NOTEBOOK(focused) &&
-                ws->pane_notebooks && ws->pane_notebooks->len > 1)
-                workspace_close_pane(ws, focused);
-        }
+        request_close_current_pane(workspace_get_current());
     } else if (strcmp(action, "broadcast.toggle") == 0) {
         Workspace *ws = workspace_get_current();
         if (ws) ws->broadcast = !ws->broadcast;
@@ -1086,8 +1043,6 @@ on_socket_command(const char  *command,
         json_builder_set_member_name(response, "status");
         json_builder_add_string_value(response, "ok");
     } else if (strcmp(command, "app.quit") == 0) {
-        session_begin_shutdown();
-        workspace_set_shutting_down();
         save_session_now();
         json_builder_set_member_name(response, "status");
         json_builder_add_string_value(response, "ok");
@@ -1547,16 +1502,217 @@ static void save_session_now(void) {
                      ui.terminal_stack, ui.workspace_list);
 }
 
-static gboolean on_close_request(GtkWindow *w, gpointer d) {
-    (void)w; (void)d;
+typedef struct {
+    Workspace *ws;
+    GtkNotebook *pane;
+} PendingPaneClose;
+
+typedef struct {
+    GtkNotebook *notebook;
+    int page;
+} PendingBrowserTabClose;
+
+static void
+pending_pane_close_free(gpointer data)
+{
+    PendingPaneClose *pending = data;
+
+    if (pending->pane)
+        g_object_unref(pending->pane);
+    g_free(pending);
+}
+
+static void
+pending_browser_tab_close_free(gpointer data)
+{
+    PendingBrowserTabClose *pending = data;
+
+    if (pending->notebook)
+        g_object_unref(pending->notebook);
+    g_free(pending);
+}
+
+static void
+perform_app_quit(void)
+{
+    if (g_app_quit_in_progress)
+        return;
+
+    save_session_now();
+    g_app_quit_in_progress = TRUE;
     session_begin_shutdown();
-    workspace_set_shutting_down(); /* Prevent page-removed from clearing tabs */
+    workspace_set_shutting_down();
     port_scanner_stop();
     socket_server_stop();
+
     GApplication *app = g_application_get_default();
     if (app)
         g_application_quit(app);
-    return FALSE;
+}
+
+static gboolean
+quit_window_idle_cb(gpointer data)
+{
+    (void)data;
+    perform_app_quit();
+    return G_SOURCE_REMOVE;
+}
+
+static void
+on_app_close_confirmed(gboolean confirmed, gpointer user_data)
+{
+    (void)user_data;
+    if (confirmed)
+        perform_app_quit();
+}
+
+static void
+request_app_quit(void)
+{
+    if (g_app_quit_in_progress)
+        return;
+
+    close_confirm_request(g_main_window, CLOSE_CONFIRM_APP,
+                          on_app_close_confirmed, NULL, NULL);
+}
+
+static void
+on_pane_close_confirmed(gboolean confirmed, gpointer user_data)
+{
+    PendingPaneClose *pending = user_data;
+
+    if (confirmed && pending->ws && pending->pane) {
+        workspace_close_pane(pending->ws, pending->pane);
+        session_queue_save();
+    }
+}
+
+static void
+request_close_current_pane(Workspace *ws)
+{
+    GtkNotebook *focused;
+    PendingPaneClose *pending;
+
+    if (!ws)
+        return;
+
+    focused = workspace_get_focused_pane(ws);
+    if (!focused || !ws->pane_notebooks || ws->pane_notebooks->len <= 1)
+        return;
+
+    pending = g_new0(PendingPaneClose, 1);
+    pending->ws = ws;
+    pending->pane = g_object_ref(focused);
+    close_confirm_request(g_main_window, CLOSE_CONFIRM_PANE,
+                          on_pane_close_confirmed, pending,
+                          pending_pane_close_free);
+}
+
+static void
+on_tab_close_confirmed(gboolean confirmed, gpointer user_data)
+{
+    Workspace *ws = user_data;
+
+    if (confirmed && ws)
+        workspace_close_current_tab(ws);
+}
+
+static void
+request_close_current_tab(Workspace *ws)
+{
+    GtkNotebook *focused;
+    int n_pages;
+    int pg;
+
+    if (!ws)
+        return;
+
+    focused = workspace_get_focused_pane(ws);
+    if (!focused)
+        return;
+
+    n_pages = gtk_notebook_get_n_pages(focused);
+    pg = gtk_notebook_get_current_page(focused);
+    if (pg < 0)
+        return;
+    if (n_pages <= 1 &&
+        (!ws->pane_notebooks || ws->pane_notebooks->len <= 1))
+        return;
+
+    close_confirm_request(g_main_window, CLOSE_CONFIRM_TAB,
+                          on_tab_close_confirmed, ws, NULL);
+}
+
+static void
+on_browser_tab_close_confirmed(gboolean confirmed, gpointer user_data)
+{
+    PendingBrowserTabClose *pending = user_data;
+
+    if (!confirmed || !pending->notebook)
+        return;
+
+    if (pending->page >= 0 &&
+        pending->page < gtk_notebook_get_n_pages(pending->notebook)) {
+        gtk_notebook_remove_page(pending->notebook, pending->page);
+        session_queue_save();
+    }
+}
+
+static void
+request_close_current_browser_tab(void)
+{
+    GtkNotebook *notebook = GTK_NOTEBOOK(ui.browser_notebook);
+    int n;
+    int pg;
+    PendingBrowserTabClose *pending;
+
+    if (!gtk_widget_get_visible(ui.browser_notebook))
+        return;
+
+    n = gtk_notebook_get_n_pages(notebook);
+    if (n <= 1)
+        return;
+
+    pg = gtk_notebook_get_current_page(notebook);
+    if (pg < 0)
+        return;
+
+    pending = g_new0(PendingBrowserTabClose, 1);
+    pending->notebook = g_object_ref(notebook);
+    pending->page = pg;
+    close_confirm_request(g_main_window, CLOSE_CONFIRM_TAB,
+                          on_browser_tab_close_confirmed, pending,
+                          pending_browser_tab_close_free);
+}
+
+static gboolean on_close_request(GtkWindow *w, gpointer d) {
+    (void)w; (void)d;
+    if (g_app_quit_in_progress)
+        return FALSE;
+
+    request_app_quit();
+    return TRUE;
+}
+
+static void
+on_app_shutdown(GApplication *app, gpointer user_data)
+{
+    (void)app;
+    (void)user_data;
+    if (!g_app_quit_in_progress) {
+        session_begin_shutdown();
+        workspace_set_shutting_down();
+        port_scanner_stop();
+        socket_server_stop();
+    }
+}
+
+static gboolean
+on_unix_quit_signal(gpointer user_data)
+{
+    (void)user_data;
+    perform_app_quit();
+    return G_SOURCE_CONTINUE;
 }
 
 // ── Feature 3: Welcome Dialog ──
@@ -1691,6 +1847,82 @@ on_navigate_to_terminal(GSimpleAction *action_obj, GVariant *parameter,
         gtk_window_present(g_main_window);
 }
 
+static void
+setup_shell_integration_env(void)
+{
+    char exe_path[PATH_MAX];
+    ssize_t exe_len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+
+    if (exe_len <= 0)
+        return;
+
+    exe_path[exe_len] = '\0';
+
+    char *exe_dir_buf = g_strdup(exe_path);
+    const char *exe_dir = dirname(exe_dir_buf);
+    char *open_cli = g_build_filename(exe_dir, "prettymux-open", NULL);
+    char *shell_integ = g_build_filename(exe_dir, "prettymux-shell-integration.sh", NULL);
+    char *bashrc_wrapper = g_build_filename(exe_dir, "prettymux-bashrc.sh", NULL);
+    char *wrapper_dir = g_build_filename(exe_dir, "bin", NULL);
+
+    if (!g_file_test(shell_integ, G_FILE_TEST_EXISTS)) {
+        g_free(shell_integ);
+        shell_integ = g_build_filename(PRETTYMUX_SOURCE_DIR,
+                                       "prettymux-shell-integration.sh", NULL);
+    }
+
+    if (!g_file_test(open_cli, G_FILE_TEST_EXISTS)) {
+        g_free(open_cli);
+        open_cli = g_find_program_in_path("prettymux-open");
+    }
+
+    if (!g_file_test(bashrc_wrapper, G_FILE_TEST_EXISTS)) {
+        g_free(bashrc_wrapper);
+        bashrc_wrapper = g_build_filename(PRETTYMUX_SOURCE_DIR,
+                                          "prettymux-bashrc.sh", NULL);
+    }
+
+    if (!g_file_test(wrapper_dir, G_FILE_TEST_IS_DIR)) {
+        g_free(wrapper_dir);
+        wrapper_dir = g_build_filename(PRETTYMUX_SOURCE_DIR, "bin", NULL);
+    }
+
+    if (g_file_test(shell_integ, G_FILE_TEST_EXISTS))
+        g_setenv("BASH_ENV", shell_integ, TRUE);
+
+    if (g_file_test(shell_integ, G_FILE_TEST_EXISTS))
+        g_setenv("PRETTYMUX_SHELL_INTEGRATION", shell_integ, TRUE);
+
+    if (g_file_test(bashrc_wrapper, G_FILE_TEST_EXISTS))
+        g_setenv("GHOSTTY_BASH_RCFILE", bashrc_wrapper, TRUE);
+
+    if (open_cli && g_file_test(open_cli, G_FILE_TEST_EXISTS))
+        g_setenv("PRETTYMUX_OPEN_BIN", open_cli, TRUE);
+
+    if (wrapper_dir && g_file_test(wrapper_dir, G_FILE_TEST_IS_DIR)) {
+        const char *old_path = g_getenv("PATH");
+        if (!old_path || !old_path[0]) {
+            g_setenv("PATH", wrapper_dir, TRUE);
+        } else {
+            size_t wrapper_len = strlen(wrapper_dir);
+            gboolean already_prefixed =
+                g_str_has_prefix(old_path, wrapper_dir) &&
+                (old_path[wrapper_len] == '\0' || old_path[wrapper_len] == ':');
+            if (!already_prefixed) {
+                char *new_path = g_strdup_printf("%s:%s", wrapper_dir, old_path);
+                g_setenv("PATH", new_path, TRUE);
+                g_free(new_path);
+            }
+        }
+    }
+
+    g_free(open_cli);
+    g_free(shell_integ);
+    g_free(bashrc_wrapper);
+    g_free(wrapper_dir);
+    g_free(exe_dir_buf);
+}
+
 static void on_activate(GtkApplication *app, gpointer user_data) {
     (void)user_data;
     // Init ghostty
@@ -1785,6 +2017,16 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     session_set_context(GTK_WINDOW(window), ui.browser_notebook,
                         ui.terminal_stack, ui.workspace_list);
 
+    // Save on close
+    g_signal_connect(window, "close-request", G_CALLBACK(on_close_request), NULL);
+
+    // ── Single instance socket server ──
+    socket_server_set_callback(on_socket_command, NULL);
+    const char *sock_path = socket_server_start();
+    if (sock_path) {
+        setup_shell_integration_env();
+    }
+
     // Create initial workspace + restore or create defaults
     workspace_add(ui.terminal_stack, ui.workspace_list, g_ghostty_app);
 
@@ -1800,39 +2042,6 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
 
     // Auto-save
     g_timeout_add_seconds(30, autosave_tick, NULL);
-
-    // Save on close
-    g_signal_connect(window, "close-request", G_CALLBACK(on_close_request), NULL);
-
-    // ── Single instance socket server ──
-    socket_server_set_callback(on_socket_command, NULL);
-    const char *sock_path = socket_server_start();
-    if (sock_path) {
-        /* Set BASH_ENV to auto-source our shell integration script.
-         * Try several locations: next to the executable, then next to
-         * the source file (for development builds). */
-        char exe_path[PATH_MAX];
-        ssize_t exe_len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
-        if (exe_len > 0) {
-            exe_path[exe_len] = '\0';
-            /* dirname modifies in-place, so work on a copy */
-            char *exe_dir_buf = g_strdup(exe_path);
-            const char *exe_dir = dirname(exe_dir_buf);
-
-            char *shell_integ = g_build_filename(exe_dir, "prettymux-shell-integration.sh", NULL);
-            if (!g_file_test(shell_integ, G_FILE_TEST_EXISTS)) {
-                g_free(shell_integ);
-                /* Fallback: next to source (development builds) */
-                shell_integ = g_build_filename(PRETTYMUX_SOURCE_DIR,
-                                               "prettymux-shell-integration.sh", NULL);
-            }
-            if (g_file_test(shell_integ, G_FILE_TEST_EXISTS)) {
-                g_setenv("BASH_ENV", shell_integ, TRUE);
-            }
-            g_free(shell_integ);
-            g_free(exe_dir_buf);
-        }
-    }
 
     // ── Port scanner ──
     port_scanner_set_callback(on_new_ports_detected, NULL);
@@ -1853,11 +2062,11 @@ int main(int argc, char *argv[]) {
 
     AdwApplication *app = adw_application_new(NULL, G_APPLICATION_FLAGS_NONE);
     g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
-    g_signal_connect(app, "shutdown", G_CALLBACK(on_close_request), NULL);
+    g_signal_connect(app, "shutdown", G_CALLBACK(on_app_shutdown), NULL);
 
     /* Save session on SIGTERM/SIGINT */
-    g_unix_signal_add(SIGTERM, (GSourceFunc)on_close_request, NULL);
-    g_unix_signal_add(SIGINT, (GSourceFunc)on_close_request, NULL);
+    g_unix_signal_add(SIGTERM, on_unix_quit_signal, NULL);
+    g_unix_signal_add(SIGINT, on_unix_quit_signal, NULL);
 
     int status = g_application_run(G_APPLICATION(app), argc, argv);
     g_object_unref(app);

@@ -25,6 +25,7 @@ sources = files(
   'shortcuts.c',
   'workspace.c',
   'session.c',
+  'close_confirm.c',
   'command_palette.c',
   'port_scanner.c',
   'socket_server.c',

@@ -1,0 +1,11 @@
+#!/bin/sh
+
+if [ -n "$PRETTYMUX_OPEN_BIN" ] && [ -x "$PRETTYMUX_OPEN_BIN" ]; then
+    case "$1" in
+        http://*|https://*)
+            exec "$PRETTYMUX_OPEN_BIN" "$1"
+            ;;
+    esac
+fi
+
+exec /usr/bin/xdg-open "$@"

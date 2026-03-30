@@ -1,4 +1,5 @@
 #include "workspace.h"
+#include "close_confirm.h"
 #include "ghostty_terminal.h"
 #include "resize_overlay.h"
 #include "session.h"
@@ -70,6 +71,7 @@ static GtkWidget *create_terminal_tab(Workspace *ws, GtkNotebook *notebook,
 static gboolean move_terminal_to_notebook(Workspace *src_ws, GtkNotebook *src_nb,
                                           GtkWidget *terminal, Workspace *dest_ws,
                                           GtkNotebook *dest_nb);
+static void workspace_set_active_pane(Workspace *ws, GtkNotebook *notebook);
 
 /* Context menu data for sidebar rows (defined later) */
 typedef struct {
@@ -114,13 +116,10 @@ page_linked_terminal(GtkWidget *page)
 static GtkWidget *
 terminal_linked_dummy(GtkWidget *terminal)
 {
-    GtkWidget *dummy;
-
     if (!terminal || !GHOSTTY_IS_TERMINAL(terminal))
         return NULL;
 
-    dummy = g_object_get_data(G_OBJECT(terminal), "linked-dummy");
-    return GTK_IS_WIDGET(dummy) ? dummy : NULL;
+    return ghostty_terminal_get_dummy_target(GHOSTTY_TERMINAL(terminal));
 }
 
 static GtkWidget *
@@ -151,6 +150,20 @@ terminal_parent_notebook(GtkWidget *terminal)
     GtkWidget *dummy = terminal_linked_dummy(terminal);
     GtkWidget *parent = dummy ? gtk_widget_get_parent(dummy) : NULL;
     return GTK_IS_NOTEBOOK(parent) ? GTK_NOTEBOOK(parent) : NULL;
+}
+
+static void
+workspace_set_active_pane(Workspace *ws, GtkNotebook *notebook)
+{
+    if (!ws || !GTK_IS_NOTEBOOK(notebook) || !ws->pane_notebooks)
+        return;
+
+    for (guint i = 0; i < ws->pane_notebooks->len; i++) {
+        if (g_ptr_array_index(ws->pane_notebooks, i) == notebook) {
+            ws->active_pane = notebook;
+            return;
+        }
+    }
 }
 
 /* ── Activity detection ────────────────────────────────────────── */
@@ -434,6 +447,7 @@ focus_terminal_page(GtkWidget *page)
 {
     if (!page || !GHOSTTY_IS_TERMINAL(page))
         return;
+
     ghostty_terminal_focus(GHOSTTY_TERMINAL(page));
     ghostty_terminal_queue_render(GHOSTTY_TERMINAL(page));
 }
@@ -698,25 +712,23 @@ tab_close_refresh_idle_cb(gpointer user_data)
     return G_SOURCE_REMOVE;
 }
 
-/* Close button (X) on tab label */
-static void
-on_tab_close_clicked(GtkButton *btn, gpointer user_data)
+gboolean
+workspace_close_terminal(Workspace *ws, GtkWidget *terminal)
 {
-    (void)user_data;
-    GtkWidget *terminal = g_object_get_data(G_OBJECT(btn), "terminal-widget");
-    Workspace *ws = g_object_get_data(G_OBJECT(btn), "workspace");
-    if (!terminal || !ws) return;
-    if (!GHOSTTY_IS_TERMINAL(terminal)) return;
+    if (!terminal || !ws || !GHOSTTY_IS_TERMINAL(terminal))
+        return FALSE;
 
     GtkNotebook *nb = terminal_parent_notebook(terminal);
-    if (!nb) return;
+    if (!nb)
+        return FALSE;
 
     int n = gtk_notebook_get_n_pages(nb);
     if (n <= 1 && ws->pane_notebooks && ws->pane_notebooks->len <= 1)
-        return; /* Don't close the last tab in the last pane */
+        return FALSE;
 
     int page = notebook_page_for_terminal(nb, terminal);
-    if (page < 0) return;
+    if (page < 0)
+        return FALSE;
 
     g_ptr_array_remove(ws->terminals, terminal);
     if (ws->overlay)
@@ -733,6 +745,83 @@ on_tab_close_clicked(GtkButton *btn, gpointer user_data)
     }
 
     session_queue_save();
+    return TRUE;
+}
+
+gboolean
+workspace_close_current_tab(Workspace *ws)
+{
+    GtkNotebook *nb;
+    int page;
+    GtkWidget *terminal;
+
+    if (!ws)
+        return FALSE;
+
+    nb = workspace_get_focused_pane(ws);
+    if (!nb)
+        return FALSE;
+
+    page = gtk_notebook_get_current_page(nb);
+    if (page < 0)
+        return FALSE;
+
+    terminal = notebook_terminal_at(nb, page);
+    if (!terminal)
+        return FALSE;
+
+    return workspace_close_terminal(ws, terminal);
+}
+
+typedef struct {
+    Workspace *ws;
+    GtkWidget *terminal;
+} PendingTabClose;
+
+static void
+pending_tab_close_free(gpointer data)
+{
+    PendingTabClose *pending = data;
+
+    if (pending->terminal)
+        g_object_unref(pending->terminal);
+    g_free(pending);
+}
+
+static void
+on_tab_close_confirmed(gboolean confirmed, gpointer user_data)
+{
+    PendingTabClose *pending = user_data;
+
+    if (confirmed)
+        workspace_close_terminal(pending->ws, pending->terminal);
+}
+
+/* Close button (X) on tab label */
+static void
+on_tab_close_clicked(GtkButton *btn, gpointer user_data)
+{
+    (void)user_data;
+    GtkWidget *terminal = g_object_get_data(G_OBJECT(btn), "terminal-widget");
+    Workspace *ws = g_object_get_data(G_OBJECT(btn), "workspace");
+    GtkRoot *root;
+    PendingTabClose *pending;
+
+    if (!terminal || !ws || !GHOSTTY_IS_TERMINAL(terminal))
+        return;
+
+    root = gtk_widget_get_root(GTK_WIDGET(btn));
+    if (!GTK_IS_WINDOW(root)) {
+        workspace_close_terminal(ws, terminal);
+        return;
+    }
+
+    pending = g_new0(PendingTabClose, 1);
+    pending->ws = ws;
+    pending->terminal = g_object_ref(terminal);
+    close_confirm_request(GTK_WINDOW(root), CLOSE_CONFIRM_TAB,
+                          on_tab_close_confirmed, pending,
+                          pending_tab_close_free);
 }
 
 static GtkWidget *
@@ -1220,14 +1309,44 @@ static void
 on_notebook_page_added(GtkNotebook *notebook, GtkWidget *child,
                        guint page_num, gpointer user_data)
 {
-    (void)notebook; (void)page_num;
+    (void)page_num;
     Workspace *ws = user_data;
 
     if (ws) {
+        workspace_set_active_pane(ws, notebook);
         GtkWidget *terminal = page_linked_terminal(child);
         if (terminal && GHOSTTY_IS_TERMINAL(terminal))
             focus_terminal_page_later(terminal);
     }
+}
+
+static void
+on_notebook_pointer_enter(GtkEventControllerMotion *controller,
+                          double x, double y, gpointer user_data)
+{
+    Workspace *ws = user_data;
+    GtkWidget *widget = gtk_event_controller_get_widget(
+        GTK_EVENT_CONTROLLER(controller));
+    (void)x;
+    (void)y;
+
+    if (ws && GTK_IS_NOTEBOOK(widget))
+        workspace_set_active_pane(ws, GTK_NOTEBOOK(widget));
+}
+
+static void
+on_notebook_pressed(GtkGestureClick *gesture, int n_press,
+                    double x, double y, gpointer user_data)
+{
+    Workspace *ws = user_data;
+    GtkWidget *widget = gtk_event_controller_get_widget(
+        GTK_EVENT_CONTROLLER(gesture));
+    (void)n_press;
+    (void)x;
+    (void)y;
+
+    if (ws && GTK_IS_NOTEBOOK(widget))
+        workspace_set_active_pane(ws, GTK_NOTEBOOK(widget));
 }
 
 /* Helper: create a notebook for a new pane and wire up the "+" button. */
@@ -1248,6 +1367,7 @@ create_pane_notebook(Workspace *ws, ghostty_app_t app)
 
     /* Native notebook DnD gives proper tab tear/reorder visuals. */
     gtk_notebook_set_group_name(GTK_NOTEBOOK(notebook), "prettymux-panes");
+    g_object_set_data(G_OBJECT(notebook), "workspace-ptr", ws);
 
     /* Track tabs being dragged in/out for workspace terminal arrays */
     g_signal_connect(notebook, "page-removed",
@@ -1258,6 +1378,17 @@ create_pane_notebook(Workspace *ws, ghostty_app_t app)
     /* On tab switch, clear activity on the newly selected terminal */
     g_signal_connect(notebook, "switch-page",
                      G_CALLBACK(on_notebook_switch_page), ws);
+
+    GtkEventController *motion = gtk_event_controller_motion_new();
+    g_signal_connect(motion, "enter",
+                     G_CALLBACK(on_notebook_pointer_enter), ws);
+    gtk_widget_add_controller(notebook, motion);
+
+    GtkGesture *click = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), 0);
+    g_signal_connect(click, "pressed",
+                     G_CALLBACK(on_notebook_pressed), ws);
+    gtk_widget_add_controller(notebook, GTK_EVENT_CONTROLLER(click));
 
     return notebook;
 }
@@ -1276,12 +1407,14 @@ void workspace_add(GtkWidget *terminal_stack, GtkWidget *workspace_list, ghostty
     snprintf(ws->name, sizeof(ws->name), "Workspace %d", (int)workspaces->len + 1);
     ws->terminals = g_ptr_array_new();
     ws->pane_notebooks = g_ptr_array_new();
+    ws->active_pane = NULL;
     ws->sidebar_label = NULL;
 
     ws->overlay = gtk_overlay_new();
     ws->notebook = create_pane_notebook(ws, app);
     gtk_overlay_set_child(GTK_OVERLAY(ws->overlay), ws->notebook);
     g_ptr_array_add(ws->pane_notebooks, ws->notebook);
+    ws->active_pane = GTK_NOTEBOOK(ws->notebook);
     ws->container = ws->overlay;
 
     /* Add to stack */
@@ -1423,15 +1556,27 @@ workspace_get_focused_pane(Workspace *ws)
             if (GTK_IS_NOTEBOOK(w)) {
                 guint i;
                 for (i = 0; i < ws->pane_notebooks->len; i++) {
-                    if (g_ptr_array_index(ws->pane_notebooks, i) == w)
+                    if (g_ptr_array_index(ws->pane_notebooks, i) == w) {
+                        ws->active_pane = GTK_NOTEBOOK(w);
                         return GTK_NOTEBOOK(w);
+                    }
                 }
             } else if (GHOSTTY_IS_TERMINAL(w)) {
                 GtkNotebook *nb = terminal_parent_notebook(w);
-                if (nb)
+                if (nb) {
+                    ws->active_pane = nb;
                     return nb;
+                }
             }
         }
+    }
+
+    if (ws->active_pane) {
+        for (guint i = 0; i < ws->pane_notebooks->len; i++) {
+            if (g_ptr_array_index(ws->pane_notebooks, i) == ws->active_pane)
+                return ws->active_pane;
+        }
+        ws->active_pane = NULL;
     }
 
     return first_nb;
@@ -1462,6 +1607,7 @@ workspace_split_pane(Workspace *ws, GtkOrientation orientation,
     /* Create the new pane notebook */
     GtkWidget *new_nb = create_pane_notebook(ws, app);
     g_ptr_array_add(ws->pane_notebooks, new_nb);
+    workspace_set_active_pane(ws, GTK_NOTEBOOK(new_nb));
 
     /* Create the new paned container */
     GtkWidget *paned = gtk_paned_new(orientation);
@@ -1826,6 +1972,8 @@ workspace_close_pane(Workspace *ws, GtkNotebook *pane)
     /* Update ws->notebook if it was the closed pane */
     if (ws->notebook == GTK_WIDGET(pane) && ws->pane_notebooks->len > 0)
         ws->notebook = g_ptr_array_index(ws->pane_notebooks, 0);
+    if (ws->active_pane == pane)
+        ws->active_pane = GTK_IS_NOTEBOOK(sibling) ? GTK_NOTEBOOK(sibling) : NULL;
 
     /* Focus the sibling's first terminal */
     if (GTK_IS_NOTEBOOK(sibling)) {
@@ -1850,6 +1998,7 @@ on_notebook_switch_page(GtkNotebook *nb, GtkWidget *page,
     (void)page_num;
     Workspace *ws = user_data;
 
+    workspace_set_active_pane(ws, nb);
     GtkWidget *terminal = page_linked_terminal(page);
     if (terminal && GHOSTTY_IS_TERMINAL(terminal)) {
         focus_terminal_page(terminal);

@@ -6,7 +6,9 @@ if [ -n "$PRETTYMUX" ] && [ -S "$PRETTYMUX_SOCKET" ]; then
     xdg-open() {
         case "$1" in
             http://*|https://*)
-                echo "{\"command\":\"browser.open\",\"url\":\"$1\"}" | socat - UNIX-CONNECT:"$PRETTYMUX_SOCKET" 2>/dev/null && return 0
+                if [ -n "$PRETTYMUX_OPEN_BIN" ] && [ -x "$PRETTYMUX_OPEN_BIN" ]; then
+                    "$PRETTYMUX_OPEN_BIN" "$1" >/dev/null 2>&1 && return 0
+                fi
                 ;;
         esac
         /usr/bin/xdg-open "$@"

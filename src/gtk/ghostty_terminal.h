@@ -74,6 +74,7 @@ void ghostty_terminal_notify_command_finished(GhosttyTerminal *self,
 void ghostty_terminal_notify_child_exited(GhosttyTerminal *self,
                                           uint32_t exit_code);
 void ghostty_terminal_set_dummy_target(GhosttyTerminal *self, GtkWidget *dummy);
+GtkWidget *ghostty_terminal_get_dummy_target(GhosttyTerminal *self);
 
 /*
  * Give keyboard focus to the terminal's GtkGLArea.

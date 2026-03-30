@@ -90,6 +90,17 @@ translate_button(guint button)
     }
 }
 
+static GdkModifierType
+current_event_mods(GtkEventController *controller)
+{
+    GdkEvent *event = gtk_event_controller_get_current_event(controller);
+
+    if (event)
+        return gdk_event_get_modifier_state(event);
+
+    return gtk_event_controller_get_current_event_state(controller);
+}
+
 /* ── GL callbacks ──────────────────────────────────────────────── */
 
 static void
@@ -127,7 +138,19 @@ on_gl_realize(GtkGLArea *area, gpointer user_data)
                                    : home;
 
     /* Shell integration env vars */
-    ghostty_env_var_s env_vars[3];
+    static const char *xdg_open_func =
+        "() { "
+        "case \"$1\" in "
+        "http://*|https://*) "
+        "if [ -n \"$PRETTYMUX_OPEN_BIN\" ] && [ -x \"$PRETTYMUX_OPEN_BIN\" ]; then "
+        "\"$PRETTYMUX_OPEN_BIN\" \"$1\" && return 0; "
+        "fi ;; "
+        "esac; "
+        "/usr/bin/xdg-open \"$@\"; "
+        "}";
+    static const char *open_func = "() { xdg-open \"$@\"; }";
+
+    ghostty_env_var_s env_vars[9];
     size_t env_count = 0;
 
     env_vars[env_count].key = "PRETTYMUX";
@@ -147,6 +170,42 @@ on_gl_realize(GtkGLArea *area, gpointer user_data)
         env_vars[env_count].value = bash_env;
         env_count++;
     }
+
+    const char *open_bin = g_getenv("PRETTYMUX_OPEN_BIN");
+    if (open_bin) {
+        env_vars[env_count].key = "PRETTYMUX_OPEN_BIN";
+        env_vars[env_count].value = open_bin;
+        env_count++;
+    }
+
+    const char *shell_integ = g_getenv("PRETTYMUX_SHELL_INTEGRATION");
+    if (shell_integ) {
+        env_vars[env_count].key = "PRETTYMUX_SHELL_INTEGRATION";
+        env_vars[env_count].value = shell_integ;
+        env_count++;
+    }
+
+    const char *bash_rcfile = g_getenv("GHOSTTY_BASH_RCFILE");
+    if (bash_rcfile) {
+        env_vars[env_count].key = "GHOSTTY_BASH_RCFILE";
+        env_vars[env_count].value = bash_rcfile;
+        env_count++;
+    }
+
+    const char *path = g_getenv("PATH");
+    if (path) {
+        env_vars[env_count].key = "PATH";
+        env_vars[env_count].value = path;
+        env_count++;
+    }
+
+    env_vars[env_count].key = "BASH_FUNC_xdg-open%%";
+    env_vars[env_count].value = xdg_open_func;
+    env_count++;
+
+    env_vars[env_count].key = "BASH_FUNC_open%%";
+    env_vars[env_count].value = open_func;
+    env_count++;
 
     config.env_vars = env_vars;
     config.env_var_count = env_count;
@@ -396,8 +455,7 @@ on_click_pressed(GtkGestureClick *gesture,
 
     gtk_widget_grab_focus(GTK_WIDGET(self->gl_area));
 
-    GdkModifierType state = gtk_event_controller_get_current_event_state(
-        GTK_EVENT_CONTROLLER(gesture));
+    GdkModifierType state = current_event_mods(GTK_EVENT_CONTROLLER(gesture));
     guint button = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
 
     ghostty_surface_mouse_pos(self->surface, x, y, translate_mods(state));
@@ -419,8 +477,7 @@ on_click_released(GtkGestureClick *gesture,
     if (!self->surface)
         return;
 
-    GdkModifierType state = gtk_event_controller_get_current_event_state(
-        GTK_EVENT_CONTROLLER(gesture));
+    GdkModifierType state = current_event_mods(GTK_EVENT_CONTROLLER(gesture));
     guint button = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
 
     ghostty_surface_mouse_pos(self->surface, x, y, translate_mods(state));
@@ -440,8 +497,7 @@ on_motion(GtkEventControllerMotion *controller,
     if (!self->surface)
         return;
 
-    GdkModifierType state = gtk_event_controller_get_current_event_state(
-        GTK_EVENT_CONTROLLER(controller));
+    GdkModifierType state = current_event_mods(GTK_EVENT_CONTROLLER(controller));
     ghostty_surface_mouse_pos(self->surface, x, y, translate_mods(state));
     gtk_gl_area_queue_render(self->gl_area);
 }
@@ -472,8 +528,7 @@ on_scroll(GtkEventControllerScroll *controller,
     if (!self->surface)
         return FALSE;
 
-    GdkModifierType state = gtk_event_controller_get_current_event_state(
-        GTK_EVENT_CONTROLLER(controller));
+    GdkModifierType state = current_event_mods(GTK_EVENT_CONTROLLER(controller));
     ghostty_surface_mouse_scroll(self->surface, dx, dy,
                                  (ghostty_input_scroll_mods_t)translate_mods(state));
     gtk_gl_area_queue_render(self->gl_area);
@@ -526,6 +581,12 @@ ghostty_terminal_dispose(GObject *object)
     }
 
     g_clear_object(&self->im_context);
+
+    if (self->dummy_target) {
+        g_object_remove_weak_pointer(G_OBJECT(self->dummy_target),
+                                     (gpointer *)&self->dummy_target);
+        self->dummy_target = NULL;
+    }
 
     /* Remove the child vbox (contains gl_area + status bar) from the widget tree */
     if (self->vbox) {
@@ -826,7 +887,25 @@ void
 ghostty_terminal_set_dummy_target(GhosttyTerminal *self, GtkWidget *dummy)
 {
     g_return_if_fail(GHOSTTY_IS_TERMINAL(self));
+
+    if (self->dummy_target) {
+        g_object_remove_weak_pointer(G_OBJECT(self->dummy_target),
+                                     (gpointer *)&self->dummy_target);
+        self->dummy_target = NULL;
+    }
+
     self->dummy_target = dummy;
+    if (self->dummy_target) {
+        g_object_add_weak_pointer(G_OBJECT(self->dummy_target),
+                                  (gpointer *)&self->dummy_target);
+    }
+}
+
+GtkWidget *
+ghostty_terminal_get_dummy_target(GhosttyTerminal *self)
+{
+    g_return_val_if_fail(GHOSTTY_IS_TERMINAL(self), NULL);
+    return self->dummy_target;
 }
 
 void

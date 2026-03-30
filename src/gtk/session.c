@@ -13,6 +13,20 @@ static GtkWidget *session_workspace_list = NULL;
 static guint session_save_source_id = 0;
 static gboolean session_shutting_down = FALSE;
 
+static GtkWidget *
+session_page_linked_terminal(GtkWidget *page)
+{
+    GtkWidget *terminal;
+
+    if (!page)
+        return NULL;
+    if (GHOSTTY_IS_TERMINAL(page))
+        return page;
+
+    terminal = g_object_get_data(G_OBJECT(page), "linked-terminal");
+    return (terminal && GHOSTTY_IS_TERMINAL(terminal)) ? terminal : NULL;
+}
+
 static char *session_path(void) {
     char *dir = g_build_filename(g_get_home_dir(), ".prettymux", "sessions", NULL);
     g_mkdir_with_parents(dir, 0755);
@@ -185,6 +199,8 @@ void session_save(GtkWindow *window, GtkWidget *browser_notebook,
                         for (ti = 0; ti < n_pages; ti++) {
                             GtkWidget *child = gtk_notebook_get_nth_page(
                                 nb, ti);
+                            GtkWidget *terminal =
+                                session_page_linked_terminal(child);
                             json_builder_begin_object(b);
 
                             /* Tab name */
@@ -212,9 +228,9 @@ void session_save(GtkWindow *window, GtkWidget *browser_notebook,
 
                             /* CWD */
                             const char *cwd = NULL;
-                            if (GHOSTTY_IS_TERMINAL(child))
+                            if (GHOSTTY_IS_TERMINAL(terminal))
                                 cwd = ghostty_terminal_get_cwd(
-                                    GHOSTTY_TERMINAL(child));
+                                    GHOSTTY_TERMINAL(terminal));
                             json_builder_set_member_name(b, "cwd");
                             json_builder_add_string_value(b,
                                 cwd ? cwd : "");
@@ -416,7 +432,17 @@ void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
                                 int n_existing = gtk_notebook_get_n_pages(nb);
                                 if (n_existing > 0) {
                                     GtkWidget *old = gtk_notebook_get_nth_page(nb, 0);
-                                    g_ptr_array_remove(ws->terminals, old);
+                                    GtkWidget *old_terminal =
+                                        session_page_linked_terminal(old);
+                                    if (old_terminal) {
+                                        g_ptr_array_remove(ws->terminals,
+                                                           old_terminal);
+                                        if (ws->overlay) {
+                                            gtk_overlay_remove_overlay(
+                                                GTK_OVERLAY(ws->overlay),
+                                                old_terminal);
+                                        }
+                                    }
                                     gtk_notebook_remove_page(nb, 0);
                                 }
                                 workspace_add_terminal_to_notebook_with_cwd(

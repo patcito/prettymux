@@ -12,6 +12,7 @@ typedef struct {
                                   * backwards compat; same as pane_notebooks[0]). */
     GPtrArray *terminals;        /* Flat array of ALL GhosttyTerminal widgets */
     GPtrArray *pane_notebooks;   /* Array of GtkNotebook* -- one per pane */
+    GtkNotebook *active_pane;    /* Last pane activated by hover/click/focus */
     char cwd[512];
     char git_branch[128];
     char notification[256];
@@ -131,6 +132,8 @@ void workspace_set_shutting_down(void);
 gboolean workspace_move_tab(int src_ws_idx, int src_pane_idx, int src_tab_idx,
                             int dest_ws_idx, int dest_pane_idx);
 gboolean workspace_select_tab(int ws_idx, int pane_idx, int tab_idx);
+gboolean workspace_close_terminal(Workspace *ws, GtkWidget *terminal);
+gboolean workspace_close_current_tab(Workspace *ws);
 
 /* Trigger inline rename on the current tab's label */
 void workspace_start_tab_rename(Workspace *ws);
