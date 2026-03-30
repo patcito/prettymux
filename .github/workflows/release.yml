@@ -346,22 +346,21 @@ jobs:
           install -Dm644 packaging/prettymux.desktop "$PKGDIR/usr/share/applications/prettymux.desktop"
           install -Dm644 LICENSE "$PKGDIR/usr/share/licenses/prettymux/LICENSE"
 
-          cat > "$PKGDIR/.PKGINFO" << 'PKGEOF'
-pkgname = prettymux
-pkgdesc = GPU-accelerated terminal multiplexer
-url = https://github.com/patcito/prettymux
-arch = x86_64
-license = GPL-3.0-only
-depend = gtk4
-depend = libadwaita
-depend = webkit2gtk-6.0
-depend = json-glib
-PKGEOF
-          # Set dynamic fields
-          sed -i "1a pkgver = ${VERSION}-1" "$PKGDIR/.PKGINFO"
-          echo "builddate = $(date +%s)" >> "$PKGDIR/.PKGINFO"
-          echo "packager = GitHub Actions <ci@prettymux.dev>" >> "$PKGDIR/.PKGINFO"
-          echo "size = $(du -sb "$PKGDIR" | cut -f1)" >> "$PKGDIR/.PKGINFO"
+          printf '%s\n' \
+            "pkgname = prettymux" \
+            "pkgver = ${VERSION}-1" \
+            "pkgdesc = GPU-accelerated terminal multiplexer" \
+            "url = https://github.com/patcito/prettymux" \
+            "builddate = $(date +%s)" \
+            "packager = GitHub Actions <ci@prettymux.dev>" \
+            "size = $(du -sb "$PKGDIR" | cut -f1)" \
+            "arch = x86_64" \
+            "license = GPL-3.0-only" \
+            "depend = gtk4" \
+            "depend = libadwaita" \
+            "depend = webkit2gtk-6.0" \
+            "depend = json-glib" \
+            > "$PKGDIR/.PKGINFO"
 
           cd "$PKGDIR"
           tar --zstd -cf ../prettymux-${VERSION}-1-x86_64.pkg.tar.zst .PKGINFO usr/
