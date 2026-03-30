@@ -608,7 +608,7 @@ jobs:
         if: steps.ghostty-cache.outputs.cache-hit != 'true'
         run: |
           cd ghostty
-          zig build -Dapp-runtime=none -Demit-macos-app=false -Demit-xcframework=true -Doptimize=ReleaseFast
+          zig build -Dapp-runtime=none -Doptimize=ReleaseFast
 
       - name: Build prettymux
         run: |
@@ -622,6 +622,7 @@ jobs:
       - name: Package macOS app
         run: |
           mkdir -p src/qt/build/prettymux.app/Contents/Resources
+          cp ghostty/zig-out/lib/libghostty.dylib src/qt/build/prettymux.app/Contents/MacOS/ || true
           cp src/qt/prettymux-shell-integration.sh src/qt/build/prettymux.app/Contents/Resources/ || true
           tar czf prettymux-macos-arm64.tar.gz -C src/qt/build prettymux.app
 
