@@ -1,9 +1,17 @@
-prettymux (0.1.1-1) jammy; urgency=medium
+prettymux (0.2.0-1) jammy; urgency=medium
 
-  * Drag-and-drop tabs/panes between panes and workspaces
-  * Close pane shortcut (Ctrl+Shift+X)
-  * Fix session restore for multiple panes
-  * Welcome dialog with "Don't show again" checkbox
-  * Use prebuilt libghostty
+  * Port from Qt6/Chromium to GTK4/WebKitGTK
+  * Modular C codebase (ghostty_terminal, browser_tab, workspace, etc.)
+  * Native tab drag-and-drop with notebook groups (Chrome-like visuals)
+  * Embedded web inspector below browser tab
+  * Command palette with type badges and monospace search
+  * Shortcuts overlay with pill key badges and search filter
+  * Desktop notifications via notify-send
+  * prettymux-open CLI tool with full IPC command API
+  * Session save/restore with CWD per tab
+  * Focus-on-hover for terminal panes
+  * Activity indicators, progress bars, notification bell
+  * Port scanning, git branch detection, broadcast mode
+  * Thread-safe ghostty action callback (marshaled to main thread)
 
- -- patcito <patcito@gmail.com>  Thu, 27 Mar 2026 00:00:00 +0000
+ -- patcito <patcito@gmail.com>  Sun, 30 Mar 2026 00:00:00 +0000
