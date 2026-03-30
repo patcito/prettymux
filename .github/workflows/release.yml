@@ -555,8 +555,10 @@ jobs:
   # ---------------------------------------------------------------------------
   # macOS ARM64 (Apple Silicon) — DISABLED: GTK4+WebKitGTK is Linux-only
   # ---------------------------------------------------------------------------
+  # macOS/Windows: WebKitGTK requires Linux (libwpe, libdrm, systemd deps).
+  # Cross-platform support would need a different browser engine.
   build-macos:
-    if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'macos')
+    if: false  # DISABLED — WebKitGTK is Linux-only even on Homebrew
     runs-on: macos-14
     steps:
       - name: Checkout prettymux
