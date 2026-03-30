@@ -624,7 +624,18 @@ jobs:
       - name: Build ghostty
         run: |
           cd ghostty
-          zig build -Dapp-runtime=none -Demit-macos-app=false -Demit-xcframework=true -Doptimize=ReleaseFast
+          for attempt in 1 2 3; do
+            if zig build -Dapp-runtime=none -Demit-macos-app=false -Demit-xcframework=true -Doptimize=ReleaseFast; then
+              break
+            fi
+
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+
+            rm -rf .zig-cache
+            sleep $((attempt * 5))
+          done
 
       - name: Inspect ghostty outputs
         run: |
