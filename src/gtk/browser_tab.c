@@ -2,6 +2,7 @@
 
 #include <string.h>
 #include <ctype.h>
+#include <webkit/webkit.h>
 
 /* ---------- URL history (module-level singleton) ---------- */
 

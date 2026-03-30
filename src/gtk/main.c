@@ -7,10 +7,13 @@
 #include <limits.h>
 #include <stdio.h>
 #include <string.h>
+#ifdef G_OS_WIN32
+#include <windows.h>
+#else
 #include <unistd.h>
-#include <libgen.h>
 #include <signal.h>
 #include <glib-unix.h>
+#endif
 
 #include "ghostty.h"
 #include "ghostty_terminal.h"
@@ -1927,16 +1930,34 @@ on_navigate_to_terminal(GSimpleAction *action_obj, GVariant *parameter,
 static void
 setup_shell_integration_env(void)
 {
+#ifdef G_OS_WIN32
+    wchar_t exe_path_w[PATH_MAX];
+    DWORD exe_len = GetModuleFileNameW(NULL, exe_path_w, G_N_ELEMENTS(exe_path_w));
+    g_autofree char *exe_path = NULL;
+#else
     char exe_path[PATH_MAX];
     ssize_t exe_len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+#endif
 
     if (exe_len <= 0)
         return;
 
+#ifdef G_OS_WIN32
+    exe_path = g_utf16_to_utf8((const gunichar2 *)exe_path_w, exe_len, NULL, NULL, NULL);
+    if (!exe_path)
+        return;
+#else
     exe_path[exe_len] = '\0';
+#endif
 
-    char *exe_dir_buf = g_strdup(exe_path);
-    const char *exe_dir = dirname(exe_dir_buf);
+    char *exe_dir_buf = g_path_get_dirname(
+#ifdef G_OS_WIN32
+        exe_path
+#else
+        exe_path
+#endif
+    );
+    const char *exe_dir = exe_dir_buf;
     char *open_cli = g_build_filename(exe_dir, "prettymux-open", NULL);
     char *shell_integ = g_build_filename(exe_dir, "prettymux-shell-integration.sh", NULL);
     char *bashrc_wrapper = g_build_filename(exe_dir, "prettymux-bashrc.sh", NULL);
@@ -2149,15 +2170,20 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
 int main(int argc, char *argv[]) {
     // WebKitGTK's bubblewrap sandbox requires dbus-proxy which may not
     // be available in all environments. Disable it for now.
+#ifndef G_OS_WIN32
     g_setenv("WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS", "1", FALSE);
+#endif
+    g_set_prgname("prettymux");
 
     AdwApplication *app = adw_application_new(NULL, G_APPLICATION_FLAGS_NONE);
     g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
     g_signal_connect(app, "shutdown", G_CALLBACK(on_app_shutdown), NULL);
 
     /* Save session on SIGTERM/SIGINT */
+#ifndef G_OS_WIN32
     g_unix_signal_add(SIGTERM, on_unix_quit_signal, NULL);
     g_unix_signal_add(SIGINT, on_unix_quit_signal, NULL);
+#endif
 
     int status = g_application_run(G_APPLICATION(app), argc, argv);
     g_object_unref(app);

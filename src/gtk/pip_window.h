@@ -7,7 +7,6 @@
 #pragma once
 
 #include <gtk/gtk.h>
-#include <webkit/webkit.h>
 
 typedef struct PipWindow PipWindow;
 

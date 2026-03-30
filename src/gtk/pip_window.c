@@ -10,6 +10,7 @@
 #include "browser_tab.h"
 
 #include <string.h>
+#include <webkit/webkit.h>
 
 /* ── PipWindow structure ─────────────────────────────────────── */
 
