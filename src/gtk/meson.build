@@ -99,7 +99,7 @@ elif is_macos
     '-framework', 'WebKit',
   ]
 elif is_windows
-  webview2_sdk_dir = getenv('WEBVIEW2_SDK_DIR')
+  webview2_sdk_dir = get_option('webview2_sdk_dir')
   if webview2_sdk_dir == ''
     error('Set WEBVIEW2_SDK_DIR to the unpacked Microsoft.Web.WebView2 SDK directory when building on Windows.')
   endif

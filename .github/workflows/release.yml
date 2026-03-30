@@ -570,11 +570,11 @@ jobs:
 
       - name: Build prettymux
         shell: msys2 {0}
-        env:
-          WEBVIEW2_SDK_DIR: ${{ github.workspace }}/webview2
         run: |
           cd src/gtk
-          meson setup builddir -Dghostty_dir="${{ github.workspace }}/ghostty"
+          meson setup builddir \
+            -Dghostty_dir="${{ github.workspace }}/ghostty" \
+            -Dwebview2_sdk_dir="${{ github.workspace }}/webview2"
           ninja -C builddir
 
       - name: Package artifacts
