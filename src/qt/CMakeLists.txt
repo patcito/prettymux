@@ -18,9 +18,23 @@ set(GHOSTTY_DIR "/home/pe/newnewrepos/w/yo/ghostty" CACHE PATH "Path to ghostty 
 set(GHOSTTY_LIB_DIR "${GHOSTTY_DIR}/zig-out/lib")
 set(GHOSTTY_INCLUDE_DIR "${GHOSTTY_DIR}/include")
 set(GLAD_DIR "${GHOSTTY_DIR}/vendor/glad")
-set(GHOSTTY_MACOS_XCFRAMEWORK "${GHOSTTY_DIR}/zig-out/macos/GhosttyKit.xcframework")
+set(GHOSTTY_MACOS_XCFRAMEWORK_CANDIDATES
+    "${GHOSTTY_DIR}/macos/GhosttyKit.xcframework"
+    "${GHOSTTY_DIR}/zig-out/macos/GhosttyKit.xcframework"
+)
 
 if(APPLE)
+    set(GHOSTTY_MACOS_XCFRAMEWORK "")
+    foreach(candidate IN LISTS GHOSTTY_MACOS_XCFRAMEWORK_CANDIDATES)
+        if(EXISTS "${candidate}")
+            set(GHOSTTY_MACOS_XCFRAMEWORK "${candidate}")
+            break()
+        endif()
+    endforeach()
+    if(NOT GHOSTTY_MACOS_XCFRAMEWORK)
+        list(GET GHOSTTY_MACOS_XCFRAMEWORK_CANDIDATES 0 GHOSTTY_MACOS_XCFRAMEWORK)
+    endif()
+
     find_library(GHOSTTY_MACOS_LIB
         NAMES ghostty libghostty.a
         PATHS
