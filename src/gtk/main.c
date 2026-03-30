@@ -324,6 +324,7 @@ static gboolean quit_window_idle_cb(gpointer data);
 static void request_close_current_browser_tab(void);
 static void request_close_current_tab(Workspace *ws);
 static void request_close_current_pane(Workspace *ws);
+static void request_close_current_workspace(void);
 
 static void handle_action(const char *action) {
     if (g_str_has_prefix(action, "workspace.focus.")) {
@@ -334,7 +335,7 @@ static void handle_action(const char *action) {
     } else if (strcmp(action, "workspace.new") == 0) {
         workspace_add(ui.terminal_stack, ui.workspace_list, g_ghostty_app);
     } else if (strcmp(action, "workspace.close") == 0) {
-        workspace_remove(current_workspace, ui.terminal_stack, ui.workspace_list);
+        request_close_current_workspace();
     } else if (strcmp(action, "workspace.next") == 0) {
         if (!workspaces || workspaces->len == 0) return;
         workspace_switch((current_workspace + 1) % workspaces->len,
@@ -1508,9 +1509,19 @@ typedef struct {
 } PendingPaneClose;
 
 typedef struct {
+    int index;
+} PendingWorkspaceClose;
+
+typedef struct {
     GtkNotebook *notebook;
     int page;
 } PendingBrowserTabClose;
+
+typedef struct {
+    Workspace *ws;
+    GtkNotebook *notebook;
+    int page;
+} PendingMainTabClose;
 
 static void
 pending_pane_close_free(gpointer data)
@@ -1523,9 +1534,25 @@ pending_pane_close_free(gpointer data)
 }
 
 static void
+pending_workspace_close_free(gpointer data)
+{
+    g_free(data);
+}
+
+static void
 pending_browser_tab_close_free(gpointer data)
 {
     PendingBrowserTabClose *pending = data;
+
+    if (pending->notebook)
+        g_object_unref(pending->notebook);
+    g_free(pending);
+}
+
+static void
+pending_main_tab_close_free(gpointer data)
+{
+    PendingMainTabClose *pending = data;
 
     if (pending->notebook)
         g_object_unref(pending->notebook);
@@ -1588,6 +1615,33 @@ on_pane_close_confirmed(gboolean confirmed, gpointer user_data)
 }
 
 static void
+on_workspace_close_confirmed(gboolean confirmed, gpointer user_data)
+{
+    PendingWorkspaceClose *pending = user_data;
+
+    if (confirmed && pending->index >= 0) {
+        workspace_remove(pending->index, ui.terminal_stack, ui.workspace_list);
+        session_queue_save();
+    }
+}
+
+static void
+request_close_current_workspace(void)
+{
+    PendingWorkspaceClose *pending;
+
+    if (!workspaces || workspaces->len <= 1 || current_workspace < 0 ||
+        current_workspace >= (int)workspaces->len)
+        return;
+
+    pending = g_new0(PendingWorkspaceClose, 1);
+    pending->index = current_workspace;
+    close_confirm_request(g_main_window, CLOSE_CONFIRM_WORKSPACE,
+                          on_workspace_close_confirmed, pending,
+                          pending_workspace_close_free);
+}
+
+static void
 request_close_current_pane(Workspace *ws)
 {
     GtkNotebook *focused;
@@ -1611,10 +1665,10 @@ request_close_current_pane(Workspace *ws)
 static void
 on_tab_close_confirmed(gboolean confirmed, gpointer user_data)
 {
-    Workspace *ws = user_data;
+    PendingMainTabClose *pending = user_data;
 
-    if (confirmed && ws)
-        workspace_close_current_tab(ws);
+    if (confirmed && pending->ws && pending->notebook)
+        workspace_close_tab_at(pending->ws, pending->notebook, pending->page);
 }
 
 static void
@@ -1623,6 +1677,7 @@ request_close_current_tab(Workspace *ws)
     GtkNotebook *focused;
     int n_pages;
     int pg;
+    PendingMainTabClose *pending;
 
     if (!ws)
         return;
@@ -1639,8 +1694,13 @@ request_close_current_tab(Workspace *ws)
         (!ws->pane_notebooks || ws->pane_notebooks->len <= 1))
         return;
 
+    pending = g_new0(PendingMainTabClose, 1);
+    pending->ws = ws;
+    pending->notebook = g_object_ref(focused);
+    pending->page = pg;
     close_confirm_request(g_main_window, CLOSE_CONFIRM_TAB,
-                          on_tab_close_confirmed, ws, NULL);
+                          on_tab_close_confirmed, pending,
+                          pending_main_tab_close_free);
 }
 
 static void

@@ -5,6 +5,7 @@
 typedef enum {
     CLOSE_CONFIRM_TAB,
     CLOSE_CONFIRM_PANE,
+    CLOSE_CONFIRM_WORKSPACE,
     CLOSE_CONFIRM_APP,
 } CloseConfirmKind;
 

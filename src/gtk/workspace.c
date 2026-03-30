@@ -72,6 +72,10 @@ static gboolean move_terminal_to_notebook(Workspace *src_ws, GtkNotebook *src_nb
                                           GtkWidget *terminal, Workspace *dest_ws,
                                           GtkNotebook *dest_nb);
 static void workspace_set_active_pane(Workspace *ws, GtkNotebook *notebook);
+static gboolean workspace_drag_value_terminal(const GValue *value,
+                                              GtkWidget **terminal_out,
+                                              GtkNotebook **src_nb_out,
+                                              Workspace **src_ws_out);
 
 /* Context menu data for sidebar rows (defined later) */
 typedef struct {
@@ -133,8 +137,11 @@ notebook_page_for_terminal(GtkNotebook *notebook, GtkWidget *terminal)
 {
     GtkWidget *dummy = terminal_linked_dummy(terminal);
 
-    if (dummy && gtk_widget_get_parent(dummy) == GTK_WIDGET(notebook))
-        return gtk_notebook_page_num(notebook, dummy);
+    if (dummy) {
+        int page_num = gtk_notebook_page_num(notebook, dummy);
+        if (page_num >= 0)
+            return page_num;
+    }
 
     for (int i = 0; i < gtk_notebook_get_n_pages(notebook); i++) {
         if (notebook_terminal_at(notebook, i) == terminal)
@@ -148,8 +155,10 @@ static GtkNotebook *
 terminal_parent_notebook(GtkWidget *terminal)
 {
     GtkWidget *dummy = terminal_linked_dummy(terminal);
-    GtkWidget *parent = dummy ? gtk_widget_get_parent(dummy) : NULL;
-    return GTK_IS_NOTEBOOK(parent) ? GTK_NOTEBOOK(parent) : NULL;
+    GtkWidget *notebook = dummy ? gtk_widget_get_ancestor(dummy,
+                                                          GTK_TYPE_NOTEBOOK)
+                                : NULL;
+    return GTK_IS_NOTEBOOK(notebook) ? GTK_NOTEBOOK(notebook) : NULL;
 }
 
 static void
@@ -713,21 +722,22 @@ tab_close_refresh_idle_cb(gpointer user_data)
 }
 
 gboolean
-workspace_close_terminal(Workspace *ws, GtkWidget *terminal)
+workspace_close_tab_at(Workspace *ws, GtkNotebook *nb, int page)
 {
-    if (!terminal || !ws || !GHOSTTY_IS_TERMINAL(terminal))
+    GtkWidget *terminal;
+    int n;
+
+    if (!ws || !GTK_IS_NOTEBOOK(nb))
+        return FALSE;
+    if (page < 0 || page >= gtk_notebook_get_n_pages(nb))
         return FALSE;
 
-    GtkNotebook *nb = terminal_parent_notebook(terminal);
-    if (!nb)
+    terminal = notebook_terminal_at(nb, page);
+    if (!terminal || !GHOSTTY_IS_TERMINAL(terminal))
         return FALSE;
 
-    int n = gtk_notebook_get_n_pages(nb);
+    n = gtk_notebook_get_n_pages(nb);
     if (n <= 1 && ws->pane_notebooks && ws->pane_notebooks->len <= 1)
-        return FALSE;
-
-    int page = notebook_page_for_terminal(nb, terminal);
-    if (page < 0)
         return FALSE;
 
     g_ptr_array_remove(ws->terminals, terminal);
@@ -749,11 +759,46 @@ workspace_close_terminal(Workspace *ws, GtkWidget *terminal)
 }
 
 gboolean
+workspace_close_terminal(Workspace *ws, GtkWidget *terminal)
+{
+    GtkNotebook *nb = NULL;
+    int page = -1;
+
+    if (!terminal || !ws || !GHOSTTY_IS_TERMINAL(terminal))
+        return FALSE;
+
+    nb = terminal_parent_notebook(terminal);
+    if (nb)
+        page = notebook_page_for_terminal(nb, terminal);
+
+    if ((!nb || page < 0) && ws->pane_notebooks) {
+        for (guint i = 0; i < ws->pane_notebooks->len; i++) {
+            GtkNotebook *candidate = g_ptr_array_index(ws->pane_notebooks, i);
+            int candidate_page;
+
+            if (!GTK_IS_NOTEBOOK(candidate))
+                continue;
+
+            candidate_page = notebook_page_for_terminal(candidate, terminal);
+            if (candidate_page >= 0) {
+                nb = candidate;
+                page = candidate_page;
+                break;
+            }
+        }
+    }
+
+    if (!nb || page < 0)
+        return FALSE;
+
+    return workspace_close_tab_at(ws, nb, page);
+}
+
+gboolean
 workspace_close_current_tab(Workspace *ws)
 {
     GtkNotebook *nb;
     int page;
-    GtkWidget *terminal;
 
     if (!ws)
         return FALSE;
@@ -766,11 +811,7 @@ workspace_close_current_tab(Workspace *ws)
     if (page < 0)
         return FALSE;
 
-    terminal = notebook_terminal_at(nb, page);
-    if (!terminal)
-        return FALSE;
-
-    return workspace_close_terminal(ws, terminal);
+    return workspace_close_tab_at(ws, nb, page);
 }
 
 typedef struct {
@@ -945,37 +986,14 @@ on_notebook_drop(GtkDropTarget *target, const GValue *value,
 {
     (void)target; (void)x; (void)y;
     GtkNotebook *dest_nb = GTK_NOTEBOOK(user_data);
+    GtkWidget *terminal = NULL;
+    GtkNotebook *src_nb = NULL;
+    Workspace *src_ws = NULL;
 
-    if (!G_VALUE_HOLDS(value, G_TYPE_BYTES))
+    if (!workspace_drag_value_terminal(value, &terminal, &src_nb, &src_ws))
         return FALSE;
-
-    GBytes *bytes = g_value_get_boxed(value);
-    if (g_bytes_get_size(bytes) != sizeof(TabDragData))
-        return FALSE;
-
-    const TabDragData *dd = g_bytes_get_data(bytes, NULL);
-    GtkWidget *terminal = dd->terminal;
-    GtkNotebook *src_nb = GTK_NOTEBOOK(dd->source_notebook);
-
     if (src_nb == dest_nb)
         return FALSE;
-
-    /* Find the tab page index in the source notebook */
-    int src_page = -1;
-    int n_pages = gtk_notebook_get_n_pages(src_nb);
-    int i;
-    for (i = 0; i < n_pages; i++) {
-        if (notebook_terminal_at(src_nb, i) == terminal) {
-            src_page = i;
-            break;
-        }
-    }
-    if (src_page < 0)
-        return FALSE;
-
-    Workspace *src_ws = NULL;
-    if (dd->source_ws_idx >= 0 && dd->source_ws_idx < (int)workspaces->len)
-        src_ws = g_ptr_array_index(workspaces, dd->source_ws_idx);
 
     /* Find destination workspace */
     Workspace *dest_ws = NULL;
@@ -1005,41 +1023,19 @@ on_ws_sidebar_drop(GtkDropTarget *target, const GValue *value,
 {
     (void)target; (void)x; (void)y;
     int dest_ws_idx = GPOINTER_TO_INT(user_data);
-
-    if (!G_VALUE_HOLDS(value, G_TYPE_BYTES))
-        return FALSE;
-
-    GBytes *bytes = g_value_get_boxed(value);
-    if (g_bytes_get_size(bytes) != sizeof(TabDragData))
-        return FALSE;
-
-    const TabDragData *dd = g_bytes_get_data(bytes, NULL);
-    GtkWidget *terminal = dd->terminal;
-    GtkNotebook *src_nb = GTK_NOTEBOOK(dd->source_notebook);
+    GtkWidget *terminal = NULL;
+    GtkNotebook *src_nb = NULL;
+    Workspace *src_ws = NULL;
 
     if (dest_ws_idx < 0 || dest_ws_idx >= (int)workspaces->len)
+        return FALSE;
+    if (!workspace_drag_value_terminal(value, &terminal, &src_nb, &src_ws))
         return FALSE;
 
     Workspace *dest_ws = g_ptr_array_index(workspaces, dest_ws_idx);
 
     /* Don't drop on same workspace if it only has one notebook */
-    Workspace *src_ws = NULL;
-    if (dd->source_ws_idx >= 0 && dd->source_ws_idx < (int)workspaces->len)
-        src_ws = g_ptr_array_index(workspaces, dd->source_ws_idx);
     if (src_ws == dest_ws && dest_ws->pane_notebooks->len == 1)
-        return FALSE;
-
-    /* Find tab in source notebook */
-    int src_page = -1;
-    int n_pages = gtk_notebook_get_n_pages(src_nb);
-    int i;
-    for (i = 0; i < n_pages; i++) {
-        if (notebook_terminal_at(src_nb, i) == terminal) {
-            src_page = i;
-            break;
-        }
-    }
-    if (src_page < 0)
         return FALSE;
 
     GtkNotebook *dest_nb = GTK_NOTEBOOK(dest_ws->notebook);
@@ -1090,10 +1086,64 @@ setup_notebook_drop_target(GtkNotebook *notebook)
 static void
 setup_ws_sidebar_drop_target(GtkWidget *row_widget, int ws_idx)
 {
-    GtkDropTarget *drop = gtk_drop_target_new(G_TYPE_BYTES, GDK_ACTION_MOVE);
+    GType drop_types[] = { GTK_TYPE_NOTEBOOK_PAGE, G_TYPE_BYTES };
+    GtkDropTarget *drop = gtk_drop_target_new(GTK_TYPE_NOTEBOOK_PAGE,
+                                              GDK_ACTION_MOVE);
+    gtk_drop_target_set_gtypes(drop, drop_types, G_N_ELEMENTS(drop_types));
     g_signal_connect(drop, "drop",
                      G_CALLBACK(on_ws_sidebar_drop), GINT_TO_POINTER(ws_idx));
     gtk_widget_add_controller(row_widget, GTK_EVENT_CONTROLLER(drop));
+}
+
+static gboolean
+workspace_drag_value_terminal(const GValue *value,
+                              GtkWidget **terminal_out,
+                              GtkNotebook **src_nb_out,
+                              Workspace **src_ws_out)
+{
+    GtkWidget *terminal = NULL;
+    GtkNotebook *src_nb = NULL;
+    Workspace *src_ws = NULL;
+
+    if (G_VALUE_HOLDS(value, G_TYPE_BYTES)) {
+        GBytes *bytes = g_value_get_boxed(value);
+        const TabDragData *dd;
+
+        if (!bytes || g_bytes_get_size(bytes) != sizeof(TabDragData))
+            return FALSE;
+
+        dd = g_bytes_get_data(bytes, NULL);
+        terminal = dd->terminal;
+        src_nb = GTK_IS_NOTEBOOK(dd->source_notebook)
+            ? GTK_NOTEBOOK(dd->source_notebook)
+            : NULL;
+        if (dd->source_ws_idx >= 0 && workspaces &&
+            dd->source_ws_idx < (int)workspaces->len) {
+            src_ws = g_ptr_array_index(workspaces, dd->source_ws_idx);
+        }
+    } else if (G_VALUE_HOLDS(value, GTK_TYPE_NOTEBOOK_PAGE)) {
+        GtkNotebookPage *page = g_value_get_object(value);
+        GtkWidget *child = page ? gtk_notebook_page_get_child(page) : NULL;
+        GtkWidget *parent = child ? gtk_widget_get_parent(child) : NULL;
+
+        terminal = page_linked_terminal(child);
+        src_nb = GTK_IS_NOTEBOOK(parent) ? GTK_NOTEBOOK(parent) : NULL;
+        if (src_nb)
+            src_ws = g_object_get_data(G_OBJECT(src_nb), "workspace-ptr");
+    } else {
+        return FALSE;
+    }
+
+    if (!terminal || !src_nb || !src_ws || !GHOSTTY_IS_TERMINAL(terminal))
+        return FALSE;
+
+    if (terminal_out)
+        *terminal_out = terminal;
+    if (src_nb_out)
+        *src_nb_out = src_nb;
+    if (src_ws_out)
+        *src_ws_out = src_ws;
+    return TRUE;
 }
 
 /* ── Add terminal to notebook ───────────────────────────────────── */
@@ -1441,6 +1491,20 @@ void workspace_remove(int index, GtkWidget *terminal_stack, GtkWidget *workspace
         return;
 
     Workspace *ws = g_ptr_array_index(workspaces, index);
+
+    if (ws->pane_notebooks) {
+        for (guint i = 0; i < ws->pane_notebooks->len; i++) {
+            GtkNotebook *notebook = g_ptr_array_index(ws->pane_notebooks, i);
+
+            if (!GTK_IS_NOTEBOOK(notebook))
+                continue;
+
+            g_signal_handlers_disconnect_by_data(notebook, ws);
+            g_object_set_data(G_OBJECT(notebook), "workspace-ptr", NULL);
+        }
+    }
+
+    ws->active_pane = NULL;
     gtk_stack_remove(GTK_STACK(terminal_stack), ws->container);
 
     GtkListBoxRow *row = gtk_list_box_get_row_at_index(GTK_LIST_BOX(workspace_list), index);

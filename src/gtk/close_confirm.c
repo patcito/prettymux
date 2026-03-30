@@ -13,6 +13,7 @@ typedef struct {
 static gboolean settings_loaded = FALSE;
 static gboolean confirm_tab_close = TRUE;
 static gboolean confirm_pane_close = TRUE;
+static gboolean confirm_workspace_close = TRUE;
 static gboolean confirm_app_close = TRUE;
 
 static char *
@@ -33,6 +34,8 @@ close_confirm_save(void)
 
     g_key_file_set_boolean(kf, "confirm", "tab_close", confirm_tab_close);
     g_key_file_set_boolean(kf, "confirm", "pane_close", confirm_pane_close);
+    g_key_file_set_boolean(kf, "confirm", "workspace_close",
+                           confirm_workspace_close);
     g_key_file_set_boolean(kf, "confirm", "app_close", confirm_app_close);
 
     g_mkdir_with_parents(dir, 0755);
@@ -58,12 +61,19 @@ close_confirm_load(void)
     kf = g_key_file_new();
     path = close_confirm_settings_path();
     if (g_key_file_load_from_file(kf, path, G_KEY_FILE_NONE, NULL)) {
-        confirm_tab_close = g_key_file_get_boolean(kf, "confirm",
-                                                   "tab_close", NULL);
-        confirm_pane_close = g_key_file_get_boolean(kf, "confirm",
-                                                    "pane_close", NULL);
-        confirm_app_close = g_key_file_get_boolean(kf, "confirm",
-                                                   "app_close", NULL);
+        if (g_key_file_has_key(kf, "confirm", "tab_close", NULL))
+            confirm_tab_close = g_key_file_get_boolean(kf, "confirm",
+                                                       "tab_close", NULL);
+        if (g_key_file_has_key(kf, "confirm", "pane_close", NULL))
+            confirm_pane_close = g_key_file_get_boolean(kf, "confirm",
+                                                        "pane_close", NULL);
+        if (g_key_file_has_key(kf, "confirm", "workspace_close", NULL))
+            confirm_workspace_close = g_key_file_get_boolean(kf, "confirm",
+                                                             "workspace_close",
+                                                             NULL);
+        if (g_key_file_has_key(kf, "confirm", "app_close", NULL))
+            confirm_app_close = g_key_file_get_boolean(kf, "confirm",
+                                                       "app_close", NULL);
     }
 
     g_free(path);
@@ -80,6 +90,8 @@ close_confirm_is_enabled(CloseConfirmKind kind)
         return confirm_tab_close;
     case CLOSE_CONFIRM_PANE:
         return confirm_pane_close;
+    case CLOSE_CONFIRM_WORKSPACE:
+        return confirm_workspace_close;
     case CLOSE_CONFIRM_APP:
         return confirm_app_close;
     default:
@@ -99,6 +111,9 @@ close_confirm_set_enabled(CloseConfirmKind kind, gboolean enabled)
     case CLOSE_CONFIRM_PANE:
         confirm_pane_close = enabled;
         break;
+    case CLOSE_CONFIRM_WORKSPACE:
+        confirm_workspace_close = enabled;
+        break;
     case CLOSE_CONFIRM_APP:
         confirm_app_close = enabled;
         break;
@@ -117,6 +132,8 @@ close_confirm_heading(CloseConfirmKind kind)
         return "Close this tab?";
     case CLOSE_CONFIRM_PANE:
         return "Close this pane?";
+    case CLOSE_CONFIRM_WORKSPACE:
+        return "Close this workspace?";
     case CLOSE_CONFIRM_APP:
         return "Quit PrettyMux?";
     default:
@@ -132,6 +149,8 @@ close_confirm_body(CloseConfirmKind kind)
         return "The current tab will be closed.";
     case CLOSE_CONFIRM_PANE:
         return "The current pane and its tabs will be closed.";
+    case CLOSE_CONFIRM_WORKSPACE:
+        return "The current workspace and its panes will be closed.";
     case CLOSE_CONFIRM_APP:
         return "PrettyMux will close all panes and tabs in this window.";
     default:
@@ -147,6 +166,8 @@ close_confirm_label(CloseConfirmKind kind)
         return "Close Tab";
     case CLOSE_CONFIRM_PANE:
         return "Close Pane";
+    case CLOSE_CONFIRM_WORKSPACE:
+        return "Close Workspace";
     case CLOSE_CONFIRM_APP:
         return "Quit";
     default:

@@ -132,6 +132,7 @@ void workspace_set_shutting_down(void);
 gboolean workspace_move_tab(int src_ws_idx, int src_pane_idx, int src_tab_idx,
                             int dest_ws_idx, int dest_pane_idx);
 gboolean workspace_select_tab(int ws_idx, int pane_idx, int tab_idx);
+gboolean workspace_close_tab_at(Workspace *ws, GtkNotebook *notebook, int page);
 gboolean workspace_close_terminal(Workspace *ws, GtkWidget *terminal);
 gboolean workspace_close_current_tab(Workspace *ws);
 

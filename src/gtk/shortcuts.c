@@ -5,7 +5,7 @@
 
 const ShortcutDef default_shortcuts[] = {
     {"workspace.new",     GDK_KEY_n,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "New workspace"},
-    {"workspace.close",   GDK_KEY_w,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Close workspace"},
+    {"workspace.close",   GDK_KEY_d,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Close workspace"},
     {"workspace.next",    GDK_KEY_bracketright,  GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Next workspace"},
     {"workspace.prev",    GDK_KEY_bracketleft,   GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Previous workspace"},
     {"workspace.focus.1", GDK_KEY_1,             GDK_CONTROL_MASK,                  "Switch to workspace 1"},
@@ -30,7 +30,7 @@ const ShortcutDef default_shortcuts[] = {
     {"devtools.window",   GDK_KEY_j,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Inspector window"},
     {"shortcuts.show",    GDK_KEY_k,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Shortcuts overlay"},
     {"search.show",       GDK_KEY_s,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Search palette"},
-    {"tab.close",         GDK_KEY_d,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Close tab"},
+    {"tab.close",         GDK_KEY_w,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Close tab"},
     {"pane.close",        GDK_KEY_x,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Close pane"},
     {"pane.zoom",         GDK_KEY_z,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Zoom pane"},
     {"terminal.search",   GDK_KEY_f,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Terminal search"},
@@ -63,6 +63,20 @@ normalize_mods(GdkModifierType mods)
 {
     return mods & (GDK_CONTROL_MASK | GDK_SHIFT_MASK |
                    GDK_ALT_MASK | GDK_SUPER_MASK);
+}
+
+static ShortcutDef *
+runtime_shortcut_mutable(const char *action)
+{
+    if (!action || !runtime_shortcuts)
+        return NULL;
+
+    for (int i = 0; i < runtime_shortcut_count; i++) {
+        if (strcmp(runtime_shortcuts[i].action, action) == 0)
+            return &runtime_shortcuts[i];
+    }
+
+    return NULL;
 }
 
 static int
@@ -108,6 +122,29 @@ save_runtime_shortcuts(void)
     g_key_file_unref(kf);
 }
 
+static void
+migrate_close_shortcut_swap_if_needed(void)
+{
+    ShortcutDef *workspace_close = runtime_shortcut_mutable("workspace.close");
+    ShortcutDef *tab_close = runtime_shortcut_mutable("tab.close");
+
+    if (!workspace_close || !tab_close)
+        return;
+
+    if (workspace_close->keyval == GDK_KEY_w &&
+        normalize_mods(workspace_close->mods) ==
+            (GDK_CONTROL_MASK | GDK_SHIFT_MASK) &&
+        tab_close->keyval == GDK_KEY_d &&
+        normalize_mods(tab_close->mods) ==
+            (GDK_CONTROL_MASK | GDK_SHIFT_MASK)) {
+        workspace_close->keyval = GDK_KEY_d;
+        workspace_close->mods = GDK_CONTROL_MASK | GDK_SHIFT_MASK;
+        tab_close->keyval = GDK_KEY_w;
+        tab_close->mods = GDK_CONTROL_MASK | GDK_SHIFT_MASK;
+        save_runtime_shortcuts();
+    }
+}
+
 void
 shortcuts_init(void)
 {
@@ -139,6 +176,7 @@ shortcuts_init(void)
                 g_free(value);
             }
         }
+        migrate_close_shortcut_swap_if_needed();
     }
 
     g_key_file_unref(kf);
