@@ -9,11 +9,13 @@
 #include "command_palette.h"
 #include "workspace.h"
 #include "ghostty_terminal.h"
+#include "project_icon_cache.h"
 #include "browser_tab.h"
 #include "theme.h"
 
-#include <string.h>
 #include <ctype.h>
+#include <stdio.h>
+#include <string.h>
 
 /* ── Search-item kind ─────────────────────────────────────────── */
 
@@ -27,6 +29,7 @@ typedef struct {
     PaletteItemKind kind;
     char           *name;
     char           *detail;
+    char           *icon_path;
     int             workspace_idx;
     int             pane_notebook_page;  /* which notebook page (terminal tab) */
     GtkNotebook    *pane_notebook;       /* the notebook containing the terminal */
@@ -57,6 +60,58 @@ G_DEFINE_FINAL_TYPE(CommandPalette, command_palette, GTK_TYPE_WIDGET)
 
 /* ── Helpers ──────────────────────────────────────────────────── */
 
+static GtkWidget *
+page_linked_terminal(GtkWidget *page)
+{
+    GtkWidget *terminal;
+
+    if (!page)
+        return NULL;
+    if (GHOSTTY_IS_TERMINAL(page))
+        return page;
+
+    terminal = g_object_get_data(G_OBJECT(page), "linked-terminal");
+    return (terminal && GHOSTTY_IS_TERMINAL(terminal)) ? terminal : NULL;
+}
+
+static const char *
+terminal_icon_path(GtkWidget *terminal)
+{
+    const char *cwd;
+    const char *icon_path;
+
+    if (!terminal || !GHOSTTY_IS_TERMINAL(terminal))
+        return NULL;
+
+    icon_path = g_object_get_data(G_OBJECT(terminal), "project-icon-path");
+    if (icon_path && icon_path[0] &&
+        g_file_test(icon_path, G_FILE_TEST_EXISTS | G_FILE_TEST_IS_REGULAR))
+        return icon_path;
+
+    cwd = ghostty_terminal_get_cwd(GHOSTTY_TERMINAL(terminal));
+    if (!cwd || !cwd[0])
+        return NULL;
+
+    return project_icon_cache_lookup_for_path(cwd);
+}
+
+static const char *
+workspace_icon_path(Workspace *ws)
+{
+    GtkNotebook *nb;
+    GtkWidget *terminal;
+
+    if (!ws || !ws->pane_notebooks || ws->pane_notebooks->len == 0)
+        return NULL;
+
+    nb = g_ptr_array_index(ws->pane_notebooks, 0);
+    if (!GTK_IS_NOTEBOOK(nb) || gtk_notebook_get_n_pages(nb) <= 0)
+        return NULL;
+
+    terminal = page_linked_terminal(gtk_notebook_get_nth_page(nb, 0));
+    return terminal_icon_path(terminal);
+}
+
 static PaletteItem *
 palette_item_new(PaletteItemKind kind, const char *name, const char *detail)
 {
@@ -64,6 +119,7 @@ palette_item_new(PaletteItemKind kind, const char *name, const char *detail)
     item->kind = kind;
     item->name = g_strdup(name ? name : "");
     item->detail = g_strdup(detail ? detail : "");
+    item->icon_path = NULL;
     item->workspace_idx = -1;
     item->pane_notebook_page = -1;
     item->pane_notebook = NULL;
@@ -77,6 +133,7 @@ palette_item_free(gpointer data)
     PaletteItem *item = data;
     g_free(item->name);
     g_free(item->detail);
+    g_free(item->icon_path);
     g_free(item);
 }
 
@@ -121,6 +178,7 @@ palette_gather_items(CommandPalette *self)
             PaletteItem *ws_item = palette_item_new(
                 PALETTE_ITEM_WORKSPACE, ws->name, ws->cwd);
             ws_item->workspace_idx = (int)wi;
+            ws_item->icon_path = g_strdup(workspace_icon_path(ws));
             g_ptr_array_add(self->items, ws_item);
 
             /* Iterate pane notebooks.  In the non-split case the
@@ -138,11 +196,12 @@ palette_gather_items(CommandPalette *self)
                     int n_pages = gtk_notebook_get_n_pages(nb);
                     for (int ti = 0; ti < n_pages; ti++) {
                         GtkWidget *child = gtk_notebook_get_nth_page(nb, ti);
+                        GtkWidget *terminal = page_linked_terminal(child);
                         const char *title = NULL;
                         const char *cwd = NULL;
-                        if (GHOSTTY_IS_TERMINAL(child)) {
-                            title = ghostty_terminal_get_title(GHOSTTY_TERMINAL(child));
-                            cwd = ghostty_terminal_get_cwd(GHOSTTY_TERMINAL(child));
+                        if (GHOSTTY_IS_TERMINAL(terminal)) {
+                            title = ghostty_terminal_get_title(GHOSTTY_TERMINAL(terminal));
+                            cwd = ghostty_terminal_get_cwd(GHOSTTY_TERMINAL(terminal));
                         }
                         char label[128];
                         snprintf(label, sizeof(label), "%s",
@@ -153,6 +212,7 @@ palette_gather_items(CommandPalette *self)
                         t_item->workspace_idx = (int)wi;
                         t_item->pane_notebook = nb;
                         t_item->pane_notebook_page = ti;
+                        t_item->icon_path = g_strdup(terminal_icon_path(terminal));
                         g_ptr_array_add(self->items, t_item);
                     }
                 }
@@ -189,6 +249,8 @@ create_row_widget(PaletteItem *item)
 {
     const char *kind_label;
     const char *kind_class;
+    GtkWidget *icon_box = NULL;
+    GtkWidget *icon = NULL;
     switch (item->kind) {
     case PALETTE_ITEM_WORKSPACE: kind_label = "WS"; kind_class = "palette-badge-ws"; break;
     case PALETTE_ITEM_TERMINAL:  kind_label = "TTY"; kind_class = "palette-badge-tty"; break;
@@ -197,6 +259,19 @@ create_row_widget(PaletteItem *item)
 
     GtkWidget *hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
     gtk_widget_add_css_class(hbox, "palette-row");
+
+    if (item->icon_path && item->icon_path[0]) {
+        icon_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+        icon = gtk_image_new_from_file(item->icon_path);
+        gtk_widget_add_css_class(icon_box, "palette-favicon-box");
+        gtk_image_set_pixel_size(GTK_IMAGE(icon), 16);
+        gtk_widget_set_size_request(icon, 18, 18);
+        gtk_widget_set_size_request(icon_box, 20, 20);
+        gtk_widget_set_valign(icon, GTK_ALIGN_CENTER);
+        gtk_widget_set_valign(icon_box, GTK_ALIGN_CENTER);
+        gtk_box_append(GTK_BOX(icon_box), icon);
+        gtk_box_append(GTK_BOX(hbox), icon_box);
+    }
 
     /* Type badge */
     GtkWidget *badge = gtk_label_new(kind_label);
@@ -277,10 +352,10 @@ palette_activate_item(CommandPalette *self, PaletteItem *item)
         item->pane_notebook && item->pane_notebook_page >= 0) {
         gtk_notebook_set_current_page(item->pane_notebook,
                                       item->pane_notebook_page);
-        GtkWidget *page = gtk_notebook_get_nth_page(
-            item->pane_notebook, item->pane_notebook_page);
+        GtkWidget *page = page_linked_terminal(gtk_notebook_get_nth_page(
+            item->pane_notebook, item->pane_notebook_page));
         if (page)
-            gtk_widget_grab_focus(page);
+            ghostty_terminal_focus(GHOSTTY_TERMINAL(page));
     }
 
     if (item->kind == PALETTE_ITEM_BROWSER && item->browser_tab_idx >= 0) {
@@ -447,6 +522,11 @@ static void inject_palette_css(void) {
         "}"
         ".palette-row {"
         "  padding: 10px 20px;"
+        "}"
+        ".palette-favicon-box {"
+        "  background: #ffffff;"
+        "  border-radius: 7px;"
+        "  padding: 1px;"
         "}"
         ".palette-badge {"
         "  font-size: 13px;"

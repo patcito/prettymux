@@ -33,6 +33,7 @@ sources = files(
   'shortcuts.c',
   'workspace.c',
   'session.c',
+  'project_icon_cache.c',
   'close_confirm.c',
   'command_palette.c',
   'port_scanner.c',
@@ -158,3 +159,18 @@ if not is_windows
     install: true,
   )
 endif
+
+prettymux_desktop = configure_file(
+  input: '../../packaging/prettymux.desktop',
+  output: 'prettymux.desktop',
+  copy: true,
+)
+
+prettymux_icon = configure_file(
+  input: '../../packaging/prettymux.svg',
+  output: 'prettymux.svg',
+  copy: true,
+)
+
+install_data(prettymux_desktop, install_dir: get_option('datadir') / 'applications')
+install_data(prettymux_icon, install_dir: get_option('datadir') / 'icons' / 'hicolor' / 'scalable' / 'apps')

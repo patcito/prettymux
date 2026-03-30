@@ -15,6 +15,9 @@ env:
   GHOSTTY_BRANCH: linux-embedded-platform
   GHOSTTY_RELEASE: linux-embedded-v0.1.0
   ZIG_VERSION: '0.15.2'
+  UBUNTU_BUILD_IMAGE: ghcr.io/patcito/prettymux-build-ubuntu:24.04
+  FEDORA_BUILD_IMAGE: ghcr.io/patcito/prettymux-build-fedora:42
+  ARCH_BUILD_IMAGE: ghcr.io/patcito/prettymux-build-archlinux:latest
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -54,7 +57,9 @@ jobs:
   build-linux-ubuntu-lts:
     if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'ubuntu') || contains(inputs.jobs, 'linux')
     needs: fetch-libghostty
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ env.UBUNTU_BUILD_IMAGE }}
     steps:
       - name: Checkout prettymux
         uses: actions/checkout@v4
@@ -65,11 +70,6 @@ jobs:
           name: ghostty-prebuilt
           path: ghostty
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev libadwaita-1-dev libwebkitgtk-6.0-dev libjson-glib-dev meson ninja-build
-
       - name: Build prettymux
         run: |
           cd src/gtk
@@ -79,12 +79,17 @@ jobs:
 
       - name: Package artifacts
         run: |
-          mkdir -p dist
-          cp src/gtk/builddir/prettymux dist/
-          cp src/gtk/builddir/prettymux-open dist/ || true
-
-          cp src/gtk/prettymux-shell-integration.sh dist/ || true
-          cp ghostty/zig-out/lib/libghostty.so dist/ || true
+          mkdir -p dist/usr/bin dist/usr/lib/prettymux dist/usr/share/prettymux/bin \
+            dist/usr/share/applications dist/usr/share/icons/hicolor/scalable/apps
+          cp src/gtk/builddir/prettymux dist/usr/bin/
+          cp src/gtk/builddir/prettymux-open dist/usr/bin/ || true
+          cp src/gtk/prettymux-shell-integration.sh dist/usr/share/prettymux/shell-integration.sh || true
+          cp src/gtk/prettymux-bashrc.sh dist/usr/share/prettymux/prettymux-bashrc.sh || true
+          cp src/gtk/bin/open dist/usr/share/prettymux/bin/open || true
+          cp src/gtk/bin/xdg-open dist/usr/share/prettymux/bin/xdg-open || true
+          cp ghostty/zig-out/lib/libghostty.so dist/usr/lib/prettymux/ || true
+          cp packaging/prettymux.desktop dist/usr/share/applications/
+          cp packaging/prettymux.svg dist/usr/share/icons/hicolor/scalable/apps/
           tar czf prettymux-ubuntu-24.04-amd64.tar.gz -C dist .
 
       - name: Upload artifact
@@ -100,11 +105,9 @@ jobs:
     if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'fedora') || contains(inputs.jobs, 'linux')
     needs: fetch-libghostty
     runs-on: ubuntu-latest
-    container: fedora:latest
+    container:
+      image: ${{ env.FEDORA_BUILD_IMAGE }}
     steps:
-      - name: Install base tools
-        run: dnf install -y git which tar
-
       - name: Checkout prettymux
         uses: actions/checkout@v4
 
@@ -122,12 +125,6 @@ jobs:
           ls -la $GITHUB_WORKSPACE/ghostty/vendor/glad/src/ || echo "glad not found at GITHUB_WORKSPACE path"
           find ghostty -type f | head -20
 
-      - name: Install dependencies
-        run: |
-          dnf install -y \
-            gtk4-devel libadwaita-devel webkitgtk6.0-devel json-glib-devel \
-            meson ninja-build gcc-c++
-
       - name: Build prettymux
         run: |
           echo "pwd: $(pwd)"
@@ -139,17 +136,14 @@ jobs:
 
       - name: Package artifacts
         run: |
-          mkdir -p dist
+          mkdir -p dist/bin
           cp src/gtk/builddir/prettymux dist/
           cp src/gtk/builddir/prettymux-open dist/ || true
           cp src/gtk/prettymux-shell-integration.sh dist/ || true
+          cp src/gtk/prettymux-bashrc.sh dist/ || true
+          cp src/gtk/bin/open dist/bin/open || true
+          cp src/gtk/bin/xdg-open dist/bin/xdg-open || true
           cp ghostty/zig-out/lib/libghostty.so dist/ || true
-
-      - name: Install nFPM
-        run: |
-          NFPM_VERSION=$(curl -s https://api.github.com/repos/goreleaser/nfpm/releases/latest | grep tag_name | cut -d'"' -f4 | sed 's/^v//')
-          curl -sL -o /tmp/nfpm.rpm "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm-${NFPM_VERSION}-1.x86_64.rpm"
-          dnf install -y /tmp/nfpm.rpm
 
       - name: Build RPM
         run: |
@@ -171,7 +165,9 @@ jobs:
   build-linux-deb:
     if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'deb') || contains(inputs.jobs, 'linux')
     needs: fetch-libghostty
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ env.UBUNTU_BUILD_IMAGE }}
     steps:
       - name: Checkout prettymux
         uses: actions/checkout@v4
@@ -182,11 +178,6 @@ jobs:
           name: ghostty-prebuilt
           path: ghostty
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev libadwaita-1-dev libwebkitgtk-6.0-dev libjson-glib-dev meson ninja-build
-
       - name: Build prettymux
         run: |
           cd src/gtk
@@ -196,17 +187,14 @@ jobs:
 
       - name: Package artifacts
         run: |
-          mkdir -p dist
+          mkdir -p dist/bin
           cp src/gtk/builddir/prettymux dist/
           cp src/gtk/builddir/prettymux-open dist/ || true
           cp src/gtk/prettymux-shell-integration.sh dist/ || true
+          cp src/gtk/prettymux-bashrc.sh dist/ || true
+          cp src/gtk/bin/open dist/bin/open || true
+          cp src/gtk/bin/xdg-open dist/bin/xdg-open || true
           cp ghostty/zig-out/lib/libghostty.so dist/ || true
-
-      - name: Install nFPM
-        run: |
-          NFPM_VERSION=$(curl -s https://api.github.com/repos/goreleaser/nfpm/releases/latest | grep tag_name | cut -d'"' -f4 | sed 's/^v//')
-          curl -sL -o /tmp/nfpm.deb "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_amd64.deb"
-          sudo dpkg -i /tmp/nfpm.deb
 
       - name: Build .deb
         run: |
@@ -303,11 +291,9 @@ jobs:
     if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'arch') || contains(inputs.jobs, 'linux')
     needs: fetch-libghostty
     runs-on: ubuntu-latest
-    container: archlinux:latest
+    container:
+      image: ${{ env.ARCH_BUILD_IMAGE }}
     steps:
-      - name: Install base tools
-        run: pacman -Syu --noconfirm base-devel git curl zstd
-
       - name: Checkout prettymux
         uses: actions/checkout@v4
 
@@ -316,9 +302,6 @@ jobs:
         with:
           name: ghostty-prebuilt
           path: ghostty
-
-      - name: Install dependencies
-        run: pacman -S --noconfirm gtk4 libadwaita webkitgtk-6.0 json-glib meson ninja gcc
 
       - name: Build prettymux
         run: |
@@ -335,15 +318,20 @@ jobs:
           PKGDIR="prettymux-pkg"
           mkdir -p "$PKGDIR/usr/bin"
           mkdir -p "$PKGDIR/usr/lib/prettymux"
-          mkdir -p "$PKGDIR/usr/share/prettymux"
+          mkdir -p "$PKGDIR/usr/share/prettymux/bin"
           mkdir -p "$PKGDIR/usr/share/applications"
+          mkdir -p "$PKGDIR/usr/share/icons/hicolor/scalable/apps"
 
           install -Dm755 src/gtk/builddir/prettymux "$PKGDIR/usr/bin/prettymux"
           install -Dm755 src/gtk/builddir/prettymux-open "$PKGDIR/usr/bin/prettymux-open" || true
           install -Dm644 ghostty/zig-out/lib/libghostty.so "$PKGDIR/usr/lib/prettymux/libghostty.so" || true
 
           install -Dm644 src/gtk/prettymux-shell-integration.sh "$PKGDIR/usr/share/prettymux/shell-integration.sh" || true
+          install -Dm644 src/gtk/prettymux-bashrc.sh "$PKGDIR/usr/share/prettymux/prettymux-bashrc.sh" || true
+          install -Dm755 src/gtk/bin/open "$PKGDIR/usr/share/prettymux/bin/open" || true
+          install -Dm755 src/gtk/bin/xdg-open "$PKGDIR/usr/share/prettymux/bin/xdg-open" || true
           install -Dm644 packaging/prettymux.desktop "$PKGDIR/usr/share/applications/prettymux.desktop"
+          install -Dm644 packaging/prettymux.svg "$PKGDIR/usr/share/icons/hicolor/scalable/apps/prettymux.svg"
           install -Dm644 LICENSE "$PKGDIR/usr/share/licenses/prettymux/LICENSE"
 
           printf '%s\n' \
@@ -415,11 +403,16 @@ jobs:
       - name: Create source tarball
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          # Default version for workflow_dispatch (no tag)
           if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
-            VERSION="0.1.0~git$(date +%Y%m%d)"
+            VERSION=$(sed -n "s/^[[:space:]]*version: '\\([^']*\\)'.*/\\1/p" src/gtk/meson.build | head -1)
+            if [ -z "$VERSION" ]; then
+              VERSION="0.2.0"
+            fi
+            VERSION="${VERSION}~git$(date -u +%Y%m%d%H%M)"
           fi
+          PPA_REVISION=$((GITHUB_RUN_NUMBER * 10 + GITHUB_RUN_ATTEMPT - 1))
           echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "PPA_REVISION=$PPA_REVISION" >> $GITHUB_ENV
           # Verify ghostty lib exists before tarball
           ls -la ghostty/zig-out/lib/
           tar czf prettymux-${VERSION}.tar.gz \
@@ -439,6 +432,7 @@ jobs:
           deb_email: patcito@gmail.com
           deb_fullname: Patrick Aljord
           series: noble
+          revision: ${{ env.PPA_REVISION }}
           keep_changelog: true
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
@@ -476,19 +470,18 @@ jobs:
         run: |
           mkdir -p AppDir/usr/bin
           mkdir -p AppDir/usr/lib/prettymux
-          mkdir -p AppDir/usr/share/prettymux
+          mkdir -p AppDir/usr/share/prettymux/bin
           mkdir -p AppDir/usr/share/applications
+          mkdir -p AppDir/usr/share/icons/hicolor/scalable/apps
           cp src/gtk/builddir/prettymux AppDir/usr/bin/
           cp src/gtk/builddir/prettymux-open AppDir/usr/bin/ || true
           cp ghostty/zig-out/lib/libghostty.so AppDir/usr/lib/prettymux/ || true
           cp src/gtk/prettymux-shell-integration.sh AppDir/usr/share/prettymux/shell-integration.sh || true
+          cp src/gtk/prettymux-bashrc.sh AppDir/usr/share/prettymux/prettymux-bashrc.sh || true
+          cp src/gtk/bin/open AppDir/usr/share/prettymux/bin/open || true
+          cp src/gtk/bin/xdg-open AppDir/usr/share/prettymux/bin/xdg-open || true
           cp packaging/prettymux.desktop AppDir/usr/share/applications/prettymux.desktop
-          # Create a simple icon for AppImage
-          mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
-          convert -size 256x256 xc:transparent -fill '#cba6f7' -font DejaVu-Sans-Mono-Bold \
-            -pointsize 180 -gravity center -annotate 0 '>_' \
-            AppDir/usr/share/icons/hicolor/256x256/apps/prettymux.png 2>/dev/null || \
-          echo '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><rect width="256" height="256" rx="40" fill="#1e1e2e"/><text x="128" y="170" font-family="monospace" font-size="140" fill="#cba6f7" text-anchor="middle">>_</text></svg>' > AppDir/usr/share/icons/hicolor/256x256/apps/prettymux.svg
+          cp packaging/prettymux.svg AppDir/usr/share/icons/hicolor/scalable/apps/prettymux.svg
 
       - name: Build AppImage
         uses: AppImageCrafters/build-appimage@v1

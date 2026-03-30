@@ -1,0 +1,129 @@
+name: Build Linux Images
+
+on:
+  push:
+    branches: ['main']
+    paths:
+      - '.github/workflows/build-linux-images.yml'
+      - 'packaging/containers/**'
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_OWNER: ${{ github.repository_owner }}
+  NFPM_VERSION: '2.43.1'
+
+jobs:
+  build-ubuntu:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/prettymux-build-ubuntu
+          tags: |
+            type=raw,value=24.04,enable={{is_default_branch}}
+            type=raw,value=ubuntu-24.04,enable={{is_default_branch}}
+            type=ref,event=branch,prefix=branch-
+            type=sha,prefix=sha-
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packaging/containers/ubuntu-24.04.Dockerfile
+          push: true
+          build-args: |
+            NFPM_VERSION=${{ env.NFPM_VERSION }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  build-fedora:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/prettymux-build-fedora
+          tags: |
+            type=raw,value=42,enable={{is_default_branch}}
+            type=raw,value=fedora-42,enable={{is_default_branch}}
+            type=ref,event=branch,prefix=branch-
+            type=sha,prefix=sha-
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packaging/containers/fedora.Dockerfile
+          push: true
+          build-args: |
+            NFPM_VERSION=${{ env.NFPM_VERSION }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  build-archlinux:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/prettymux-build-archlinux
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=archlinux,enable={{is_default_branch}}
+            type=ref,event=branch,prefix=branch-
+            type=sha,prefix=sha-
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packaging/containers/archlinux.Dockerfile
+          push: true
+          build-args: |
+            NFPM_VERSION=${{ env.NFPM_VERSION }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

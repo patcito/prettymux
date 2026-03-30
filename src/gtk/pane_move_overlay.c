@@ -5,6 +5,7 @@
 #include "pane_move_overlay.h"
 
 #include "ghostty_terminal.h"
+#include "project_icon_cache.h"
 #include "theme.h"
 #include "workspace.h"
 
@@ -25,6 +26,7 @@ typedef struct {
     char *title;
     char *detail;
     char *pane_label;
+    char *icon_path;
     int workspace_idx;
     int pane_idx;
 } PaneMoveItem;
@@ -58,6 +60,27 @@ page_linked_terminal(GtkWidget *page)
     return (terminal && GHOSTTY_IS_TERMINAL(terminal)) ? terminal : NULL;
 }
 
+static const char *
+terminal_icon_path(GtkWidget *terminal)
+{
+    const char *cwd;
+    const char *icon_path;
+
+    if (!terminal || !GHOSTTY_IS_TERMINAL(terminal))
+        return NULL;
+
+    icon_path = g_object_get_data(G_OBJECT(terminal), "project-icon-path");
+    if (icon_path && icon_path[0] &&
+        g_file_test(icon_path, G_FILE_TEST_EXISTS | G_FILE_TEST_IS_REGULAR))
+        return icon_path;
+
+    cwd = ghostty_terminal_get_cwd(GHOSTTY_TERMINAL(terminal));
+    if (!cwd || !cwd[0])
+        return NULL;
+
+    return project_icon_cache_lookup_for_path(cwd);
+}
+
 static void
 pane_move_item_free(gpointer data)
 {
@@ -66,6 +89,7 @@ pane_move_item_free(gpointer data)
     g_free(item->title);
     g_free(item->detail);
     g_free(item->pane_label);
+    g_free(item->icon_path);
     g_free(item);
 }
 
@@ -170,6 +194,11 @@ inject_css(void)
         "}"
         ".pane-move-row {"
         "  padding: 14px 16px;"
+        "}"
+        ".pane-move-favicon-box {"
+        "  background: #ffffff;"
+        "  border-radius: 7px;"
+        "  padding: 1px;"
         "}"
         ".pane-move-badge {"
         "  min-width: 46px;"
@@ -396,6 +425,7 @@ gather_items(PaneMoveOverlayState *state)
                                            n_pages == 1 ? "" : "s",
                                            (summary && summary[0]) ? "  •  " : "",
                                            (summary && summary[0]) ? summary : "");
+            item->icon_path = g_strdup(terminal_icon_path(terminal));
             g_ptr_array_add(state->items, item);
         }
     }
@@ -405,6 +435,8 @@ static GtkWidget *
 create_row_widget(PaneMoveItem *item)
 {
     GtkWidget *hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 14);
+    GtkWidget *icon_box = NULL;
+    GtkWidget *icon = NULL;
     GtkWidget *badge = gtk_label_new("MOVE");
     GtkWidget *text_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 3);
     GtkWidget *name = gtk_label_new(item->title);
@@ -424,6 +456,19 @@ create_row_widget(PaneMoveItem *item)
     gtk_widget_set_hexpand(text_box, TRUE);
     gtk_widget_set_halign(pill, GTK_ALIGN_END);
     gtk_widget_set_valign(pill, GTK_ALIGN_CENTER);
+
+    if (item->icon_path && item->icon_path[0]) {
+        icon_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+        icon = gtk_image_new_from_file(item->icon_path);
+        gtk_widget_add_css_class(icon_box, "pane-move-favicon-box");
+        gtk_image_set_pixel_size(GTK_IMAGE(icon), 16);
+        gtk_widget_set_size_request(icon, 18, 18);
+        gtk_widget_set_size_request(icon_box, 20, 20);
+        gtk_widget_set_valign(icon, GTK_ALIGN_CENTER);
+        gtk_widget_set_valign(icon_box, GTK_ALIGN_CENTER);
+        gtk_box_append(GTK_BOX(icon_box), icon);
+        gtk_box_append(GTK_BOX(hbox), icon_box);
+    }
 
     gtk_box_append(GTK_BOX(text_box), name);
     gtk_box_append(GTK_BOX(text_box), detail);

@@ -3,6 +3,7 @@
 #include "workspace.h"
 #include "browser_tab.h"
 #include "ghostty_terminal.h"
+#include "project_icon_cache.h"
 #include <json-glib/json-glib.h>
 #include <string.h>
 
@@ -25,6 +26,25 @@ session_page_linked_terminal(GtkWidget *page)
 
     terminal = g_object_get_data(G_OBJECT(page), "linked-terminal");
     return (terminal && GHOSTTY_IS_TERMINAL(terminal)) ? terminal : NULL;
+}
+
+typedef struct {
+    JsonBuilder *builder;
+} SessionLogoCacheSaveCtx;
+
+static void
+session_save_logo_cache_entry(const char *root,
+                              const char *icon_path,
+                              gpointer user_data)
+{
+    SessionLogoCacheSaveCtx *ctx = user_data;
+
+    json_builder_begin_object(ctx->builder);
+    json_builder_set_member_name(ctx->builder, "root");
+    json_builder_add_string_value(ctx->builder, root ? root : "");
+    json_builder_set_member_name(ctx->builder, "icon");
+    json_builder_add_string_value(ctx->builder, icon_path ? icon_path : "");
+    json_builder_end_object(ctx->builder);
 }
 
 static char *session_path(void) {
@@ -210,6 +230,15 @@ void session_save(GtkWindow *window, GtkWidget *browser_notebook,
                 json_builder_add_string_value(b, entry);
             }
         }
+    }
+    json_builder_end_array(b);
+
+    /* Project icon cache */
+    json_builder_set_member_name(b, "logoCache");
+    json_builder_begin_array(b);
+    {
+        SessionLogoCacheSaveCtx ctx = { .builder = b };
+        project_icon_cache_foreach(session_save_logo_cache_entry, &ctx);
     }
     json_builder_end_array(b);
 
@@ -400,6 +429,29 @@ void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
                 bt_obj, "url", "");
             if (url && url[0])
                 add_browser_tab_func(url);
+        }
+    }
+
+    if (json_object_has_member(obj, "logoCache")) {
+        JsonArray *logo_arr = json_object_get_array_member(obj, "logoCache");
+        guint logo_len = json_array_get_length(logo_arr);
+
+        for (guint li = 0; li < logo_len; li++) {
+            JsonNode *logo_node = json_array_get_element(logo_arr, li);
+            JsonObject *logo_obj;
+            const char *root_path;
+            const char *icon_path;
+
+            if (!logo_node || !JSON_NODE_HOLDS_OBJECT(logo_node))
+                continue;
+
+            logo_obj = json_node_get_object(logo_node);
+            root_path = json_object_get_string_member_with_default(
+                logo_obj, "root", "");
+            icon_path = json_object_get_string_member_with_default(
+                logo_obj, "icon", "");
+            if (root_path[0] && icon_path[0])
+                project_icon_cache_restore_entry(root_path, icon_path);
         }
     }
 

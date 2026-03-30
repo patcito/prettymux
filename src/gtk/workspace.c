@@ -1,6 +1,7 @@
 #include "workspace.h"
 #include "close_confirm.h"
 #include "ghostty_terminal.h"
+#include "project_icon_cache.h"
 #include "resize_overlay.h"
 #include "session.h"
 #include <stdio.h>
@@ -76,6 +77,10 @@ static gboolean workspace_drag_value_terminal(const GValue *value,
                                               GtkWidget **terminal_out,
                                               GtkNotebook **src_nb_out,
                                               Workspace **src_ws_out);
+static void workspace_request_terminal_icon(GtkWidget *terminal,
+                                            const char *path);
+static void refresh_terminal_tab_icon(GtkWidget *terminal);
+static void refresh_all_workspace_sidebar_labels(void);
 
 /* Context menu data for sidebar rows (defined later) */
 typedef struct {
@@ -159,6 +164,291 @@ terminal_parent_notebook(GtkWidget *terminal)
                                                           GTK_TYPE_NOTEBOOK)
                                 : NULL;
     return GTK_IS_NOTEBOOK(notebook) ? GTK_NOTEBOOK(notebook) : NULL;
+}
+
+static void
+terminal_set_project_icon(GtkWidget *terminal, const char *root, const char *icon_path)
+{
+    if (!terminal || !GHOSTTY_IS_TERMINAL(terminal))
+        return;
+
+    g_object_set_data_full(G_OBJECT(terminal), "project-icon-root",
+                           g_strdup(root ? root : ""), g_free);
+    g_object_set_data_full(G_OBJECT(terminal), "project-icon-path",
+                           g_strdup(icon_path ? icon_path : ""), g_free);
+}
+
+static const char *
+terminal_project_icon(GtkWidget *terminal)
+{
+    const char *icon_path;
+
+    if (!terminal || !GHOSTTY_IS_TERMINAL(terminal))
+        return NULL;
+
+    icon_path = g_object_get_data(G_OBJECT(terminal), "project-icon-path");
+    if (!icon_path || !icon_path[0])
+        return NULL;
+
+    if (!g_file_test(icon_path, G_FILE_TEST_EXISTS | G_FILE_TEST_IS_REGULAR)) {
+        terminal_set_project_icon(terminal,
+                                  g_object_get_data(G_OBJECT(terminal),
+                                                    "project-icon-root"),
+                                  NULL);
+        return NULL;
+    }
+
+    return icon_path;
+}
+
+static GtkWidget *
+row_icon_widget(GtkWidget *row_box)
+{
+    if (!row_box)
+        return NULL;
+    return g_object_get_data(G_OBJECT(row_box), "row-icon-widget");
+}
+
+static const char *
+emoji_for_path(const char *path)
+{
+    const char *home = g_get_home_dir();
+
+    if (!path || !path[0])
+        return "📁";
+    if (home && strcmp(path, home) == 0)
+        return "🏠";
+    if (strcmp(path, "/") == 0)
+        return "🖥️";
+    if (strcmp(path, "/tmp") == 0 || strcmp(path, "/var/tmp") == 0)
+        return "🧪";
+    if (strcmp(path, "/etc") == 0)
+        return "⚙️";
+    if (strcmp(path, "/usr") == 0)
+        return "📦";
+    if (strcmp(path, "/var") == 0)
+        return "🗄️";
+    if (strcmp(path, "/opt") == 0)
+        return "🧰";
+    if (strcmp(path, "/dev") == 0)
+        return "🔌";
+    if (strcmp(path, "/mnt") == 0 || strcmp(path, "/media") == 0)
+        return "💽";
+    if (strcmp(path, "/srv") == 0)
+        return "🚀";
+    if (strcmp(path, "/home") == 0)
+        return "🏘️";
+
+    return "📁";
+}
+
+static void
+set_row_icon(GtkWidget *row_box, const char *icon_path,
+             const char *emoji, int pixel_size)
+{
+    GtkWidget *stack = row_icon_widget(row_box);
+    GtkWidget *image;
+    GtkWidget *image_box;
+    GtkWidget *label;
+
+    if (!GTK_IS_STACK(stack))
+        return;
+
+    image = g_object_get_data(G_OBJECT(stack), "row-icon-image");
+    image_box = g_object_get_data(G_OBJECT(stack), "row-icon-image-box");
+    label = g_object_get_data(G_OBJECT(stack), "row-icon-label");
+    if (!GTK_IS_IMAGE(image) || !GTK_IS_WIDGET(image_box) || !GTK_IS_LABEL(label))
+        return;
+
+    gtk_widget_set_size_request(stack, pixel_size, pixel_size);
+    gtk_widget_set_size_request(image_box, pixel_size, pixel_size);
+    gtk_image_set_pixel_size(GTK_IMAGE(image), pixel_size);
+    gtk_widget_set_size_request(image, pixel_size, pixel_size);
+    gtk_widget_set_size_request(label, pixel_size, pixel_size);
+    if (icon_path && icon_path[0] &&
+        g_file_test(icon_path, G_FILE_TEST_EXISTS | G_FILE_TEST_IS_REGULAR)) {
+        gtk_image_set_from_file(GTK_IMAGE(image), icon_path);
+        gtk_stack_set_visible_child(GTK_STACK(stack), image_box);
+        gtk_widget_set_visible(stack, TRUE);
+    } else {
+        gtk_image_clear(GTK_IMAGE(image));
+        gtk_label_set_text(GTK_LABEL(label), emoji ? emoji : "📁");
+        gtk_stack_set_visible_child(GTK_STACK(stack), label);
+        gtk_widget_set_visible(stack, TRUE);
+    }
+}
+
+static GtkWidget *
+workspace_first_terminal(Workspace *ws)
+{
+    GtkNotebook *nb;
+
+    if (!ws || !ws->pane_notebooks || ws->pane_notebooks->len == 0)
+        return NULL;
+
+    nb = g_ptr_array_index(ws->pane_notebooks, 0);
+    if (!GTK_IS_NOTEBOOK(nb) || gtk_notebook_get_n_pages(nb) <= 0)
+        return NULL;
+
+    return notebook_terminal_at(nb, 0);
+}
+
+static const char *
+workspace_sidebar_icon_path(Workspace *ws)
+{
+    GtkWidget *terminal;
+    const char *cwd;
+    const char *cached;
+
+    terminal = workspace_first_terminal(ws);
+    if (!terminal)
+        return NULL;
+
+    cached = terminal_project_icon(terminal);
+    if (cached)
+        return cached;
+
+    cwd = ghostty_terminal_get_cwd(GHOSTTY_TERMINAL(terminal));
+    if (!cwd || !cwd[0])
+        return NULL;
+
+    cached = project_icon_cache_lookup_for_path(cwd);
+    if (cached) {
+        char *root = project_icon_cache_root_for_path(cwd);
+        terminal_set_project_icon(terminal, root, cached);
+        g_free(root);
+    }
+
+    return cached;
+}
+
+static const char *
+workspace_sidebar_emoji(Workspace *ws)
+{
+    GtkWidget *terminal = workspace_first_terminal(ws);
+    const char *cwd = NULL;
+
+    if (terminal && GHOSTTY_IS_TERMINAL(terminal))
+        cwd = ghostty_terminal_get_cwd(GHOSTTY_TERMINAL(terminal));
+    if ((!cwd || !cwd[0]) && ws)
+        cwd = ws->cwd;
+
+    return emoji_for_path(cwd);
+}
+
+static void
+refresh_terminal_tab_icon(GtkWidget *terminal)
+{
+    GtkNotebook *nb;
+    GtkWidget *dummy;
+    GtkWidget *tab_widget;
+    int page_num;
+
+    if (!terminal || !GHOSTTY_IS_TERMINAL(terminal))
+        return;
+
+    nb = terminal_parent_notebook(terminal);
+    if (!nb)
+        return;
+
+    page_num = notebook_page_for_terminal(nb, terminal);
+    if (page_num < 0)
+        return;
+
+    dummy = gtk_notebook_get_nth_page(nb, page_num);
+    tab_widget = dummy ? gtk_notebook_get_tab_label(nb, dummy) : NULL;
+    set_row_icon(tab_widget, terminal_project_icon(terminal),
+                 emoji_for_path(ghostty_terminal_get_cwd(
+                     GHOSTTY_TERMINAL(terminal))), 24);
+}
+
+static void
+refresh_all_workspace_sidebar_labels(void)
+{
+    if (!workspaces)
+        return;
+
+    for (guint i = 0; i < workspaces->len; i++) {
+        Workspace *ws = g_ptr_array_index(workspaces, i);
+        workspace_refresh_sidebar_label(ws);
+    }
+}
+
+typedef struct {
+    GtkWidget *terminal;
+} PendingTerminalIconUpdate;
+
+static void
+pending_terminal_icon_update_free(gpointer data)
+{
+    PendingTerminalIconUpdate *pending_update = data;
+
+    if (!pending_update)
+        return;
+    if (pending_update->terminal) {
+        g_object_remove_weak_pointer(G_OBJECT(pending_update->terminal),
+                                     (gpointer *)&pending_update->terminal);
+    }
+    g_free(pending_update);
+}
+
+static void
+on_project_icon_resolved(const char *root, const char *icon_path, gpointer user_data)
+{
+    PendingTerminalIconUpdate *pending_update = user_data;
+    const char *current_root;
+
+    if (!pending_update || !pending_update->terminal ||
+        !GHOSTTY_IS_TERMINAL(pending_update->terminal))
+        return;
+
+    current_root = g_object_get_data(G_OBJECT(pending_update->terminal),
+                                     "project-icon-root");
+    if (g_strcmp0(current_root ? current_root : "", root ? root : "") != 0)
+        return;
+
+    terminal_set_project_icon(pending_update->terminal, root, icon_path);
+    refresh_terminal_tab_icon(pending_update->terminal);
+    refresh_all_workspace_sidebar_labels();
+    session_queue_save();
+}
+
+static void
+workspace_request_terminal_icon(GtkWidget *terminal, const char *path)
+{
+    char *root;
+    const char *cached;
+    PendingTerminalIconUpdate *pending_update;
+
+    if (!terminal || !GHOSTTY_IS_TERMINAL(terminal))
+        return;
+
+    root = project_icon_cache_root_for_path(path);
+    if (!root) {
+        terminal_set_project_icon(terminal, NULL, NULL);
+        refresh_terminal_tab_icon(terminal);
+        refresh_all_workspace_sidebar_labels();
+        return;
+    }
+
+    cached = project_icon_cache_lookup(root);
+    terminal_set_project_icon(terminal, root, cached);
+    refresh_terminal_tab_icon(terminal);
+    refresh_all_workspace_sidebar_labels();
+
+    if (cached) {
+        g_free(root);
+        return;
+    }
+
+    pending_update = g_new0(PendingTerminalIconUpdate, 1);
+    pending_update->terminal = terminal;
+    g_object_add_weak_pointer(G_OBJECT(terminal),
+                              (gpointer *)&pending_update->terminal);
+    project_icon_cache_request(path, on_project_icon_resolved,
+                               pending_update,
+                               pending_terminal_icon_update_free);
+    g_free(root);
 }
 
 static void
@@ -276,11 +566,14 @@ static void shorten_cwd_for_sidebar(const char *cwd, char *buf, size_t bufsz) {
 }
 
 void workspace_refresh_sidebar_label(Workspace *ws) {
+    GtkWidget *row_box;
+
     if (!ws || !ws->sidebar_label) return;
     if (!GTK_IS_LABEL(ws->sidebar_label) ||
         g_object_get_data(G_OBJECT(ws->sidebar_label), "rename-in-progress") ||
         !gtk_widget_get_parent(ws->sidebar_label))
         return;
+    row_box = gtk_widget_get_parent(ws->sidebar_label);
 
     gboolean has_act = workspace_has_activity(ws);
     char buf[256];
@@ -314,6 +607,11 @@ void workspace_refresh_sidebar_label(Workspace *ws) {
     /* Tooltip: full CWD path */
     if (ws->cwd[0])
         gtk_widget_set_tooltip_text(ws->sidebar_label, ws->cwd);
+    else
+        gtk_widget_set_tooltip_text(ws->sidebar_label, NULL);
+
+    set_row_icon(row_box, workspace_sidebar_icon_path(ws),
+                 workspace_sidebar_emoji(ws), 16);
 
     if (has_act)
         gtk_widget_add_css_class(ws->sidebar_label, "has-activity");
@@ -391,10 +689,29 @@ void workspace_detect_git(Workspace *ws) {
 static const char *
 shorten_path(const char *path, char *buf, size_t bufsz)
 {
+    const char *home = g_get_home_dir();
+
     if (!path || !path[0]) {
         snprintf(buf, bufsz, "Terminal");
         return buf;
     }
+    if (home && strcmp(path, home) == 0) {
+        snprintf(buf, bufsz, "~");
+        return buf;
+    }
+    if (strcmp(path, "/") == 0) {
+        snprintf(buf, bufsz, "/");
+        return buf;
+    }
+
+    if (path[0] == '/') {
+        const char *second = strchr(path + 1, '/');
+        if (!second || second[1] == '\0') {
+            snprintf(buf, bufsz, "%s", path);
+            return buf;
+        }
+    }
+
     const char *last_slash = strrchr(path, '/');
     if (last_slash && last_slash[1]) {
         snprintf(buf, bufsz, ".../%s", last_slash + 1);
@@ -449,6 +766,13 @@ on_terminal_state_changed(GObject *obj, gpointer user_data)
     (void)obj;
     (void)user_data;
     session_queue_save();
+}
+
+static void
+on_terminal_pwd_changed(GhosttyTerminal *term, const char *cwd, gpointer user_data)
+{
+    (void)user_data;
+    workspace_request_terminal_icon(GTK_WIDGET(term), cwd);
 }
 
 static void
@@ -524,6 +848,9 @@ move_terminal_to_notebook(Workspace *src_ws, GtkNotebook *src_nb,
     gtk_notebook_set_current_page(dest_nb, dest_page);
     focus_terminal_page(terminal);
     focus_terminal_page_later(terminal);
+    refresh_terminal_tab_icon(terminal);
+    workspace_refresh_sidebar_label(src_ws);
+    workspace_refresh_sidebar_label(dest_ws);
 
     if (tab_widget)
         g_object_unref(tab_widget);
@@ -747,6 +1074,7 @@ workspace_close_tab_at(Workspace *ws, GtkNotebook *nb, int page)
 
     /* Defer tab label refresh to idle to avoid re-entrancy */
     g_idle_add(tab_close_refresh_idle_cb, ws);
+    refresh_all_workspace_sidebar_labels();
 
     /* If notebook is now empty and there are other panes, close the pane */
     if (gtk_notebook_get_n_pages(nb) == 0 &&
@@ -871,10 +1199,39 @@ create_editable_tab_label(const char *text, GtkWidget *terminal,
                           GtkWidget **out_label)
 {
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    GtkWidget *spacer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    GtkWidget *icon_stack = gtk_stack_new();
+    GtkWidget *icon_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    GtkWidget *icon = gtk_image_new();
+    GtkWidget *emoji = gtk_label_new("📁");
     GtkWidget *label = gtk_label_new(text);
     gtk_widget_set_focusable(box, FALSE);
+    gtk_widget_set_margin_end(icon_stack, 6);
+    gtk_widget_set_valign(icon_stack, GTK_ALIGN_CENTER);
+    gtk_widget_set_visible(icon_stack, TRUE);
+    gtk_widget_set_size_request(icon_stack, 24, 24);
+    gtk_widget_add_css_class(icon_box, "tab-art-box");
+    gtk_widget_set_halign(icon_box, GTK_ALIGN_CENTER);
+    gtk_widget_set_valign(icon_box, GTK_ALIGN_CENTER);
+    gtk_widget_set_size_request(icon_box, 24, 24);
+    gtk_box_append(GTK_BOX(icon_box), icon);
+    gtk_widget_set_halign(emoji, GTK_ALIGN_CENTER);
+    gtk_widget_set_valign(emoji, GTK_ALIGN_CENTER);
+    gtk_label_set_xalign(GTK_LABEL(emoji), 0.5f);
+    gtk_label_set_yalign(GTK_LABEL(emoji), 0.5f);
+    gtk_stack_add_named(GTK_STACK(icon_stack), icon_box, "image");
+    gtk_stack_add_named(GTK_STACK(icon_stack), emoji, "emoji");
+    gtk_stack_set_visible_child(GTK_STACK(icon_stack), emoji);
+    gtk_box_append(GTK_BOX(box), icon_stack);
     gtk_label_set_xalign(GTK_LABEL(label), 0);
+    gtk_widget_set_hexpand(label, TRUE);
     gtk_box_append(GTK_BOX(box), label);
+    gtk_widget_set_hexpand(spacer, TRUE);
+    gtk_box_append(GTK_BOX(box), spacer);
+    g_object_set_data(G_OBJECT(box), "row-icon-widget", icon_stack);
+    g_object_set_data(G_OBJECT(icon_stack), "row-icon-image", icon);
+    g_object_set_data(G_OBJECT(icon_stack), "row-icon-image-box", icon_box);
+    g_object_set_data(G_OBJECT(icon_stack), "row-icon-label", emoji);
 
     RenameData *rd = g_new0(RenameData, 1);
     rd->event_box = box;
@@ -944,9 +1301,12 @@ create_terminal_tab(Workspace *ws, GtkNotebook *notebook,
                      G_CALLBACK(on_terminal_state_changed), NULL);
     g_signal_connect(terminal, "pwd-changed",
                      G_CALLBACK(on_terminal_state_changed), NULL);
+    g_signal_connect(terminal, "pwd-changed",
+                     G_CALLBACK(on_terminal_pwd_changed), NULL);
 
     gtk_widget_set_visible(dummy, TRUE);
     gtk_widget_set_visible(terminal, TRUE);
+    workspace_request_terminal_icon(terminal, cwd);
     return terminal;
 }
 

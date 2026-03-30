@@ -32,7 +32,12 @@ modules:
     subdir: src/gtk
     post-install:
       - install -Dm644 prettymux-shell-integration.sh /app/share/prettymux/shell-integration.sh || true
+      - install -Dm644 prettymux-bashrc.sh /app/share/prettymux/prettymux-bashrc.sh || true
+      - install -Dm755 bin/open /app/share/prettymux/bin/open || true
+      - install -Dm755 bin/xdg-open /app/share/prettymux/bin/xdg-open || true
       - install -Dm644 ../../packaging/prettymux.desktop /app/share/applications/dev.prettymux.app.desktop || true
+      - install -Dm644 ../../packaging/prettymux.svg /app/share/icons/hicolor/scalable/apps/prettymux.svg || true
+      - install -Dm644 ../../packaging/prettymux.svg /app/share/icons/hicolor/scalable/apps/dev.prettymux.app.svg || true
     sources:
       - type: dir
         path: ..

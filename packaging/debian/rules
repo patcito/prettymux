@@ -11,6 +11,11 @@ override_dh_auto_build:
 
 override_dh_auto_install:
 	install -Dm755 src/gtk/builddir/prettymux $(CURDIR)/debian/prettymux/usr/bin/prettymux
+	install -Dm755 src/gtk/builddir/prettymux-open $(CURDIR)/debian/prettymux/usr/bin/prettymux-open || true
 	install -Dm644 ghostty/zig-out/lib/libghostty.so $(CURDIR)/debian/prettymux/usr/lib/prettymux/libghostty.so || true
 	install -Dm644 src/gtk/prettymux-shell-integration.sh $(CURDIR)/debian/prettymux/usr/share/prettymux/shell-integration.sh
+	install -Dm644 src/gtk/prettymux-bashrc.sh $(CURDIR)/debian/prettymux/usr/share/prettymux/prettymux-bashrc.sh
+	install -Dm755 src/gtk/bin/open $(CURDIR)/debian/prettymux/usr/share/prettymux/bin/open
+	install -Dm755 src/gtk/bin/xdg-open $(CURDIR)/debian/prettymux/usr/share/prettymux/bin/xdg-open
 	install -Dm644 packaging/prettymux.desktop $(CURDIR)/debian/prettymux/usr/share/applications/prettymux.desktop
+	install -Dm644 packaging/prettymux.svg $(CURDIR)/debian/prettymux/usr/share/icons/hicolor/scalable/apps/prettymux.svg

@@ -37,6 +37,7 @@ ghostty_app_t g_ghostty_app = NULL;
 float g_ghostty_default_font_size = 0.0f;
 static GtkWindow *g_main_window = NULL;
 static gboolean g_app_quit_in_progress = FALSE;
+static char *g_app_icon_path = NULL;
 
 // Widget references for the main window layout
 static struct {
@@ -89,6 +90,53 @@ notebook_terminal_at(GtkNotebook *notebook, int page_num)
     GtkWidget *terminal = page_linked_terminal(
         gtk_notebook_get_nth_page(notebook, page_num));
     return terminal ? GHOSTTY_TERMINAL(terminal) : NULL;
+}
+
+static const char *
+prettymux_icon_name(void)
+{
+    return "prettymux";
+}
+
+static const char *
+prettymux_icon_path(void)
+{
+    static const char *installed_candidates[] = {
+        "/usr/share/icons/hicolor/scalable/apps/prettymux.svg",
+        "/app/share/icons/hicolor/scalable/apps/prettymux.svg",
+        NULL
+    };
+
+    if (g_app_icon_path)
+        return g_app_icon_path;
+
+    for (guint i = 0; installed_candidates[i] != NULL; i++) {
+        if (g_file_test(installed_candidates[i],
+                        G_FILE_TEST_EXISTS | G_FILE_TEST_IS_REGULAR)) {
+            g_app_icon_path = g_strdup(installed_candidates[i]);
+            return g_app_icon_path;
+        }
+    }
+
+    g_app_icon_path = g_build_filename(PRETTYMUX_SOURCE_DIR, "..", "..",
+                                       "packaging", "prettymux.svg", NULL);
+    return g_app_icon_path;
+}
+
+static void
+send_desktop_notification(const char *title, const char *body)
+{
+    GError *nerr = NULL;
+    GSubprocess *nproc = g_subprocess_new(
+        G_SUBPROCESS_FLAGS_NONE, &nerr,
+        "notify-send", title, body,
+        "--app-name=prettymux",
+        "--icon", prettymux_icon_path(),
+        NULL);
+    if (nproc)
+        g_object_unref(nproc);
+    else if (nerr)
+        g_error_free(nerr);
 }
 
 static void notifications_init(void) {
@@ -673,15 +721,7 @@ on_new_ports_detected(const int *new_ports, int new_port_count,
     char msg[64];
     snprintf(msg, sizeof(msg), "Port %d detected", port);
 
-    GError *nerr = NULL;
-    GSubprocess *nproc = g_subprocess_new(
-        G_SUBPROCESS_FLAGS_NONE, &nerr,
-        "notify-send", "prettymux", msg,
-        "--app-name=prettymux", NULL);
-    if (nproc)
-        g_object_unref(nproc);
-    else if (nerr)
-        g_error_free(nerr);
+    send_desktop_notification("prettymux", msg);
 }
 
 // ── Socket server callback ──
@@ -1186,14 +1226,8 @@ static gboolean action_idle_handler(gpointer user_data)
         break;
 
     case GHOSTTY_ACTION_DESKTOP_NOTIFICATION: {
-        GError *nerr = NULL;
-        GSubprocess *nproc = g_subprocess_new(
-            G_SUBPROCESS_FLAGS_NONE, &nerr,
-            "notify-send", "prettymux",
-            action.action.desktop_notification.body,
-            "--app-name=prettymux", NULL);
-        if (nproc) g_object_unref(nproc);
-        else if (nerr) g_error_free(nerr);
+        send_desktop_notification("prettymux",
+                                  action.action.desktop_notification.body);
         break;
     }
 
@@ -1278,15 +1312,7 @@ static gboolean action_idle_handler(gpointer user_data)
                              ws_name, term_title, secs);
 
                 /* Desktop notification via notify-send */
-                {
-                    GError *nerr = NULL;
-                    GSubprocess *nproc = g_subprocess_new(
-                        G_SUBPROCESS_FLAGS_NONE, &nerr,
-                        "notify-send", "prettymux", body,
-                        "--app-name=prettymux", NULL);
-                    if (nproc) g_object_unref(nproc);
-                    else if (nerr) g_error_free(nerr);
-                }
+                send_desktop_notification("prettymux", body);
 
                 /* Add to in-app notification system */
                 {
@@ -1339,15 +1365,7 @@ static gboolean action_idle_handler(gpointer user_data)
             snprintf(body, sizeof(body), "Bell in %s/%s", ws_name, term_title);
 
             /* Desktop notification via notify-send */
-            {
-                GError *nerr = NULL;
-                GSubprocess *nproc = g_subprocess_new(
-                    G_SUBPROCESS_FLAGS_NONE, &nerr,
-                    "notify-send", "prettymux", body,
-                    "--app-name=prettymux", NULL);
-                if (nproc) g_object_unref(nproc);
-                else if (nerr) g_error_free(nerr);
-            }
+            send_desktop_notification("prettymux", body);
         }
         break;
     }
@@ -1965,6 +1983,16 @@ setup_shell_integration_env(void)
 
     if (!g_file_test(shell_integ, G_FILE_TEST_EXISTS)) {
         g_free(shell_integ);
+        shell_integ = g_strdup("/app/share/prettymux/shell-integration.sh");
+    }
+
+    if (!g_file_test(shell_integ, G_FILE_TEST_EXISTS)) {
+        g_free(shell_integ);
+        shell_integ = g_strdup("/usr/share/prettymux/shell-integration.sh");
+    }
+
+    if (!g_file_test(shell_integ, G_FILE_TEST_EXISTS)) {
+        g_free(shell_integ);
         shell_integ = g_build_filename(PRETTYMUX_SOURCE_DIR,
                                        "prettymux-shell-integration.sh", NULL);
     }
@@ -1976,8 +2004,28 @@ setup_shell_integration_env(void)
 
     if (!g_file_test(bashrc_wrapper, G_FILE_TEST_EXISTS)) {
         g_free(bashrc_wrapper);
+        bashrc_wrapper = g_strdup("/app/share/prettymux/prettymux-bashrc.sh");
+    }
+
+    if (!g_file_test(bashrc_wrapper, G_FILE_TEST_EXISTS)) {
+        g_free(bashrc_wrapper);
+        bashrc_wrapper = g_strdup("/usr/share/prettymux/prettymux-bashrc.sh");
+    }
+
+    if (!g_file_test(bashrc_wrapper, G_FILE_TEST_EXISTS)) {
+        g_free(bashrc_wrapper);
         bashrc_wrapper = g_build_filename(PRETTYMUX_SOURCE_DIR,
                                           "prettymux-bashrc.sh", NULL);
+    }
+
+    if (!g_file_test(wrapper_dir, G_FILE_TEST_IS_DIR)) {
+        g_free(wrapper_dir);
+        wrapper_dir = g_strdup("/app/share/prettymux/bin");
+    }
+
+    if (!g_file_test(wrapper_dir, G_FILE_TEST_IS_DIR)) {
+        g_free(wrapper_dir);
+        wrapper_dir = g_strdup("/usr/share/prettymux/bin");
     }
 
     if (!g_file_test(wrapper_dir, G_FILE_TEST_IS_DIR)) {
@@ -2068,6 +2116,8 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     // Window
     GtkWidget *window = gtk_application_window_new(app);
     gtk_window_set_title(GTK_WINDOW(window), "PrettyMux");
+    gtk_window_set_default_icon_name(prettymux_icon_name());
+    gtk_window_set_icon_name(GTK_WINDOW(window), prettymux_icon_name());
     gtk_window_set_default_size(GTK_WINDOW(window), 1400, 900);
     g_main_window = GTK_WINDOW(window);
 

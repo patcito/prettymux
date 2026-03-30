@@ -46,9 +46,22 @@ void theme_apply(void) {
         "  border-radius: 4px; min-width: 24px; min-height: 24px; }"
         ".browser-bar entry { background: %s; color: %s; border: 1px solid %s;"
         "  border-radius: 4px; padding: 4px 8px; }"
+        "paned > separator {"
+        "  background-color: alpha(%s, 0.26);"
+        "  min-width: 8px;"
+        "  min-height: 8px;"
+        "}"
+        "paned > separator:hover {"
+        "  background-color: alpha(%s, 0.42);"
+        "}"
         "notebook > header { background-color: %s; }"
-        "notebook > header tab { padding: 4px 12px; color: %s; }"
+        "notebook > header tab { padding: 8px 12px; min-height: 42px; color: %s; }"
         "notebook > header tab:checked { color: %s; border-bottom: 2px solid %s; }"
+        ".tab-art-box {"
+        "  background: #ffffff;"
+        "  border-radius: 7px;"
+        "  padding: 1px;"
+        "}"
         ".search-overlay { background-color: alpha(%s, 0.95); border-radius: 8px;"
         "  padding: 16px; }"
         ".search-overlay entry { background: %s; color: %s; border: 1px solid %s;"
@@ -74,6 +87,8 @@ void theme_apply(void) {
         t->surface, t->overlay,
         t->muted, t->fg,
         t->bg, t->fg, t->overlay,
+        t->highlight,
+        t->accent,
         t->surface,
         t->subtext,
         t->fg, t->accent,

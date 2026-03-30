@@ -15,6 +15,7 @@ platforms:
 apps:
   prettymux:
     command: usr/bin/prettymux
+    desktop: usr/share/applications/prettymux.desktop
     environment:
       LD_LIBRARY_PATH: $SNAP/usr/lib/prettymux:$LD_LIBRARY_PATH
       GTK_PATH: $SNAP/usr/lib/x86_64-linux-gnu/gtk-4.0
@@ -60,6 +61,15 @@ parts:
       ninja -C builddir
       mkdir -p $CRAFT_PART_INSTALL/usr/bin
       cp builddir/prettymux $CRAFT_PART_INSTALL/usr/bin/
+      cp builddir/prettymux-open $CRAFT_PART_INSTALL/usr/bin/ || true
+      mkdir -p $CRAFT_PART_INSTALL/usr/share/prettymux
       cp $CRAFT_PART_SRC/src/gtk/prettymux-shell-integration.sh $CRAFT_PART_INSTALL/usr/bin/
+      cp $CRAFT_PART_SRC/src/gtk/prettymux-shell-integration.sh $CRAFT_PART_INSTALL/usr/share/prettymux/shell-integration.sh
+      cp $CRAFT_PART_SRC/src/gtk/prettymux-bashrc.sh $CRAFT_PART_INSTALL/usr/share/prettymux/prettymux-bashrc.sh
+      mkdir -p $CRAFT_PART_INSTALL/usr/share/prettymux/bin
+      cp $CRAFT_PART_SRC/src/gtk/bin/open $CRAFT_PART_INSTALL/usr/share/prettymux/bin/
+      cp $CRAFT_PART_SRC/src/gtk/bin/xdg-open $CRAFT_PART_INSTALL/usr/share/prettymux/bin/
       mkdir -p $CRAFT_PART_INSTALL/usr/share/applications
       cp $CRAFT_PART_SRC/packaging/prettymux.desktop $CRAFT_PART_INSTALL/usr/share/applications/
+      mkdir -p $CRAFT_PART_INSTALL/usr/share/icons/hicolor/scalable/apps
+      cp $CRAFT_PART_SRC/packaging/prettymux.svg $CRAFT_PART_INSTALL/usr/share/icons/hicolor/scalable/apps/
