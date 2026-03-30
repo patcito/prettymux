@@ -17,7 +17,7 @@ modules:
   - name: ghostty
     buildsystem: simple
     build-commands:
-      - install -Dm644 zig-out/lib/libghostty.so /app/lib/libghostty.so
+      - install -Dm644 zig-out/lib/libghostty.so /app/zig-out/lib/libghostty.so
       - cp -r include /app/include
       - mkdir -p /app/vendor
       - cp -r vendor/glad /app/vendor/glad
