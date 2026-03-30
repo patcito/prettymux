@@ -21,7 +21,7 @@ jobs:
   # Download prebuilt libghostty (shared by all Linux jobs)
   # ---------------------------------------------------------------------------
   fetch-libghostty:
-    if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'ubuntu') || contains(inputs.jobs, 'fedora') || contains(inputs.jobs, 'deb') || contains(inputs.jobs, 'arch') || contains(inputs.jobs, 'appimage') || contains(inputs.jobs, 'linux')
+    if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'ubuntu') || contains(inputs.jobs, 'fedora') || contains(inputs.jobs, 'deb') || contains(inputs.jobs, 'arch') || contains(inputs.jobs, 'flatpak') || contains(inputs.jobs, 'appimage') || contains(inputs.jobs, 'linux')
     runs-on: ubuntu-latest
     steps:
       - name: Download prebuilt libghostty
