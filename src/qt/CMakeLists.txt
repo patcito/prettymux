@@ -56,7 +56,10 @@ set(PRETTYMUX_SOURCES
 if(APPLE)
     list(APPEND PRETTYMUX_SOURCES browser_view_macos.mm)
 elseif(WIN32)
-    list(APPEND PRETTYMUX_SOURCES browser_view_windows.cpp)
+    list(APPEND PRETTYMUX_SOURCES
+        browser_view_windows.cpp
+        ghostty_windows_stub.c
+    )
 else()
     list(APPEND PRETTYMUX_SOURCES browser_view_qwebengine.cpp)
 endif()
@@ -85,7 +88,7 @@ target_include_directories(prettymux PRIVATE
     ${GLAD_DIR}/include
 )
 
-if(NOT APPLE)
+if(NOT APPLE AND NOT WIN32)
     target_link_directories(prettymux PRIVATE ${GHOSTTY_LIB_DIR})
 endif()
 
@@ -93,8 +96,11 @@ target_link_libraries(prettymux PRIVATE
     Qt6::Widgets
     Qt6::OpenGLWidgets
     Qt6::Network
-    ghostty
 )
+
+if(NOT WIN32)
+    target_link_libraries(prettymux PRIVATE ghostty)
+endif()
 
 if(NOT APPLE AND NOT WIN32)
     target_link_libraries(prettymux PRIVATE Qt6::WebEngineWidgets)
