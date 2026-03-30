@@ -281,6 +281,12 @@ protected:
         initializeOpenGLFunctions();
         if (!g_app) return;
 
+#ifdef _WIN32
+        // The current Ghostty Windows SDK bundle exposes the base C API but
+        // not a Windows embedded-surface config yet, so keep the widget alive
+        // as a placeholder instead of binding a terminal surface.
+        return;
+#else
         ghostty_surface_config_s config = ghostty_surface_config_new();
 #if defined(__linux__)
         config.platform_tag = GHOSTTY_PLATFORM_LINUX;
@@ -288,16 +294,9 @@ protected:
 #elif defined(__APPLE__)
         config.platform_tag = GHOSTTY_PLATFORM_MACOS;
         config.platform.macos.ns_view = (void*)this;
-#elif defined(_WIN32)
-        config.platform_tag = GHOSTTY_PLATFORM_WINDOWS;
-        config.platform.windows.hwnd = (void*)this;
 #endif
         config.scale_factor = devicePixelRatioF();
-#ifdef _WIN32
-        config.working_directory = m_startCwd.isEmpty() ? getenv("USERPROFILE") : m_startCwd.constData();
-#else
         config.working_directory = m_startCwd.isEmpty() ? getenv("HOME") : m_startCwd.constData();
-#endif
 
         // Pass env vars so child shells get prettymux integration silently
         static ghostty_env_var_s env_vars[3];
@@ -314,6 +313,7 @@ protected:
             ghostty_surface_init_opengl(surface);
             ghostty_surface_set_focus(surface, hasFocus());
         }
+#endif
 
         tickTimer = new QTimer(this);
         connect(tickTimer, &QTimer::timeout, this, [this]() {
