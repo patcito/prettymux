@@ -55,6 +55,50 @@ static gboolean session_save_idle_cb(gpointer data) {
     return G_SOURCE_REMOVE;
 }
 
+typedef struct {
+    GtkPaned *outer_paned;
+    int outer_position;
+    GtkPaned *main_paned;
+    int main_position;
+} SessionPanedRestoreData;
+
+static GtkPaned *
+session_main_paned(GtkWidget *browser_notebook)
+{
+    GtkWidget *parent = browser_notebook ? gtk_widget_get_parent(browser_notebook)
+                                         : NULL;
+
+    return GTK_IS_PANED(parent) ? GTK_PANED(parent) : NULL;
+}
+
+static GtkPaned *
+session_outer_paned(GtkWidget *browser_notebook)
+{
+    GtkPaned *main_paned = session_main_paned(browser_notebook);
+    GtkWidget *parent = main_paned ? gtk_widget_get_parent(GTK_WIDGET(main_paned))
+                                   : NULL;
+
+    return GTK_IS_PANED(parent) ? GTK_PANED(parent) : NULL;
+}
+
+static gboolean
+session_restore_paned_positions_idle_cb(gpointer data)
+{
+    SessionPanedRestoreData *restore = data;
+
+    if (restore->outer_paned && GTK_IS_PANED(restore->outer_paned))
+        gtk_paned_set_position(restore->outer_paned, restore->outer_position);
+    if (restore->main_paned && GTK_IS_PANED(restore->main_paned))
+        gtk_paned_set_position(restore->main_paned, restore->main_position);
+
+    if (restore->outer_paned)
+        g_object_unref(restore->outer_paned);
+    if (restore->main_paned)
+        g_object_unref(restore->main_paned);
+    g_free(restore);
+    return G_SOURCE_REMOVE;
+}
+
 void session_set_context(GtkWindow *window, GtkWidget *browser_notebook,
                          GtkWidget *terminal_stack, GtkWidget *workspace_list)
 {
@@ -120,6 +164,16 @@ void session_save(GtkWindow *window, GtkWidget *browser_notebook,
     /* Browser visible */
     json_builder_set_member_name(b, "browserVisible");
     json_builder_add_boolean_value(b, gtk_widget_get_visible(browser_notebook));
+
+    GtkPaned *outer_paned = session_outer_paned(browser_notebook);
+    GtkPaned *main_paned = session_main_paned(browser_notebook);
+
+    json_builder_set_member_name(b, "outerPanedPos");
+    json_builder_add_int_value(b,
+        outer_paned ? gtk_paned_get_position(outer_paned) : 200);
+    json_builder_set_member_name(b, "mainPanedPos");
+    json_builder_add_int_value(b,
+        main_paned ? gtk_paned_get_position(main_paned) : 700);
 
     /* Browser tabs */
     json_builder_set_member_name(b, "browserTabs");
@@ -312,6 +366,11 @@ void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
     gboolean browser_visible = json_object_get_boolean_member_with_default(
         obj, "browserVisible", TRUE);
     gtk_widget_set_visible(browser_notebook, browser_visible);
+
+    int outer_paned_pos = (int)json_object_get_int_member_with_default(
+        obj, "outerPanedPos", 200);
+    int main_paned_pos = (int)json_object_get_int_member_with_default(
+        obj, "mainPanedPos", 700);
 
     /* URL history */
     if (json_object_has_member(obj, "urlHistory")) {
@@ -523,6 +582,21 @@ void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
         obj, "activeWorkspace", 0);
     if (aw >= 0 && workspaces && aw < (int)workspaces->len)
         workspace_switch(aw, terminal_stack, workspace_list);
+
+    {
+        SessionPanedRestoreData *restore = g_new0(SessionPanedRestoreData, 1);
+        restore->outer_paned = session_outer_paned(browser_notebook);
+        restore->outer_position = outer_paned_pos;
+        restore->main_paned = session_main_paned(browser_notebook);
+        restore->main_position = main_paned_pos;
+
+        if (restore->outer_paned)
+            g_object_ref(restore->outer_paned);
+        if (restore->main_paned)
+            g_object_ref(restore->main_paned);
+
+        g_idle_add(session_restore_paned_positions_idle_cb, restore);
+    }
 
     g_object_unref(parser);
 

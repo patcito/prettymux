@@ -1695,6 +1695,15 @@ static gboolean on_close_request(GtkWindow *w, gpointer d) {
 }
 
 static void
+on_paned_position_notify(GObject *object, GParamSpec *pspec, gpointer user_data)
+{
+    (void)object;
+    (void)pspec;
+    (void)user_data;
+    session_queue_save();
+}
+
+static void
 on_app_shutdown(GApplication *app, gpointer user_data)
 {
     (void)app;
@@ -2006,6 +2015,10 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     resize_overlay_init(GTK_OVERLAY(ui.overlay));
     resize_overlay_connect_paned(GTK_PANED(ui.outer_paned));
     resize_overlay_connect_paned(GTK_PANED(ui.main_paned));
+    g_signal_connect(ui.outer_paned, "notify::position",
+                     G_CALLBACK(on_paned_position_notify), NULL);
+    g_signal_connect(ui.main_paned, "notify::position",
+                     G_CALLBACK(on_paned_position_notify), NULL);
 
     // Command palette (overlay)
     ui.command_palette = command_palette_new(ui.browser_notebook,
@@ -2070,6 +2083,9 @@ int main(int argc, char *argv[]) {
 
     int status = g_application_run(G_APPLICATION(app), argc, argv);
     g_object_unref(app);
-    if (g_ghostty_app) ghostty_app_free(g_ghostty_app);
+    /* Let process exit reclaim libghostty state. The embedded GTK teardown
+     * does not guarantee every surface is gone before app shutdown completes,
+     * and forcing ghostty_app_free() here can crash on quit. */
+    g_ghostty_app = NULL;
     return status;
 }
