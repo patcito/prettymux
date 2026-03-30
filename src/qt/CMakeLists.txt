@@ -18,6 +18,20 @@ set(GHOSTTY_DIR "/home/pe/newnewrepos/w/yo/ghostty" CACHE PATH "Path to ghostty 
 set(GHOSTTY_LIB_DIR "${GHOSTTY_DIR}/zig-out/lib")
 set(GHOSTTY_INCLUDE_DIR "${GHOSTTY_DIR}/include")
 set(GLAD_DIR "${GHOSTTY_DIR}/vendor/glad")
+set(GHOSTTY_MACOS_XCFRAMEWORK "${GHOSTTY_DIR}/zig-out/macos/GhosttyKit.xcframework")
+
+if(APPLE)
+    find_library(GHOSTTY_MACOS_LIB
+        NAMES ghostty libghostty.a
+        PATHS
+            "${GHOSTTY_MACOS_XCFRAMEWORK}/macos-arm64_x86_64"
+            "${GHOSTTY_MACOS_XCFRAMEWORK}/macos-arm64"
+        NO_DEFAULT_PATH
+    )
+    if(NOT GHOSTTY_MACOS_LIB)
+        message(FATAL_ERROR "Ghostty macOS static library not found inside ${GHOSTTY_MACOS_XCFRAMEWORK}")
+    endif()
+endif()
 
 set(PRETTYMUX_SOURCES
     main.cpp
@@ -57,7 +71,9 @@ target_include_directories(prettymux PRIVATE
     ${GLAD_DIR}/include
 )
 
-target_link_directories(prettymux PRIVATE ${GHOSTTY_LIB_DIR})
+if(NOT APPLE)
+    target_link_directories(prettymux PRIVATE ${GHOSTTY_LIB_DIR})
+endif()
 
 target_link_libraries(prettymux PRIVATE
     Qt6::Widgets
@@ -82,6 +98,7 @@ if(APPLE)
     find_library(QUARTZCORE_FRAMEWORK QuartzCore)
     find_library(WEBKIT_FRAMEWORK WebKit)
     target_link_libraries(prettymux PRIVATE
+        ${GHOSTTY_MACOS_LIB}
         ${COCOA_FRAMEWORK}
         ${IOKIT_FRAMEWORK}
         ${WEBKIT_FRAMEWORK}
@@ -106,7 +123,7 @@ if(WIN32)
 endif()
 
 # RPATH (Linux/macOS)
-if(NOT WIN32)
+if(NOT WIN32 AND NOT APPLE)
     set_target_properties(prettymux PROPERTIES
         BUILD_RPATH "${GHOSTTY_LIB_DIR}"
         INSTALL_RPATH "${GHOSTTY_LIB_DIR}"
