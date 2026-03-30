@@ -30,6 +30,7 @@ sources = files(
   'port_scanner.c',
   'socket_server.c',
   'shortcuts_overlay.c',
+  'pane_move_overlay.c',
   'pip_window.c',
   'resize_overlay.c',
   glad_dir / 'src' / 'gl.c',

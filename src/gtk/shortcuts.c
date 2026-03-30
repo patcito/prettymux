@@ -30,6 +30,7 @@ const ShortcutDef default_shortcuts[] = {
     {"devtools.window",   GDK_KEY_j,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Inspector window"},
     {"shortcuts.show",    GDK_KEY_k,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Shortcuts overlay"},
     {"search.show",       GDK_KEY_s,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Search palette"},
+    {"pane.tab.move",     GDK_KEY_g,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Move tab to pane"},
     {"tab.close",         GDK_KEY_w,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Close tab"},
     {"pane.close",        GDK_KEY_x,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Close pane"},
     {"pane.zoom",         GDK_KEY_z,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Zoom pane"},

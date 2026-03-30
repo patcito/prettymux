@@ -23,6 +23,7 @@
 #include "port_scanner.h"
 #include "socket_server.h"
 #include "shortcuts_overlay.h"
+#include "pane_move_overlay.h"
 #include "pip_window.h"
 #include "resize_overlay.h"
 
@@ -414,6 +415,11 @@ static void handle_action(const char *action) {
         }
     } else if (strcmp(action, "tab.close") == 0) {
         request_close_current_tab(workspace_get_current());
+    } else if (strcmp(action, "pane.tab.move") == 0) {
+        if (ui.overlay)
+            pane_move_overlay_toggle(GTK_OVERLAY(ui.overlay),
+                                     ui.terminal_stack,
+                                     ui.workspace_list);
     } else if (strcmp(action, "pane.close") == 0) {
         request_close_current_pane(workspace_get_current());
     } else if (strcmp(action, "broadcast.toggle") == 0) {
