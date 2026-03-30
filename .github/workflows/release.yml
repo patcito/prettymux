@@ -318,7 +318,7 @@ jobs:
           path: ghostty
 
       - name: Install dependencies
-        run: pacman -S --noconfirm gtk4 libadwaita webkit2gtk-6.0 json-glib meson ninja gcc
+        run: pacman -S --noconfirm gtk4 libadwaita webkitgtk-6.0 json-glib meson ninja gcc
 
       - name: Build prettymux
         run: |
@@ -358,7 +358,7 @@ jobs:
             "license = GPL-3.0-only" \
             "depend = gtk4" \
             "depend = libadwaita" \
-            "depend = webkit2gtk-6.0" \
+            "depend = webkitgtk-6.0" \
             "depend = json-glib" \
             > "$PKGDIR/.PKGINFO"
 

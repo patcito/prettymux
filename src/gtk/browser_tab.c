@@ -225,9 +225,11 @@ on_inspector_attach(WebKitWebInspector *inspector, gpointer user_data)
     gtk_widget_set_vexpand(inspector_view, FALSE);
 
     /* Set 1.5x zoom on the inspector view for bigger fonts */
-    WebKitSettings *isettings = webkit_web_view_get_settings(
-        webkit_web_inspector_get_web_view(inspector));
-    webkit_settings_set_default_font_size(isettings, 24);
+    WebKitWebView *iview = WEBKIT_WEB_VIEW(webkit_web_inspector_get_web_view(inspector));
+    if (iview) {
+        WebKitSettings *isettings = webkit_web_view_get_settings(iview);
+        webkit_settings_set_default_font_size(isettings, 24);
+    }
 
     gtk_box_append(GTK_BOX(self), inspector_view);
     return TRUE;
