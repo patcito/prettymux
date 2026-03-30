@@ -420,9 +420,11 @@ jobs:
             VERSION="0.1.0~git$(date +%Y%m%d)"
           fi
           echo "VERSION=$VERSION" >> $GITHUB_ENV
+          # Verify ghostty lib exists before tarball
+          ls -la ghostty/zig-out/lib/
           tar czf prettymux-${VERSION}.tar.gz \
             --transform "s,^,prettymux-${VERSION}/," \
-            --exclude='.git' --exclude='build' \
+            --exclude='.git' --exclude='builddir' --exclude='node_modules' \
             src/ packaging/ ghostty/ LICENSE
 
       - name: Publish to PPA
@@ -553,10 +555,8 @@ jobs:
   # ---------------------------------------------------------------------------
   # macOS ARM64 (Apple Silicon) — DISABLED: GTK4+WebKitGTK is Linux-only
   # ---------------------------------------------------------------------------
-  # macOS: WebKitGTK depends on Wayland/WPE which are Linux-only.
-  # macOS support would require WKWebView (native WebKit) instead.
   build-macos:
-    if: false  # DISABLED — WebKitGTK is Linux-only
+    if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'macos')
     runs-on: macos-14
     steps:
       - name: Checkout prettymux
