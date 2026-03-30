@@ -31,6 +31,7 @@
 // ── Global state ──
 
 ghostty_app_t g_ghostty_app = NULL;
+float g_ghostty_default_font_size = 0.0f;
 static GtkWindow *g_main_window = NULL;
 static gboolean g_app_quit_in_progress = FALSE;
 
@@ -2006,6 +2007,16 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
 
     ghostty_config_t config = ghostty_config_new();
     ghostty_config_load_default_files(config);
+    {
+        double font_size = 0.0;
+        const char *key = "font-size";
+
+        g_ghostty_default_font_size = 0.0f;
+        if (ghostty_config_get(config, &font_size, key, strlen(key)) &&
+            font_size > 0.0) {
+            g_ghostty_default_font_size = (float)font_size;
+        }
+    }
     ghostty_config_finalize(config);
 
     ghostty_runtime_config_s rc = {0};

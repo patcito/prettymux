@@ -16,6 +16,7 @@ G_DECLARE_FINAL_TYPE(GhosttyTerminal, ghostty_terminal, GHOSTTY, TERMINAL, GtkWi
 
 /* The global ghostty app handle, defined in main.c */
 extern ghostty_app_t g_ghostty_app;
+extern float g_ghostty_default_font_size;
 
 /*
  * ghostty_terminal_new:

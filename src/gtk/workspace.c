@@ -1175,10 +1175,19 @@ void workspace_add_terminal(Workspace *ws, ghostty_app_t app) {
 
 void workspace_add_terminal_to_focused(Workspace *ws, ghostty_app_t app) {
     GtkNotebook *focused = workspace_get_focused_pane(ws);
-    if (focused)
-        workspace_add_terminal_to_notebook(ws, focused, app);
-    else
+    if (focused) {
+        const char *cwd = NULL;
+        int page = gtk_notebook_get_current_page(focused);
+        GtkWidget *terminal = notebook_terminal_at(focused, page);
+
+        if (GHOSTTY_IS_TERMINAL(terminal))
+            cwd = ghostty_terminal_get_cwd(GHOSTTY_TERMINAL(terminal));
+
+        workspace_add_terminal_to_notebook_cwd(
+            ws, focused, app, (cwd && cwd[0]) ? cwd : NULL);
+    } else {
         workspace_add_terminal(ws, app);
+    }
 }
 
 void workspace_add_terminal_to_notebook_external(Workspace *ws,

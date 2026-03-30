@@ -131,6 +131,8 @@ on_gl_realize(GtkGLArea *area, gpointer user_data)
 
     double scale = gtk_widget_get_scale_factor(GTK_WIDGET(area));
     config.scale_factor = scale;
+    if (g_ghostty_default_font_size > 0.0f)
+        config.font_size = g_ghostty_default_font_size;
 
     const char *home = g_get_home_dir();
     config.working_directory = (self->start_cwd && self->start_cwd[0])
