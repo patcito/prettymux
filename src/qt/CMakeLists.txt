@@ -98,7 +98,7 @@ target_link_libraries(prettymux PRIVATE
     Qt6::Network
 )
 
-if(NOT APPLE AND NOT WIN32)
+if(NOT WIN32)
     target_link_libraries(prettymux PRIVATE ghostty)
 endif()
 
