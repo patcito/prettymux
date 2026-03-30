@@ -31,8 +31,8 @@ modules:
       - -Dghostty_dir=/app
     subdir: src/gtk
     post-install:
-      - install -Dm644 prettymux-shell-integration.sh /app/share/prettymux/shell-integration.sh
-      - install -Dm644 ../../packaging/prettymux.desktop /app/share/applications/dev.prettymux.app.desktop
+      - install -Dm644 prettymux-shell-integration.sh /app/share/prettymux/shell-integration.sh || true
+      - install -Dm644 ../../packaging/prettymux.desktop /app/share/applications/dev.prettymux.app.desktop || true
     sources:
       - type: dir
         path: ..

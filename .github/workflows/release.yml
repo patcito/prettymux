@@ -553,51 +553,63 @@ jobs:
   # ---------------------------------------------------------------------------
   # macOS ARM64 (Apple Silicon) — DISABLED: GTK4+WebKitGTK is Linux-only
   # ---------------------------------------------------------------------------
-  # build-macos:
-  #   if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'macos')
-  #   runs-on: macos-14
-  #   steps:
-  #     - name: Checkout prettymux
-  #       uses: actions/checkout@v4
-  #
-  #     - name: Checkout ghostty fork
-  #       uses: actions/checkout@v4
-  #       with:
-  #         repository: ${{ env.GHOSTTY_REPO }}
-  #         ref: ${{ env.GHOSTTY_BRANCH }}
-  #         path: ghostty
-  #
-  #     - name: Select Xcode 16
-  #       run: sudo xcode-select -s /Applications/Xcode_16.2.app
-  #
-  #     - name: Install Zig
-  #       uses: mlugg/setup-zig@v2
-  #       with:
-  #         version: ${{ env.ZIG_VERSION }}
-  #
-  #     - name: Cache ghostty build
-  #       uses: actions/cache@v4
-  #       id: ghostty-cache
-  #       with:
-  #         path: ghostty/zig-out
-  #         key: ghostty-macos-arm64-${{ hashFiles('ghostty/.git/HEAD') }}
-  #     - name: Build ghostty
-  #       if: steps.ghostty-cache.outputs.cache-hit != 'true'
-  #       run: |
-  #         cd ghostty
-  #         zig build -Dapp-runtime=none -Doptimize=ReleaseFast
-  #
-  #     - name: Build prettymux
-  #       run: |
-  #         cd src/gtk
-  #         meson setup builddir -Dghostty_dir=${{ github.workspace }}/ghostty
-  #         ninja -C builddir
-  #
-  #     - name: Upload artifact
-  #       uses: actions/upload-artifact@v4
-  #       with:
-  #         name: prettymux-macos-arm64
-  #         path: PrettyMux-arm64.dmg
+  build-macos:
+    if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'macos')
+    runs-on: macos-14
+    steps:
+      - name: Checkout prettymux
+        uses: actions/checkout@v4
+
+      - name: Checkout ghostty fork
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.GHOSTTY_REPO }}
+          ref: ${{ env.GHOSTTY_BRANCH }}
+          path: ghostty
+
+      - name: Select Xcode 16
+        run: sudo xcode-select -s /Applications/Xcode_16.2.app
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Install GTK4 + WebKitGTK via Homebrew
+        run: |
+          brew install gtk4 libadwaita webkitgtk json-glib meson ninja pkg-config
+
+      - name: Cache ghostty build
+        uses: actions/cache@v4
+        id: ghostty-cache
+        with:
+          path: ghostty/zig-out
+          key: ghostty-macos-arm64-${{ hashFiles('ghostty/.git/HEAD') }}
+      - name: Build ghostty
+        if: steps.ghostty-cache.outputs.cache-hit != 'true'
+        run: |
+          cd ghostty
+          zig build -Dapp-runtime=none -Doptimize=ReleaseFast
+
+      - name: Build prettymux
+        run: |
+          cd src/gtk
+          meson setup builddir -Dghostty_dir=${{ github.workspace }}/ghostty
+          ninja -C builddir
+
+      - name: Package macOS app
+        run: |
+          mkdir -p dist
+          cp src/gtk/builddir/prettymux dist/
+          cp src/gtk/builddir/prettymux-open dist/ || true
+          cp ghostty/zig-out/lib/libghostty.dylib dist/ || true
+          tar czf prettymux-macos-arm64.tar.gz -C dist .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: prettymux-macos-arm64
+          path: prettymux-macos-arm64.tar.gz
 
   # ---------------------------------------------------------------------------
   # macOS Intel (x86_64) — DISABLED: GTK4+WebKitGTK is Linux-only
