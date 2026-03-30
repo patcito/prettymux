@@ -3,7 +3,7 @@
 #include "browser_tab.h"
 
 #include <ctype.h>
-#include <gdk/gdkwin32.h>
+#include <gdk/win32/gdkwin32.h>
 #include <string.h>
 #include <windows.h>
 #include <WebView2.h>
