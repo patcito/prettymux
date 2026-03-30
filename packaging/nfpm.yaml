@@ -27,13 +27,13 @@ contents:
     file_info:
       mode: 0755
 
+  - src: dist/prettymux-open
+    dst: /usr/bin/prettymux-open
+    file_info:
+      mode: 0755
+
   - src: dist/libghostty.so
     dst: /usr/lib/prettymux/libghostty.so
-    file_info:
-      mode: 0644
-
-  - src: dist/welcome.html
-    dst: /usr/share/prettymux/welcome.html
     file_info:
       mode: 0644
 

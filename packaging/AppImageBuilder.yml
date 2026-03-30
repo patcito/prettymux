@@ -6,8 +6,8 @@ AppDir:
   app_info:
     id: dev.prettymux.app
     name: PrettyMux
-    icon: utilities-terminal
-    version: 0.1.0
+    icon: prettymux
+    version: 0.2.0
     exec: usr/bin/prettymux
 
   runtime:

@@ -83,7 +83,7 @@ jobs:
           cp src/gtk/builddir/prettymux dist/
           cp src/gtk/builddir/prettymux-open dist/ || true
 
-          cp src/qt/prettymux-shell-integration.sh dist/
+          cp src/gtk/prettymux-shell-integration.sh dist/ || true
           cp ghostty/zig-out/lib/libghostty.so dist/ || true
           tar czf prettymux-ubuntu-24.04-amd64.tar.gz -C dist .
 
@@ -142,7 +142,7 @@ jobs:
           mkdir -p dist
           cp src/gtk/builddir/prettymux dist/
           cp src/gtk/builddir/prettymux-open dist/ || true
-          cp src/qt/prettymux-shell-integration.sh dist/
+          cp src/gtk/prettymux-shell-integration.sh dist/ || true
           cp ghostty/zig-out/lib/libghostty.so dist/ || true
 
       - name: Install nFPM
@@ -199,7 +199,7 @@ jobs:
           mkdir -p dist
           cp src/gtk/builddir/prettymux dist/
           cp src/gtk/builddir/prettymux-open dist/ || true
-          cp src/qt/prettymux-shell-integration.sh dist/
+          cp src/gtk/prettymux-shell-integration.sh dist/ || true
           cp ghostty/zig-out/lib/libghostty.so dist/ || true
 
       - name: Install nFPM
@@ -276,6 +276,13 @@ jobs:
           name: ghostty-prebuilt
           path: ghostty
 
+      - name: Install Flatpak Builder
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y flatpak flatpak-builder
+          sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          sudo flatpak install -y flathub org.gnome.Platform//46 org.gnome.Sdk//46
+
       - name: Build Flatpak
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
@@ -335,25 +342,26 @@ jobs:
           install -Dm755 src/gtk/builddir/prettymux-open "$PKGDIR/usr/bin/prettymux-open" || true
           install -Dm644 ghostty/zig-out/lib/libghostty.so "$PKGDIR/usr/lib/prettymux/libghostty.so" || true
 
-          install -Dm644 src/qt/prettymux-shell-integration.sh "$PKGDIR/usr/share/prettymux/shell-integration.sh"
+          install -Dm644 src/gtk/prettymux-shell-integration.sh "$PKGDIR/usr/share/prettymux/shell-integration.sh" || true
           install -Dm644 packaging/prettymux.desktop "$PKGDIR/usr/share/applications/prettymux.desktop"
           install -Dm644 LICENSE "$PKGDIR/usr/share/licenses/prettymux/LICENSE"
 
-          cat > "$PKGDIR/.PKGINFO" <<EOF
-          pkgname = prettymux
-          pkgver = ${VERSION}-1
-          pkgdesc = GPU-accelerated terminal multiplexer
-          url = https://github.com/patcito/prettymux
-          builddate = $(date +%s)
-          packager = GitHub Actions <ci@prettymux.dev>
-          size = $(du -sb "$PKGDIR" | cut -f1)
-          arch = x86_64
-          license = GPL-3.0-only
-          depend = gtk4
-          depend = libadwaita
-          depend = webkit2gtk-6.0
-          depend = json-glib
-          EOF
+          cat > "$PKGDIR/.PKGINFO" << 'PKGEOF'
+pkgname = prettymux
+pkgdesc = GPU-accelerated terminal multiplexer
+url = https://github.com/patcito/prettymux
+arch = x86_64
+license = GPL-3.0-only
+depend = gtk4
+depend = libadwaita
+depend = webkit2gtk-6.0
+depend = json-glib
+PKGEOF
+          # Set dynamic fields
+          sed -i "1a pkgver = ${VERSION}-1" "$PKGDIR/.PKGINFO"
+          echo "builddate = $(date +%s)" >> "$PKGDIR/.PKGINFO"
+          echo "packager = GitHub Actions <ci@prettymux.dev>" >> "$PKGDIR/.PKGINFO"
+          echo "size = $(du -sb "$PKGDIR" | cut -f1)" >> "$PKGDIR/.PKGINFO"
 
           cd "$PKGDIR"
           tar --zstd -cf ../prettymux-${VERSION}-1-x86_64.pkg.tar.zst .PKGINFO usr/
@@ -472,8 +480,14 @@ jobs:
           cp src/gtk/builddir/prettymux AppDir/usr/bin/
           cp src/gtk/builddir/prettymux-open AppDir/usr/bin/ || true
           cp ghostty/zig-out/lib/libghostty.so AppDir/usr/lib/prettymux/ || true
-          cp src/qt/prettymux-shell-integration.sh AppDir/usr/share/prettymux/shell-integration.sh
+          cp src/gtk/prettymux-shell-integration.sh AppDir/usr/share/prettymux/shell-integration.sh || true
           cp packaging/prettymux.desktop AppDir/usr/share/applications/prettymux.desktop
+          # Create a simple icon for AppImage
+          mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
+          convert -size 256x256 xc:transparent -fill '#cba6f7' -font DejaVu-Sans-Mono-Bold \
+            -pointsize 180 -gravity center -annotate 0 '>_' \
+            AppDir/usr/share/icons/hicolor/256x256/apps/prettymux.png 2>/dev/null || \
+          echo '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><rect width="256" height="256" rx="40" fill="#1e1e2e"/><text x="128" y="170" font-family="monospace" font-size="140" fill="#cba6f7" text-anchor="middle">>_</text></svg>' > AppDir/usr/share/icons/hicolor/256x256/apps/prettymux.svg
 
       - name: Build AppImage
         uses: AppImageCrafters/build-appimage@v1

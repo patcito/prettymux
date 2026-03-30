@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 // PrettyMux — GTK4 + WebKitGTK + ghostty (OpenGL)
 // GPU-accelerated terminal multiplexer with integrated browser
 
