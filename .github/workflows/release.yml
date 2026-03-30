@@ -504,61 +504,75 @@ jobs:
           path: '*.AppImage'
 
   # ---------------------------------------------------------------------------
-  # Windows (x64) — DISABLED: GTK4+WebKitGTK is Linux-only
+  # Windows (x64)
   # ---------------------------------------------------------------------------
-  # build-windows:
-  #   if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'windows')
-  #   runs-on: windows-latest
-  #   steps:
-  #     - name: Checkout prettymux
-  #       uses: actions/checkout@v4
-  #
-  #     - name: Download prebuilt ghostty
-  #       shell: bash
-  #       run: |
-  #         mkdir -p ghostty/zig-out/lib ghostty/vendor
-  #         gh release download ${{ env.GHOSTTY_RELEASE }} \
-  #           --repo ${{ env.GHOSTTY_REPO }} \
-  #           --pattern 'ghostty-windows-x86_64.tar.gz' \
-  #           --pattern 'ghostty-glad.tar.gz'
-  #         tar xzf ghostty-windows-x86_64.tar.gz -C ghostty/
-  #         mv ghostty/ghostty.dll ghostty/zig-out/lib/ghostty.dll || true
-  #         mv ghostty/ghostty.lib ghostty/zig-out/lib/ghostty.lib || true
-  #         [ -f ghostty/lib/ghostty.dll ] && mv ghostty/lib/* ghostty/zig-out/lib/ || true
-  #         tar xzf ghostty-glad.tar.gz -C ghostty/vendor/
-  #       env:
-  #         GH_TOKEN: ${{ github.token }}
-  #
-  #     - name: Build prettymux
-  #       shell: pwsh
-  #       run: |
-  #         cd src/gtk
-  #         meson setup builddir -Dghostty_dir="${{ github.workspace }}/ghostty"
-  #         ninja -C builddir
-  #
-  #     - name: Package artifacts
-  #       shell: pwsh
-  #       run: |
-  #         mkdir dist
-  #         copy src/gtk/builddir/prettymux.exe dist/
-  #         copy src/gtk/builddir/prettymux-open.exe dist/ -ErrorAction SilentlyContinue
-  #         copy src/qt/prettymux-shell-integration.sh dist/
-  #         copy ghostty/zig-out/lib/ghostty.dll dist/
-  #         Compress-Archive -Path dist/* -DestinationPath prettymux-windows-x64.zip
-  #
-  #     - name: Upload artifact
-  #       uses: actions/upload-artifact@v4
-  #       with:
-  #         name: prettymux-windows-x64
-  #         path: prettymux-windows-x64.zip
+  build-windows:
+    if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'windows')
+    runs-on: windows-latest
+    steps:
+      - name: Checkout prettymux
+        uses: actions/checkout@v4
+
+      - name: Download prebuilt ghostty
+        shell: bash
+        run: |
+          mkdir -p ghostty/zig-out/lib ghostty/vendor
+          gh release download ${{ env.GHOSTTY_RELEASE }} \
+            --repo ${{ env.GHOSTTY_REPO }} \
+            --pattern 'ghostty-windows-x86_64.tar.gz' \
+            --pattern 'ghostty-glad.tar.gz'
+          tar xzf ghostty-windows-x86_64.tar.gz -C ghostty/
+          mv ghostty/ghostty.dll ghostty/zig-out/lib/ghostty.dll || true
+          mv ghostty/ghostty.lib ghostty/zig-out/lib/ghostty.lib || true
+          [ -f ghostty/lib/ghostty.dll ] && mv ghostty/lib/* ghostty/zig-out/lib/ || true
+          tar xzf ghostty-glad.tar.gz -C ghostty/vendor/
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Install Qt6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.7.3'
+          arch: 'win64_msvc2019_64'
+
+      - name: Install WebView2 SDK
+        shell: pwsh
+        run: |
+          nuget install Microsoft.Web.WebView2 -OutputDirectory third_party/nuget
+          $pkg = Get-ChildItem third_party/nuget | Where-Object { $_.Name -like 'Microsoft.Web.WebView2*' } | Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $pkg) { throw 'Microsoft.Web.WebView2 package not found' }
+          "WEBVIEW2_DIR=$($pkg.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build prettymux
+        shell: pwsh
+        run: |
+          cd src/qt
+          mkdir build
+          cd build
+          cmake .. -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release -DGHOSTTY_DIR="${{ github.workspace }}/ghostty" -DWEBVIEW2_DIR="$env:WEBVIEW2_DIR"
+          cmake --build . --config Release
+
+      - name: Package artifacts
+        shell: pwsh
+        run: |
+          mkdir dist
+          copy src/qt/build/Release/prettymux.exe dist/
+          copy src/qt/prettymux-shell-integration.sh dist/
+          copy ghostty/zig-out/lib/ghostty.dll dist/
+          windeployqt --release dist/prettymux.exe
+          Compress-Archive -Path dist/* -DestinationPath prettymux-windows-x64.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: prettymux-windows-x64
+          path: prettymux-windows-x64.zip
 
   # ---------------------------------------------------------------------------
-  # macOS ARM64 (Apple Silicon) — DISABLED: GTK4+WebKitGTK is Linux-only
+  # macOS ARM64 (Apple Silicon)
   # ---------------------------------------------------------------------------
-  # macOS/Windows: WebKitGTK requires Linux (libwpe, libdrm, systemd deps).
-  # Cross-platform support would need a different browser engine.
   build-macos:
-    if: false  # DISABLED — WebKitGTK is Linux-only even on Homebrew
+    if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'macos')
     runs-on: macos-14
     steps:
       - name: Checkout prettymux
@@ -579,9 +593,10 @@ jobs:
         with:
           version: ${{ env.ZIG_VERSION }}
 
-      - name: Install GTK4 + WebKitGTK via Homebrew
-        run: |
-          brew install gtk4 libadwaita webkitgtk json-glib meson ninja pkg-config
+      - name: Install Qt6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.7.3'
 
       - name: Cache ghostty build
         uses: actions/cache@v4
@@ -597,17 +612,19 @@ jobs:
 
       - name: Build prettymux
         run: |
-          cd src/gtk
-          meson setup builddir -Dghostty_dir=${{ github.workspace }}/ghostty
-          ninja -C builddir
+          cd src/qt
+          mkdir -p build && cd build
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGHOSTTY_DIR=${{ github.workspace }}/ghostty
+          cmake --build . --config Release
 
       - name: Package macOS app
         run: |
-          mkdir -p dist
-          cp src/gtk/builddir/prettymux dist/
-          cp src/gtk/builddir/prettymux-open dist/ || true
-          cp ghostty/zig-out/lib/libghostty.dylib dist/ || true
-          tar czf prettymux-macos-arm64.tar.gz -C dist .
+          mkdir -p src/qt/build/prettymux.app/Contents/Resources
+          cp ghostty/zig-out/lib/libghostty.dylib src/qt/build/prettymux.app/Contents/MacOS/ || true
+          cp src/qt/prettymux-shell-integration.sh src/qt/build/prettymux.app/Contents/Resources/ || true
+          tar czf prettymux-macos-arm64.tar.gz -C src/qt/build prettymux.app
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -678,8 +695,8 @@ jobs:
       - build-archlinux
       - publish-ppa
       - build-appimage
-      # - build-windows      # DISABLED: GTK4+WebKitGTK is Linux-only
-      # - build-macos        # DISABLED: GTK4+WebKitGTK is Linux-only
+      - build-windows
+      - build-macos
       # - build-macos-intel  # DISABLED: GTK4+WebKitGTK is Linux-only
     runs-on: ubuntu-latest
     permissions:
@@ -739,7 +756,7 @@ jobs:
           cp artifacts/prettymux-windows-x64/*.zip release-assets/ || true
 
           # macOS
-          cp artifacts/prettymux-macos-arm64/*.dmg release-assets/ || true
+          cp artifacts/prettymux-macos-arm64/*.tar.gz release-assets/ || true
           cp artifacts/prettymux-macos-x64/*.dmg release-assets/ || true
 
           echo "Release assets:"

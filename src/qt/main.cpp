@@ -6,10 +6,6 @@
 #include <QSplitter>
 #include <QOpenGLWidget>
 #include <QOpenGLFunctions>
-#include <QWebEngineView>
-#include <QWebEngineProfile>
-#include <QWebEnginePage>
-#include <QWebEngineSettings>
 #include <QTimer>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -66,6 +62,8 @@ typedef SSIZE_T ssize_t;
 extern "C" {
 #include "ghostty.h"
 }
+
+#include "browser_view.h"
 
 // ── Ghostty callbacks ──
 
@@ -517,32 +515,6 @@ private:
     }
 };
 
-// ── WebPage that opens target=_blank in new tabs ──
-
-class PrettyMuxPage : public QWebEnginePage {
-    Q_OBJECT
-    std::function<void(const QUrl&)> m_openTab;
-public:
-    PrettyMuxPage(std::function<void(const QUrl&)> openTab, QObject* parent = nullptr)
-        : QWebEnginePage(parent), m_openTab(openTab) {}
-
-    bool acceptNavigationRequest(const QUrl& url, NavigationType type, bool isMainFrame) override {
-        return QWebEnginePage::acceptNavigationRequest(url, type, isMainFrame);
-    }
-
-    QWebEnginePage* createWindow(WebWindowType) override {
-        // Create a temporary page that captures the URL then opens it as a tab
-        auto* tempPage = new QWebEnginePage(this);
-        connect(tempPage, &QWebEnginePage::urlChanged, this, [this, tempPage](const QUrl& url) {
-            if (!url.isEmpty() && url.toString() != "about:blank") {
-                m_openTab(url);
-                tempPage->deleteLater();
-            }
-        });
-        return tempPage;
-    }
-};
-
 // ── TabDragFilter — detects cross-pane tab drags ──
 
 class PaneWidget; // forward
@@ -967,7 +939,7 @@ struct Workspace {
 class PiPWindow : public QWidget {
     Q_OBJECT
 public:
-    QWebEngineView* view = nullptr;
+    BrowserView* view = nullptr;
     int originalTabIndex = -1;
     QTabWidget* originalTabs = nullptr;
     QWidget* originalContainer = nullptr;
@@ -1024,7 +996,7 @@ public:
         mainLayout->addWidget(frame);
     }
 
-    void setView(QWebEngineView* v, int tabIdx, QTabWidget* tabs, QWidget* container) {
+    void setView(BrowserView* v, int tabIdx, QTabWidget* tabs, QWidget* container) {
         view = v;
         originalTabIndex = tabIdx;
         originalTabs = tabs;
@@ -1042,9 +1014,9 @@ public:
 
         auto* titleLabel = findChild<QLabel*>("pipTitle");
         if (titleLabel) {
-            QString t = view->title().isEmpty() ? "Picture in Picture" : view->title().left(40);
+            QString t = view->currentTitle().isEmpty() ? "Picture in Picture" : view->currentTitle().left(40);
             titleLabel->setText(t);
-            connect(view, &QWebEngineView::titleChanged, titleLabel, [titleLabel](const QString& title) {
+            connect(view, &BrowserView::titleChanged, titleLabel, [titleLabel](const QString& title) {
                 titleLabel->setText(title.left(40));
             });
         }
@@ -1902,24 +1874,17 @@ public slots:
         layout->addWidget(addressBar);
 
         // WebView with custom page for target=_blank handling
-        QWebEngineView* view = new QWebEngineView();
-        auto* page = new PrettyMuxPage([this](const QUrl& url) {
-            addBrowserTab(url.toString());
-        }, view);
-        view->setPage(page);
-
-        // Enable developer tools and right-click inspect
-        view->settings()->setAttribute(QWebEngineSettings::JavascriptEnabled, true);
-        view->setContextMenuPolicy(Qt::DefaultContextMenu);
-        page->settings()->setAttribute(QWebEngineSettings::JavascriptEnabled, true);
-
-        view->setUrl(QUrl(url));
+        BrowserView* view = createBrowserView(container);
         layout->addWidget(view);
 
+        connect(view, &BrowserView::newTabRequested, this, [this](const QUrl& newUrl) {
+            addBrowserTab(newUrl.toString());
+        });
+
         // Wire up buttons
-        connect(backBtn, &QPushButton::clicked, view, &QWebEngineView::back);
-        connect(fwdBtn, &QPushButton::clicked, view, &QWebEngineView::forward);
-        connect(reloadBtn, &QPushButton::clicked, view, &QWebEngineView::reload);
+        connect(backBtn, &QPushButton::clicked, view, [view]() { view->goBack(); });
+        connect(fwdBtn, &QPushButton::clicked, view, [view]() { view->goForward(); });
+        connect(reloadBtn, &QPushButton::clicked, view, [view]() { view->reloadPage(); });
 
         // Enter in URL bar navigates and records history
         connect(urlBar, &QLineEdit::returnPressed, this, [this, view, urlBar]() {
@@ -1931,20 +1896,22 @@ public slots:
                     text = "https://www.google.com/search?q=" + QUrl::toPercentEncoding(text);
             }
             addUrlToHistory(text);
-            view->setUrl(QUrl(text));
+            view->navigate(QUrl(text));
         });
 
         // Update URL bar when page navigates and record history
-        connect(view, &QWebEngineView::urlChanged, this, [this, urlBar](const QUrl& newUrl) {
+        connect(view, &BrowserView::urlChanged, this, [this, urlBar](const QUrl& newUrl) {
             urlBar->setText(newUrl.toString());
             addUrlToHistory(newUrl.toString());
         });
 
         // Update tab title
-        connect(view, &QWebEngineView::titleChanged, this, [this, container](const QString& title) {
+        connect(view, &BrowserView::titleChanged, this, [this, container](const QString& title) {
             int idx = browserTabs->indexOf(container);
             if (idx >= 0) browserTabs->setTabText(idx, title.left(20));
         });
+
+        view->navigate(QUrl(url));
 
         browserTabs->addTab(container, "Loading...");
         browserTabs->setCurrentWidget(container);
@@ -2621,8 +2588,8 @@ public slots:
         for (int bi = 0; bi < browserTabs->count(); bi++) {
             QString title = browserTabs->tabText(bi);
             QWidget* w = browserTabs->widget(bi);
-            auto* view = w ? w->findChild<QWebEngineView*>() : nullptr;
-            QString url = view ? view->url().toString() : "";
+            auto* view = w ? w->findChild<BrowserView*>() : nullptr;
+            QString url = view ? view->currentUrl().toString() : "";
             items->push_back({
                 title,
                 url,
@@ -2726,72 +2693,10 @@ public slots:
     void openDevTools(bool inWindow = false) {
         QWidget* current = browserTabs->currentWidget();
         if (!current) return;
-        auto* view = current->findChild<QWebEngineView*>();
+        auto* view = current->findChild<BrowserView*>();
         if (!view) return;
-
-        if (inWindow) {
-            // Open in separate window
-            auto* devToolsView = new QWebEngineView();
-            auto* devToolsPage = new QWebEnginePage(devToolsView);
-            devToolsView->setPage(devToolsPage);
-            view->page()->setDevToolsPage(devToolsPage);
-            devToolsView->setWindowTitle("Developer Tools - prettymux");
-            devToolsView->resize(900, 600);
-            devToolsView->show();
-            return;
-        }
-
-        // Docked mode: check if already exists, toggle visibility
-        auto* existingSplitter = current->findChild<QSplitter*>("devToolsSplitter");
-        if (existingSplitter && existingSplitter->count() > 1) {
-            auto* devContainer = existingSplitter->widget(1);
-            if (devContainer) {
-                devContainer->setVisible(!devContainer->isVisible());
-                return;
-            }
-        }
-
-        auto* layout = current->layout();
-        if (!layout) return;
-
-        layout->removeWidget(view);
-
-        auto* splitter = new QSplitter(Qt::Vertical);
-        splitter->setObjectName("devToolsSplitter");
-        splitter->setStyleSheet("QSplitter::handle { background: #313244; height: 3px; }");
-        splitter->addWidget(view);
-
-        // Dev tools container with close bar
-        auto* devContainer = new QWidget();
-        auto* devLayout = new QVBoxLayout(devContainer);
-        devLayout->setContentsMargins(0, 0, 0, 0);
-        devLayout->setSpacing(0);
-
-        // Close bar
-        auto* closeBar = new QWidget();
-        closeBar->setFixedHeight(20);
-        closeBar->setStyleSheet("background: #181825;");
-        auto* closeBarLayout = new QHBoxLayout(closeBar);
-        closeBarLayout->setContentsMargins(4, 0, 4, 0);
-        closeBarLayout->addStretch();
-        auto* closeBtn = new QPushButton("x");
-        closeBtn->setFixedSize(16, 16);
-        closeBtn->setStyleSheet("background: #45475a; color: #cdd6f4; border: none; border-radius: 3px;");
-        connect(closeBtn, &QPushButton::clicked, devContainer, [devContainer]() {
-            devContainer->setVisible(false);
-        });
-        closeBarLayout->addWidget(closeBtn);
-        devLayout->addWidget(closeBar);
-
-        auto* devToolsView = new QWebEngineView();
-        auto* devToolsPage = new QWebEnginePage(devToolsView);
-        devToolsView->setPage(devToolsPage);
-        view->page()->setDevToolsPage(devToolsPage);
-        devLayout->addWidget(devToolsView);
-
-        splitter->addWidget(devContainer);
-        splitter->setSizes({400, 300});
-        layout->addWidget(splitter);
+        if (!view->supportsDevTools()) return;
+        view->showDevTools(inWindow);
     }
 
     Q_INVOKABLE void openUrlInBrowser(const QString& url) {
@@ -3642,7 +3547,7 @@ public slots:
 
         QWidget* current = browserTabs->currentWidget();
         if (!current) return;
-        auto* view = current->findChild<QWebEngineView*>();
+        auto* view = current->findChild<BrowserView*>();
         if (!view) return;
 
         int tabIdx = browserTabs->currentIndex();
@@ -3724,10 +3629,10 @@ public slots:
         QJsonArray browserArr;
         for (int i = 0; i < browserTabs->count(); i++) {
             QWidget* w = browserTabs->widget(i);
-            auto* view = w->findChild<QWebEngineView*>();
+            auto* view = w->findChild<BrowserView*>();
             if (view) {
                 QJsonObject tab;
-                tab["url"] = view->url().toString();
+                tab["url"] = view->currentUrl().toString();
                 tab["title"] = browserTabs->tabText(i);
                 browserArr.append(tab);
             }
