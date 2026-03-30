@@ -135,7 +135,7 @@ protected:
 private:
     void ensureWebView()
     {
-        NSView* hostView = reinterpret_cast<NSView*>(winId());
+        NSView* hostView = (__bridge NSView*)(reinterpret_cast<void*>(winId()));
         if (!hostView)
             return;
 
@@ -167,7 +167,7 @@ private:
         if (!webView_)
             return;
 
-        NSView* hostView = reinterpret_cast<NSView*>(winId());
+        NSView* hostView = (__bridge NSView*)(reinterpret_cast<void*>(winId()));
         if (!hostView)
             return;
 
