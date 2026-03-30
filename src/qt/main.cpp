@@ -293,7 +293,7 @@ protected:
         config.platform.gtk.gtk_widget = (void*)this;
 #elif defined(__APPLE__)
         config.platform_tag = GHOSTTY_PLATFORM_MACOS;
-        config.platform.macos.ns_view = (void*)this;
+        config.platform.macos.nsview = (void*)this;
 #endif
         config.scale_factor = devicePixelRatioF();
         config.working_directory = m_startCwd.isEmpty() ? getenv("HOME") : m_startCwd.constData();
