@@ -421,20 +421,22 @@ jobs:
 
       - name: Create source tarball
         run: |
-          VERSION=${GITHUB_REF_NAME#v}
+          VERSION=$(dpkg-parsechangelog -l packaging/debian/changelog --show-field Version 2>/dev/null | cut -d- -f1)
+          if [ -z "$VERSION" ]; then
+            VERSION=${GITHUB_REF_NAME#v}
+          fi
           if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
             VERSION=$(sed -n "s/^[[:space:]]*version: '\\([^']*\\)'.*/\\1/p" src/gtk/meson.build | head -1)
-            if [ -z "$VERSION" ]; then
-              VERSION="0.2.0"
-            fi
-            VERSION="${VERSION}~git$(date -u +%Y%m%d%H%M)"
+          fi
+          if [ -z "$VERSION" ]; then
+            VERSION="0.2.0"
           fi
           PPA_REVISION=$((GITHUB_RUN_NUMBER * 10 + GITHUB_RUN_ATTEMPT - 1))
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "PPA_REVISION=$PPA_REVISION" >> $GITHUB_ENV
           # Verify ghostty lib exists before tarball
           ls -la ghostty/zig-out/lib/
-          tar czf prettymux-${VERSION}.tar.gz \
+          tar czf prettymux_${VERSION}.orig.tar.gz \
             --transform "s,^,prettymux-${VERSION}/," \
             --exclude='.git' --exclude='builddir' --exclude='node_modules' \
             src/ packaging/ ghostty/ LICENSE
@@ -446,7 +448,7 @@ jobs:
           repository: patcito/prettymux
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           gpg_passphrase: ${{ secrets.GPG_PASSPHRASE }}
-          tarball: prettymux-${{ env.VERSION }}.tar.gz
+          tarball: prettymux_${{ env.VERSION }}.orig.tar.gz
           debian_dir: packaging/debian
           deb_email: patcito@gmail.com
           deb_fullname: Patrick Aljord
