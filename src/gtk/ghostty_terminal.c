@@ -101,6 +101,41 @@ current_event_mods(GtkEventController *controller)
     return gtk_event_controller_get_current_event_state(controller);
 }
 
+static const char *
+ghostty_terminal_shorten_path(const char *path, char *buf, size_t bufsz)
+{
+    const char *home = g_get_home_dir();
+
+    if (!path || !path[0]) {
+        snprintf(buf, bufsz, "Terminal");
+        return buf;
+    }
+    if (home && strcmp(path, home) == 0) {
+        snprintf(buf, bufsz, "~");
+        return buf;
+    }
+    if (strcmp(path, "/") == 0) {
+        snprintf(buf, bufsz, "/");
+        return buf;
+    }
+
+    if (path[0] == '/') {
+        const char *second = strchr(path + 1, '/');
+        if (!second || second[1] == '\0') {
+            snprintf(buf, bufsz, "%s", path);
+            return buf;
+        }
+    }
+
+    const char *last_slash = strrchr(path, '/');
+    if (last_slash && last_slash[1])
+        snprintf(buf, bufsz, ".../%s", last_slash + 1);
+    else
+        snprintf(buf, bufsz, "%.28s", path);
+
+    return buf;
+}
+
 static void
 ghostty_terminal_measure(GtkWidget      *widget,
                          GtkOrientation  orientation,
@@ -132,8 +167,7 @@ ghostty_terminal_measure(GtkWidget      *widget,
 
     if (orientation == GTK_ORIENTATION_HORIZONTAL) {
         child_min = 1;
-        if (child_nat < 1)
-            child_nat = 1;
+        child_nat = 1;
     } else {
         if (child_min < 1)
             child_min = 1;
@@ -666,7 +700,6 @@ ghostty_terminal_finalize(GObject *object)
     g_free(self->title);
     g_free(self->cwd);
     g_free(self->start_cwd);
-
     G_OBJECT_CLASS(ghostty_terminal_parent_class)->finalize(object);
 }
 
@@ -743,15 +776,16 @@ ghostty_terminal_init(GhosttyTerminal *self)
     self->progress_state = -1;
     self->progress_percent = -1;
     self->dummy_target = NULL;
-
     gtk_widget_set_halign(GTK_WIDGET(self), GTK_ALIGN_START);
     gtk_widget_set_valign(GTK_WIDGET(self), GTK_ALIGN_START);
+    gtk_widget_set_overflow(GTK_WIDGET(self), GTK_OVERFLOW_HIDDEN);
 
     /* ── Create the vertical box container ── */
 
     self->vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_widget_set_hexpand(self->vbox, TRUE);
     gtk_widget_set_vexpand(self->vbox, TRUE);
+    gtk_widget_set_overflow(self->vbox, GTK_OVERFLOW_HIDDEN);
     gtk_widget_set_parent(self->vbox, GTK_WIDGET(self));
 
     /* ── Create the GtkGLArea child ── */
@@ -763,24 +797,32 @@ ghostty_terminal_init(GhosttyTerminal *self)
     gtk_widget_set_hexpand(GTK_WIDGET(self->gl_area), TRUE);
     gtk_widget_set_vexpand(GTK_WIDGET(self->gl_area), TRUE);
     gtk_widget_set_focusable(GTK_WIDGET(self->gl_area), TRUE);
+    gtk_widget_set_overflow(GTK_WIDGET(self->gl_area), GTK_OVERFLOW_HIDDEN);
     gtk_box_append(GTK_BOX(self->vbox), GTK_WIDGET(self->gl_area));
 
     /* ── Create status bar ── */
 
     self->status_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     gtk_widget_add_css_class(self->status_bar, "terminal-status");
+    gtk_widget_set_hexpand(self->status_bar, TRUE);
+    gtk_widget_set_overflow(self->status_bar, GTK_OVERFLOW_HIDDEN);
     gtk_widget_set_size_request(self->status_bar, -1, 28);
     gtk_widget_set_margin_start(self->status_bar, 4);
     gtk_widget_set_margin_end(self->status_bar, 4);
 
     self->status_cwd = gtk_label_new("");
     gtk_label_set_xalign(GTK_LABEL(self->status_cwd), 0);
+    gtk_label_set_single_line_mode(GTK_LABEL(self->status_cwd), TRUE);
     gtk_widget_set_hexpand(self->status_cwd, TRUE);
+    gtk_widget_set_halign(self->status_cwd, GTK_ALIGN_FILL);
+    gtk_widget_set_overflow(self->status_cwd, GTK_OVERFLOW_HIDDEN);
     gtk_label_set_ellipsize(GTK_LABEL(self->status_cwd), PANGO_ELLIPSIZE_MIDDLE);
     gtk_box_append(GTK_BOX(self->status_bar), self->status_cwd);
 
     self->status_git = gtk_label_new("");
     gtk_label_set_xalign(GTK_LABEL(self->status_git), 1);
+    gtk_label_set_single_line_mode(GTK_LABEL(self->status_git), TRUE);
+    gtk_widget_set_overflow(self->status_git, GTK_OVERFLOW_HIDDEN);
     gtk_box_append(GTK_BOX(self->status_bar), self->status_git);
 
     gtk_box_append(GTK_BOX(self->vbox), self->status_bar);
@@ -1040,13 +1082,25 @@ ghostty_terminal_set_status(GhosttyTerminal *self,
                             const char *cwd,
                             const char *git_branch)
 {
+    char short_cwd[64];
+
     g_return_if_fail(GHOSTTY_IS_TERMINAL(self));
 
-    if (self->status_cwd)
+    if (self->status_cwd) {
         gtk_label_set_text(GTK_LABEL(self->status_cwd),
-                           (cwd && cwd[0]) ? cwd : "");
+                           (cwd && cwd[0])
+                               ? ghostty_terminal_shorten_path(cwd, short_cwd,
+                                                               sizeof(short_cwd))
+                               : "");
+        gtk_widget_set_tooltip_text(self->status_cwd,
+                                    (cwd && cwd[0]) ? cwd : NULL);
+    }
 
-    if (self->status_git)
+    if (self->status_git) {
         gtk_label_set_text(GTK_LABEL(self->status_git),
                            (git_branch && git_branch[0]) ? git_branch : "");
+        gtk_widget_set_tooltip_text(self->status_git,
+                                    (git_branch && git_branch[0])
+                                        ? git_branch : NULL);
+    }
 }
