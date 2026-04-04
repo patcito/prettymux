@@ -48,6 +48,29 @@ on_pip_close_request(GtkWindow *window, gpointer user_data)
     return TRUE; /* We handle destruction ourselves */
 }
 
+static gboolean
+on_pip_key_pressed(GtkEventControllerKey *controller,
+                   guint                  keyval,
+                   guint                  keycode,
+                   GdkModifierType        state,
+                   gpointer               user_data)
+{
+    (void)controller;
+    (void)keycode;
+    PipWindow *pip = user_data;
+
+    if (keyval == GDK_KEY_Escape ||
+        (keyval == GDK_KEY_m &&
+         (state & (GDK_CONTROL_MASK | GDK_SHIFT_MASK)) ==
+             (GDK_CONTROL_MASK | GDK_SHIFT_MASK)) ||
+        (keyval == GDK_KEY_w && (state & GDK_CONTROL_MASK))) {
+        pip_window_close(pip);
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
 static void
 on_title_bar_pressed(GtkGestureClick *gesture, int n_press, double x, double y,
                      gpointer user_data)
@@ -141,7 +164,7 @@ pip_window_new(GtkWindow *parent, GtkWidget *browser_notebook)
     gtk_box_append(GTK_BOX(title_bar), pip->title_label);
 
     /* Close button */
-    GtkWidget *close_btn = gtk_button_new_with_label("x");
+    GtkWidget *close_btn = gtk_button_new_with_label("×");
     gtk_widget_set_size_request(close_btn, 24, 24);
     g_signal_connect(close_btn, "clicked",
                      G_CALLBACK(on_pip_close_clicked), pip);
@@ -165,6 +188,15 @@ pip_window_new(GtkWindow *parent, GtkWidget *browser_notebook)
     /* Close request handler */
     g_signal_connect(pip->window, "close-request",
                      G_CALLBACK(on_pip_close_request), pip);
+
+    /* Allow closing PiP without relying on the custom title bar button. */
+    {
+        GtkEventController *key_ctrl = gtk_event_controller_key_new();
+        gtk_event_controller_set_propagation_phase(key_ctrl, GTK_PHASE_CAPTURE);
+        g_signal_connect(key_ctrl, "key-pressed",
+                         G_CALLBACK(on_pip_key_pressed), pip);
+        gtk_widget_add_controller(GTK_WIDGET(pip->window), key_ctrl);
+    }
 
     g_pip = pip;
     gtk_window_present(pip->window);

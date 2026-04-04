@@ -81,6 +81,9 @@ static void workspace_equalize_widget(GtkWidget *widget,
                                       gboolean filter_orientation,
                                       GtkOrientation orientation);
 static gboolean workspace_has_pane(Workspace *ws, GtkNotebook *notebook);
+static void workspace_on_paned_position_notify(GObject *object,
+                                               GParamSpec *pspec,
+                                               gpointer user_data);
 static gboolean workspace_drag_value_terminal(const GValue *value,
                                               GtkWidget **terminal_out,
                                               GtkNotebook **src_nb_out,
@@ -485,6 +488,17 @@ workspace_has_pane(Workspace *ws, GtkNotebook *notebook)
     }
 
     return FALSE;
+}
+
+static void
+workspace_on_paned_position_notify(GObject *object,
+                                   GParamSpec *pspec,
+                                   gpointer user_data)
+{
+    (void)object;
+    (void)pspec;
+    (void)user_data;
+    session_queue_save();
 }
 
 const char *
@@ -2145,6 +2159,8 @@ workspace_split_pane_target(Workspace *ws, GtkNotebook *source_nb,
 
     /* Connect resize overlay to show dimensions while dragging */
     resize_overlay_connect_paned(GTK_PANED(paned));
+    g_signal_connect(paned, "notify::position",
+                     G_CALLBACK(workspace_on_paned_position_notify), NULL);
 
     /* Reparenting through GtkPaned drops the parent's ref immediately.
      * Hold our own ref so nested splits don't destroy the source pane
@@ -2168,6 +2184,8 @@ workspace_split_pane_target(Workspace *ws, GtkNotebook *source_nb,
 
         gtk_paned_set_resize_start_child(GTK_PANED(paned), TRUE);
         gtk_paned_set_resize_end_child(GTK_PANED(paned), TRUE);
+        gtk_paned_set_shrink_start_child(GTK_PANED(paned), FALSE);
+        gtk_paned_set_shrink_end_child(GTK_PANED(paned), FALSE);
 
     } else if (GTK_IS_OVERLAY(parent)) {
         gtk_overlay_set_child(GTK_OVERLAY(parent), NULL);
@@ -2176,6 +2194,8 @@ workspace_split_pane_target(Workspace *ws, GtkNotebook *source_nb,
         gtk_paned_set_end_child(GTK_PANED(paned), new_nb);
         gtk_paned_set_resize_start_child(GTK_PANED(paned), TRUE);
         gtk_paned_set_resize_end_child(GTK_PANED(paned), TRUE);
+        gtk_paned_set_shrink_start_child(GTK_PANED(paned), FALSE);
+        gtk_paned_set_shrink_end_child(GTK_PANED(paned), FALSE);
         gtk_overlay_set_child(GTK_OVERLAY(parent), paned);
     } else {
         /* Parent is neither GtkPaned nor GtkStack -- abort split */

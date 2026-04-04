@@ -101,6 +101,52 @@ current_event_mods(GtkEventController *controller)
     return gtk_event_controller_get_current_event_state(controller);
 }
 
+static void
+ghostty_terminal_measure(GtkWidget      *widget,
+                         GtkOrientation  orientation,
+                         int             for_size,
+                         int            *minimum,
+                         int            *natural,
+                         int            *minimum_baseline,
+                         int            *natural_baseline)
+{
+    GhosttyTerminal *self = GHOSTTY_TERMINAL(widget);
+    int child_min = 0;
+    int child_nat = 0;
+
+    if (!self->vbox) {
+        if (minimum)
+            *minimum = 1;
+        if (natural)
+            *natural = 1;
+        if (minimum_baseline)
+            *minimum_baseline = -1;
+        if (natural_baseline)
+            *natural_baseline = -1;
+        return;
+    }
+
+    gtk_widget_measure(self->vbox, orientation, for_size,
+                       &child_min, &child_nat,
+                       minimum_baseline, natural_baseline);
+
+    if (orientation == GTK_ORIENTATION_HORIZONTAL) {
+        child_min = 1;
+        if (child_nat < 1)
+            child_nat = 1;
+    } else {
+        if (child_min < 1)
+            child_min = 1;
+        if (child_nat < child_min)
+            child_nat = child_min;
+    }
+
+    if (minimum)
+        *minimum = child_min;
+    if (natural)
+        *natural = child_nat;
+}
+
 /* ── GL callbacks ──────────────────────────────────────────────── */
 
 static void
@@ -531,7 +577,16 @@ on_scroll(GtkEventControllerScroll *controller,
         return FALSE;
 
     GdkModifierType state = current_event_mods(GTK_EVENT_CONTROLLER(controller));
-    ghostty_surface_mouse_scroll(self->surface, dx, dy,
+
+    /* Match Ghostty's native GTK apprt behavior.
+     *
+     * GTK scroll deltas already reflect the desktop's configured scroll
+     * direction, so we invert before passing them into Ghostty's embedded
+     * surface API, which expects negative=down/left and positive=up/right.
+     * This makes terminal scrolling line up with the browser and with
+     * natural-scrolling settings under GNOME, Hyprland, and X11 GTK setups.
+     */
+    ghostty_surface_mouse_scroll(self->surface, -dx, -dy,
                                  (ghostty_input_scroll_mods_t)translate_mods(state));
     gtk_gl_area_queue_render(self->gl_area);
     return TRUE;
@@ -625,6 +680,7 @@ ghostty_terminal_class_init(GhosttyTerminalClass *klass)
 
     object_class->dispose = ghostty_terminal_dispose;
     object_class->finalize = ghostty_terminal_finalize;
+    widget_class->measure = ghostty_terminal_measure;
 
     /* Layout: the vbox fills the entire widget */
     gtk_widget_class_set_layout_manager_type(widget_class, GTK_TYPE_BIN_LAYOUT);

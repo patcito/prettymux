@@ -82,6 +82,12 @@ typedef struct {
     int main_position;
 } SessionPanedRestoreData;
 
+typedef struct {
+    GtkPaned *paned;
+    double ratio;
+    guint attempts_left;
+} SessionSplitRestoreData;
+
 static GtkPaned *
 session_main_paned(GtkWidget *browser_notebook)
 {
@@ -117,6 +123,213 @@ session_restore_paned_positions_idle_cb(gpointer data)
         g_object_unref(restore->main_paned);
     g_free(restore);
     return G_SOURCE_REMOVE;
+}
+
+static double
+session_paned_ratio(GtkPaned *paned)
+{
+    GtkOrientation orientation;
+    int size;
+    int position;
+
+    if (!GTK_IS_PANED(paned))
+        return 0.5;
+
+    orientation = gtk_orientable_get_orientation(GTK_ORIENTABLE(paned));
+    size = (orientation == GTK_ORIENTATION_HORIZONTAL)
+        ? gtk_widget_get_width(GTK_WIDGET(paned))
+        : gtk_widget_get_height(GTK_WIDGET(paned));
+    position = gtk_paned_get_position(paned);
+
+    if (size <= 1)
+        return 0.5;
+
+    if (position < 0)
+        position = 0;
+    if (position > size)
+        position = size;
+
+    return (double)position / (double)size;
+}
+
+static void
+session_save_workspace_layout(JsonBuilder *builder,
+                              Workspace *ws,
+                              GtkWidget *widget)
+{
+    (void)ws;
+
+    if (!widget) {
+        json_builder_add_null_value(builder);
+        return;
+    }
+
+    if (GTK_IS_NOTEBOOK(widget)) {
+        const char *pane_id = workspace_get_pane_id(GTK_NOTEBOOK(widget));
+
+        json_builder_begin_object(builder);
+        json_builder_set_member_name(builder, "type");
+        json_builder_add_string_value(builder, "pane");
+        json_builder_set_member_name(builder, "paneId");
+        json_builder_add_string_value(builder, pane_id ? pane_id : "");
+        json_builder_end_object(builder);
+        return;
+    }
+
+    if (GTK_IS_PANED(widget)) {
+        GtkPaned *paned = GTK_PANED(widget);
+        GtkOrientation orientation =
+            gtk_orientable_get_orientation(GTK_ORIENTABLE(widget));
+
+        json_builder_begin_object(builder);
+        json_builder_set_member_name(builder, "type");
+        json_builder_add_string_value(builder, "split");
+        json_builder_set_member_name(builder, "orientation");
+        json_builder_add_string_value(builder,
+            orientation == GTK_ORIENTATION_HORIZONTAL
+                ? "horizontal" : "vertical");
+        json_builder_set_member_name(builder, "ratio");
+        json_builder_add_double_value(builder, session_paned_ratio(paned));
+        json_builder_set_member_name(builder, "start");
+        session_save_workspace_layout(builder, ws,
+            gtk_paned_get_start_child(paned));
+        json_builder_set_member_name(builder, "end");
+        session_save_workspace_layout(builder, ws,
+            gtk_paned_get_end_child(paned));
+        json_builder_end_object(builder);
+        return;
+    }
+
+    json_builder_add_null_value(builder);
+}
+
+static gboolean
+session_restore_split_position_cb(gpointer data)
+{
+    SessionSplitRestoreData *restore = data;
+    GtkOrientation orientation;
+    int size;
+    int position;
+
+    if (!restore || !GTK_IS_PANED(restore->paned)) {
+        g_free(restore);
+        return G_SOURCE_REMOVE;
+    }
+
+    orientation = gtk_orientable_get_orientation(
+        GTK_ORIENTABLE(restore->paned));
+    size = (orientation == GTK_ORIENTATION_HORIZONTAL)
+        ? gtk_widget_get_width(GTK_WIDGET(restore->paned))
+        : gtk_widget_get_height(GTK_WIDGET(restore->paned));
+
+    if (size > 1) {
+        position = (int)(restore->ratio * (double)size);
+        if (position < 0)
+            position = 0;
+        if (position > size)
+            position = size;
+        gtk_paned_set_position(restore->paned, position);
+    }
+
+    if (restore->attempts_left > 0) {
+        restore->attempts_left--;
+        return G_SOURCE_CONTINUE;
+    }
+
+    g_object_unref(restore->paned);
+    g_free(restore);
+    return G_SOURCE_REMOVE;
+}
+
+static void
+session_schedule_split_restore(GtkPaned *paned, double ratio)
+{
+    SessionSplitRestoreData *restore;
+
+    if (!GTK_IS_PANED(paned))
+        return;
+
+    if (ratio < 0.0)
+        ratio = 0.0;
+    if (ratio > 1.0)
+        ratio = 1.0;
+
+    restore = g_new0(SessionSplitRestoreData, 1);
+    restore->paned = g_object_ref(paned);
+    restore->ratio = ratio;
+    restore->attempts_left = 60;
+    g_timeout_add(16, session_restore_split_position_cb, restore);
+}
+
+static void
+session_assign_pane_id(GtkNotebook *pane, const char *pane_id)
+{
+    if (!GTK_IS_NOTEBOOK(pane) || !pane_id || !pane_id[0])
+        return;
+
+    g_object_set_data_full(G_OBJECT(pane), "pane-id", g_strdup(pane_id), g_free);
+}
+
+static gboolean
+session_restore_workspace_layout_node(Workspace *ws,
+                                      JsonObject *layout_obj,
+                                      GtkNotebook *seed_pane,
+                                      ghostty_app_t ghostty_app)
+{
+    const char *type;
+
+    if (!ws || !layout_obj || !GTK_IS_NOTEBOOK(seed_pane))
+        return FALSE;
+
+    type = json_object_get_string_member_with_default(layout_obj, "type", "");
+    if (g_strcmp0(type, "pane") == 0) {
+        const char *pane_id = json_object_get_string_member_with_default(
+            layout_obj, "paneId", "");
+
+        session_assign_pane_id(seed_pane, pane_id);
+        return TRUE;
+    }
+
+    if (g_strcmp0(type, "split") == 0) {
+        const char *orientation_name =
+            json_object_get_string_member_with_default(layout_obj,
+                                                       "orientation",
+                                                       "horizontal");
+        GtkOrientation orientation =
+            g_strcmp0(orientation_name, "vertical") == 0
+                ? GTK_ORIENTATION_VERTICAL
+                : GTK_ORIENTATION_HORIZONTAL;
+        JsonObject *start_obj = json_object_get_object_member(layout_obj, "start");
+        JsonObject *end_obj = json_object_get_object_member(layout_obj, "end");
+        GtkNotebook *new_pane;
+        GtkWidget *parent;
+        double ratio = json_object_get_double_member_with_default(layout_obj,
+                                                                  "ratio",
+                                                                  0.5);
+
+        if (!start_obj || !end_obj)
+            return FALSE;
+
+        new_pane = workspace_split_pane_target(ws, seed_pane, orientation,
+                                               ghostty_app);
+        if (!GTK_IS_NOTEBOOK(new_pane))
+            return FALSE;
+
+        if (!session_restore_workspace_layout_node(ws, start_obj, seed_pane,
+                                                   ghostty_app))
+            return FALSE;
+        if (!session_restore_workspace_layout_node(ws, end_obj, new_pane,
+                                                   ghostty_app))
+            return FALSE;
+
+        parent = gtk_widget_get_parent(GTK_WIDGET(seed_pane));
+        if (GTK_IS_PANED(parent))
+            session_schedule_split_restore(GTK_PANED(parent), ratio);
+
+        return TRUE;
+    }
+
+    return FALSE;
 }
 
 void session_set_context(GtkWindow *window, GtkWidget *browser_notebook,
@@ -258,6 +471,10 @@ void session_save(GtkWindow *window, GtkWidget *browser_notebook,
             json_builder_add_string_value(b,
                 ws->notes_text ? ws->notes_text : "");
 
+            json_builder_set_member_name(b, "layout");
+            session_save_workspace_layout(
+                b, ws, gtk_overlay_get_child(GTK_OVERLAY(ws->overlay)));
+
             /* Panes array: one entry per pane notebook */
             json_builder_set_member_name(b, "panes");
             json_builder_begin_array(b);
@@ -266,7 +483,11 @@ void session_save(GtkWindow *window, GtkWidget *browser_notebook,
                 for (pi = 0; pi < ws->pane_notebooks->len; pi++) {
                     GtkNotebook *nb = g_ptr_array_index(
                         ws->pane_notebooks, pi);
+                    const char *pane_id = workspace_get_pane_id(nb);
                     json_builder_begin_object(b);
+
+                    json_builder_set_member_name(b, "paneId");
+                    json_builder_add_string_value(b, pane_id ? pane_id : "");
 
                     /* Active tab in this pane */
                     json_builder_set_member_name(b, "activeTab");
@@ -492,6 +713,18 @@ void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
             /* Restore panes.  The first pane (with one terminal)
              * was already created by workspace_add. */
             if (json_object_has_member(ws_obj, "panes")) {
+                gboolean restored_layout = FALSE;
+
+                if (json_object_has_member(ws_obj, "layout")) {
+                    JsonObject *layout_obj = json_object_get_object_member(
+                        ws_obj, "layout");
+                    if (layout_obj) {
+                        restored_layout = session_restore_workspace_layout_node(
+                            ws, layout_obj, GTK_NOTEBOOK(ws->notebook),
+                            ghostty_app);
+                    }
+                }
+
                 JsonArray *panes_arr = json_object_get_array_member(
                     ws_obj, "panes");
                 guint n_panes = json_array_get_length(panes_arr);
@@ -500,19 +733,24 @@ void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
                 for (pi = 0; pi < n_panes; pi++) {
                     JsonNode *pane_node = json_array_get_element(
                         panes_arr, pi);
+                    const char *saved_pane_id;
                     if (!pane_node || !JSON_NODE_HOLDS_OBJECT(pane_node))
                         continue;
                     JsonObject *pane_obj = json_node_get_object(pane_node);
+                    GtkNotebook *nb = NULL;
 
-                    /* For panes beyond the first, split to create them */
-                    if (pi > 0) {
+                    saved_pane_id =
+                        json_object_get_string_member_with_default(
+                            pane_obj, "paneId", "");
+
+                    if (saved_pane_id[0])
+                        nb = workspace_get_pane_by_id(ws, saved_pane_id);
+                    else if (!restored_layout && pi > 0) {
                         workspace_split_pane(ws,
                             GTK_ORIENTATION_HORIZONTAL, ghostty_app);
                     }
 
-                    /* Find the notebook for this pane */
-                    GtkNotebook *nb = NULL;
-                    if (pi < ws->pane_notebooks->len)
+                    if (!nb && pi < ws->pane_notebooks->len)
                         nb = g_ptr_array_index(ws->pane_notebooks, pi);
                     if (!nb)
                         continue;
