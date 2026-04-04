@@ -10,6 +10,7 @@
 GPtrArray *workspaces = NULL;
 int current_workspace = 0;
 static gboolean app_shutting_down = FALSE;
+static guint64 next_pane_serial = 1;
 
 /* Idle callback: set a GtkPaned position to 50% of its allocated size. */
 static gboolean set_paned_half(gpointer data) {
@@ -73,6 +74,13 @@ static gboolean move_terminal_to_notebook(Workspace *src_ws, GtkNotebook *src_nb
                                           GtkWidget *terminal, Workspace *dest_ws,
                                           GtkNotebook *dest_nb);
 static void workspace_set_active_pane(Workspace *ws, GtkNotebook *notebook);
+static int workspace_equalize_leaf_count(GtkWidget *widget,
+                                         gboolean filter_orientation,
+                                         GtkOrientation orientation);
+static void workspace_equalize_widget(GtkWidget *widget,
+                                      gboolean filter_orientation,
+                                      GtkOrientation orientation);
+static gboolean workspace_has_pane(Workspace *ws, GtkNotebook *notebook);
 static gboolean workspace_drag_value_terminal(const GValue *value,
                                               GtkWidget **terminal_out,
                                               GtkNotebook **src_nb_out,
@@ -463,6 +471,92 @@ workspace_set_active_pane(Workspace *ws, GtkNotebook *notebook)
             return;
         }
     }
+}
+
+static gboolean
+workspace_has_pane(Workspace *ws, GtkNotebook *notebook)
+{
+    if (!ws || !ws->pane_notebooks || !GTK_IS_NOTEBOOK(notebook))
+        return FALSE;
+
+    for (guint i = 0; i < ws->pane_notebooks->len; i++) {
+        if (g_ptr_array_index(ws->pane_notebooks, i) == notebook)
+            return TRUE;
+    }
+
+    return FALSE;
+}
+
+const char *
+workspace_get_pane_id(GtkNotebook *pane)
+{
+    if (!GTK_IS_NOTEBOOK(pane))
+        return NULL;
+    return g_object_get_data(G_OBJECT(pane), "pane-id");
+}
+
+int
+workspace_get_pane_index(Workspace *ws, GtkNotebook *pane)
+{
+    if (!ws || !GTK_IS_NOTEBOOK(pane) || !ws->pane_notebooks)
+        return -1;
+
+    for (guint i = 0; i < ws->pane_notebooks->len; i++) {
+        if (g_ptr_array_index(ws->pane_notebooks, i) == pane)
+            return (int)i;
+    }
+
+    return -1;
+}
+
+GtkNotebook *
+workspace_get_pane_by_index(Workspace *ws, int pane_idx)
+{
+    if (!ws || !ws->pane_notebooks || pane_idx < 0 ||
+        pane_idx >= (int)ws->pane_notebooks->len)
+        return NULL;
+
+    return g_ptr_array_index(ws->pane_notebooks, pane_idx);
+}
+
+GtkNotebook *
+workspace_get_pane_by_id(Workspace *ws, const char *pane_id)
+{
+    if (!ws || !ws->pane_notebooks || !pane_id || !pane_id[0])
+        return NULL;
+
+    for (guint i = 0; i < ws->pane_notebooks->len; i++) {
+        GtkNotebook *pane = g_ptr_array_index(ws->pane_notebooks, i);
+        const char *candidate = workspace_get_pane_id(pane);
+        if (candidate && strcmp(candidate, pane_id) == 0)
+            return pane;
+    }
+
+    return NULL;
+}
+
+gboolean
+workspace_focus_pane(Workspace *ws, GtkNotebook *pane)
+{
+    if (!ws || !GTK_IS_NOTEBOOK(pane))
+        return FALSE;
+
+    if (workspace_get_pane_index(ws, pane) < 0)
+        return FALSE;
+
+    workspace_set_active_pane(ws, pane);
+
+    int page = gtk_notebook_get_current_page(pane);
+    if (page < 0 || page >= gtk_notebook_get_n_pages(pane))
+        return FALSE;
+
+    GtkWidget *terminal = notebook_terminal_at(pane, page);
+    if (!terminal)
+        return FALSE;
+
+    focus_terminal_page(terminal);
+    focus_terminal_page_later(terminal);
+    return TRUE;
 }
 
 /* ── Activity detection ────────────────────────────────────────── */
@@ -1773,8 +1867,11 @@ static GtkWidget *
 create_pane_notebook(Workspace *ws, ghostty_app_t app)
 {
     GtkWidget *notebook = gtk_notebook_new();
+    char *pane_id = g_strdup_printf("pane-%" G_GUINT64_FORMAT,
+                                    next_pane_serial++);
     gtk_notebook_set_scrollable(GTK_NOTEBOOK(notebook), TRUE);
     gtk_notebook_set_show_border(GTK_NOTEBOOK(notebook), FALSE);
+    g_object_set_data_full(G_OBJECT(notebook), "pane-id", pane_id, g_free);
 
     /* "+" button */
     GtkWidget *add_btn = gtk_button_new_with_label("+");
@@ -1996,7 +2093,7 @@ workspace_get_focused_pane(Workspace *ws)
                 }
             } else if (GHOSTTY_IS_TERMINAL(w)) {
                 GtkNotebook *nb = terminal_parent_notebook(w);
-                if (nb) {
+                if (workspace_has_pane(ws, nb)) {
                     ws->active_pane = nb;
                     return nb;
                 }
@@ -2025,14 +2122,13 @@ workspace_get_focused_pane(Workspace *ws)
  * If the notebook is the direct workspace container (no splits
  * yet), we replace ws->container in the GtkStack.
  */
-void
-workspace_split_pane(Workspace *ws, GtkOrientation orientation,
-                     ghostty_app_t app)
+GtkNotebook *
+workspace_split_pane_target(Workspace *ws, GtkNotebook *source_nb,
+                            GtkOrientation orientation,
+                            ghostty_app_t app)
 {
-    if (!ws) return;
-
-    GtkNotebook *source_nb = workspace_get_focused_pane(ws);
-    if (!source_nb) return;
+    if (!ws || !source_nb)
+        return NULL;
 
     GtkWidget *source_widget = GTK_WIDGET(source_nb);
     GtkWidget *parent = gtk_widget_get_parent(source_widget);
@@ -2049,6 +2145,11 @@ workspace_split_pane(Workspace *ws, GtkOrientation orientation,
 
     /* Connect resize overlay to show dimensions while dragging */
     resize_overlay_connect_paned(GTK_PANED(paned));
+
+    /* Reparenting through GtkPaned drops the parent's ref immediately.
+     * Hold our own ref so nested splits don't destroy the source pane
+     * before we attach it to the new paned container. */
+    g_object_ref(source_widget);
 
     if (GTK_IS_PANED(parent)) {
         GtkWidget *start = gtk_paned_get_start_child(GTK_PANED(parent));
@@ -2069,7 +2170,6 @@ workspace_split_pane(Workspace *ws, GtkOrientation orientation,
         gtk_paned_set_resize_end_child(GTK_PANED(paned), TRUE);
 
     } else if (GTK_IS_OVERLAY(parent)) {
-        g_object_ref(source_widget);
         gtk_overlay_set_child(GTK_OVERLAY(parent), NULL);
 
         gtk_paned_set_start_child(GTK_PANED(paned), source_widget);
@@ -2077,13 +2177,14 @@ workspace_split_pane(Workspace *ws, GtkOrientation orientation,
         gtk_paned_set_resize_start_child(GTK_PANED(paned), TRUE);
         gtk_paned_set_resize_end_child(GTK_PANED(paned), TRUE);
         gtk_overlay_set_child(GTK_OVERLAY(parent), paned);
-
-        g_object_unref(source_widget);
     } else {
         /* Parent is neither GtkPaned nor GtkStack -- abort split */
         g_ptr_array_remove(ws->pane_notebooks, new_nb);
-        return;
+        g_object_unref(source_widget);
+        return NULL;
     }
+
+    g_object_unref(source_widget);
 
     gtk_widget_set_visible(paned, TRUE);
     gtk_widget_set_visible(new_nb, TRUE);
@@ -2104,6 +2205,147 @@ workspace_split_pane(Workspace *ws, GtkOrientation orientation,
                 focus_terminal_page_later(terminal);
         }
     }
+
+    return GTK_NOTEBOOK(new_nb);
+}
+
+void
+workspace_split_pane(Workspace *ws, GtkOrientation orientation,
+                     ghostty_app_t app)
+{
+    if (!ws)
+        return;
+
+    workspace_split_pane_target(ws, workspace_get_focused_pane(ws),
+                                orientation, app);
+}
+
+static int
+workspace_equalize_leaf_count(GtkWidget *widget,
+                              gboolean filter_orientation,
+                              GtkOrientation orientation)
+{
+    if (!GTK_IS_PANED(widget))
+        return 1;
+
+    GtkOrientation current =
+        gtk_orientable_get_orientation(GTK_ORIENTABLE(widget));
+    if (filter_orientation && current != orientation)
+        return 1;
+
+    GtkWidget *start = gtk_paned_get_start_child(GTK_PANED(widget));
+    GtkWidget *end = gtk_paned_get_end_child(GTK_PANED(widget));
+    int start_count = start
+        ? workspace_equalize_leaf_count(start, filter_orientation, orientation)
+        : 0;
+    int end_count = end
+        ? workspace_equalize_leaf_count(end, filter_orientation, orientation)
+        : 0;
+    int total = start_count + end_count;
+    return total > 0 ? total : 1;
+}
+
+static void
+workspace_equalize_widget(GtkWidget *widget,
+                          gboolean filter_orientation,
+                          GtkOrientation orientation)
+{
+    if (!GTK_IS_PANED(widget))
+        return;
+
+    GtkPaned *paned = GTK_PANED(widget);
+    GtkWidget *start = gtk_paned_get_start_child(paned);
+    GtkWidget *end = gtk_paned_get_end_child(paned);
+    GtkOrientation current =
+        gtk_orientable_get_orientation(GTK_ORIENTABLE(widget));
+
+    if ((!filter_orientation || current == orientation) && start && end) {
+        int start_count =
+            workspace_equalize_leaf_count(start, filter_orientation, orientation);
+        int end_count =
+            workspace_equalize_leaf_count(end, filter_orientation, orientation);
+        int total = start_count + end_count;
+        int size = (current == GTK_ORIENTATION_HORIZONTAL)
+            ? gtk_widget_get_width(widget)
+            : gtk_widget_get_height(widget);
+
+        if (total > 0 && size > 10) {
+            int pos = (int)((double)size * ((double)start_count / (double)total));
+            gtk_paned_set_position(paned, pos);
+        }
+    }
+
+    if (start)
+        workspace_equalize_widget(start, filter_orientation, orientation);
+    if (end)
+        workspace_equalize_widget(end, filter_orientation, orientation);
+}
+
+gboolean
+workspace_equalize_splits(Workspace *ws, const char *orientation_name)
+{
+    gboolean filter_orientation = FALSE;
+    GtkOrientation orientation = GTK_ORIENTATION_HORIZONTAL;
+    GtkWidget *root;
+
+    if (!ws || !GTK_IS_OVERLAY(ws->overlay))
+        return FALSE;
+
+    if (orientation_name && orientation_name[0]) {
+        filter_orientation = TRUE;
+        if (g_strcmp0(orientation_name, "vertical") == 0)
+            orientation = GTK_ORIENTATION_VERTICAL;
+        else if (g_strcmp0(orientation_name, "horizontal") == 0)
+            orientation = GTK_ORIENTATION_HORIZONTAL;
+        else
+            return FALSE;
+    }
+
+    root = gtk_overlay_get_child(GTK_OVERLAY(ws->overlay));
+    if (!root)
+        return FALSE;
+
+    workspace_equalize_widget(root, filter_orientation, orientation);
+    return TRUE;
+}
+
+gboolean
+workspace_resize_pane_percent(Workspace *ws, GtkNotebook *pane,
+                              char axis, double percent)
+{
+    GtkWidget *pane_widget;
+    GtkWidget *parent;
+    GtkPaned *paned;
+    GtkOrientation orientation;
+    int size;
+    int position;
+
+    if (!ws || !GTK_IS_NOTEBOOK(pane) || percent <= 0.0 || percent >= 100.0)
+        return FALSE;
+
+    pane_widget = GTK_WIDGET(pane);
+    parent = gtk_widget_get_parent(pane_widget);
+    if (!GTK_IS_PANED(parent))
+        return FALSE;
+
+    paned = GTK_PANED(parent);
+    orientation = gtk_orientable_get_orientation(GTK_ORIENTABLE(parent));
+    if ((axis == 'x' && orientation != GTK_ORIENTATION_HORIZONTAL) ||
+        (axis == 'y' && orientation != GTK_ORIENTATION_VERTICAL))
+        return FALSE;
+
+    size = (orientation == GTK_ORIENTATION_HORIZONTAL)
+        ? gtk_widget_get_width(parent)
+        : gtk_widget_get_height(parent);
+    if (size <= 10)
+        return FALSE;
+
+    position = (int)((percent / 100.0) * (double)size);
+    if (gtk_paned_get_end_child(paned) == pane_widget)
+        position = size - position;
+
+    gtk_paned_set_position(paned, position);
+    return TRUE;
 }
 
 /* ── Pane zoom ───────────────────────────────────────────────── */

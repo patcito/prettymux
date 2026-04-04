@@ -37,6 +37,7 @@ sources = files(
   'close_confirm.c',
   'command_palette.c',
   'port_scanner.c',
+  'prettymux_agent_cli.c',
   'shortcuts_overlay.c',
   'pane_move_overlay.c',
   'resize_overlay.c',

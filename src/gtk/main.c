@@ -30,6 +30,7 @@
 #include "pane_move_overlay.h"
 #include "pip_window.h"
 #include "resize_overlay.h"
+#include "prettymux_agent_cli.h"
 
 // ── Global state ──
 
@@ -90,6 +91,33 @@ notebook_terminal_at(GtkNotebook *notebook, int page_num)
     GtkWidget *terminal = page_linked_terminal(
         gtk_notebook_get_nth_page(notebook, page_num));
     return terminal ? GHOSTTY_TERMINAL(terminal) : NULL;
+}
+
+static char *
+prettymux_trim_last_lines(const char *text, int lines)
+{
+    const char *start;
+    const char *cursor;
+
+    if (!text)
+        return g_strdup("");
+    if (lines <= 0)
+        return g_strdup(text);
+
+    start = text;
+    cursor = text + strlen(text);
+    while (cursor > start && lines > 0) {
+        cursor--;
+        if (*cursor == '\n' && cursor + 1 < text + strlen(text))
+            lines--;
+    }
+
+    if (lines <= 0 && cursor > start)
+        cursor++;
+    else
+        cursor = start;
+
+    return g_strdup(cursor);
 }
 
 static const char *
@@ -629,7 +657,17 @@ static gboolean on_key_pressed(GtkEventControllerKey *ctrl, guint keyval,
 
     /* ── Shortcut table lookup ── */
     const char *action = shortcut_match(keyval, state);
-    if (action) { handle_action(action); return TRUE; }
+    if (action) {
+        /* browser.tab.close (Ctrl+W) should only fire when the browser
+           actually has keyboard focus; otherwise let ghostty handle it. */
+        if (strcmp(action, "browser.tab.close") == 0) {
+            GtkWidget *focus = gtk_window_get_focus(GTK_WINDOW(g_main_window));
+            if (!focus || !gtk_widget_is_ancestor(focus, ui.browser_notebook))
+                return FALSE;
+        }
+        handle_action(action);
+        return TRUE;
+    }
     return FALSE;
 }
 
@@ -756,12 +794,18 @@ on_socket_command(const char  *command,
                 json_builder_set_member_name(response, "panes");
                 json_builder_begin_array(response);
                 if (ws->pane_notebooks) {
+                    GtkNotebook *focused_pane = workspace_get_focused_pane(ws);
                     guint pi;
                     for (pi = 0; pi < ws->pane_notebooks->len; pi++) {
                         GtkNotebook *nb = g_ptr_array_index(ws->pane_notebooks, pi);
                         json_builder_begin_object(response);
+                        json_builder_set_member_name(response, "id");
+                        json_builder_add_string_value(response,
+                            workspace_get_pane_id(nb));
                         json_builder_set_member_name(response, "index");
                         json_builder_add_int_value(response, (int)pi);
+                        json_builder_set_member_name(response, "focused");
+                        json_builder_add_boolean_value(response, nb == focused_pane);
                         json_builder_set_member_name(response, "activeTab");
                         json_builder_add_int_value(response,
                             GTK_IS_NOTEBOOK(nb)
@@ -872,6 +916,21 @@ on_socket_command(const char  *command,
             }
         }
         json_builder_end_array(response);
+    } else if (strcmp(command, "workspace.current") == 0) {
+        Workspace *ws = workspace_get_current();
+        GtkNotebook *pane = ws ? workspace_get_focused_pane(ws) : NULL;
+        json_builder_set_member_name(response, "status");
+        json_builder_add_string_value(response, "ok");
+        json_builder_set_member_name(response, "index");
+        json_builder_add_int_value(response, current_workspace);
+        json_builder_set_member_name(response, "name");
+        json_builder_add_string_value(response, ws ? ws->name : "");
+        json_builder_set_member_name(response, "paneId");
+        json_builder_add_string_value(response,
+            pane ? workspace_get_pane_id(pane) : "");
+        json_builder_set_member_name(response, "paneIndex");
+        json_builder_add_int_value(response,
+            (ws && pane) ? workspace_get_pane_index(ws, pane) : -1);
     } else if (strcmp(command, "workspace.switch") == 0) {
         int idx = (int)json_object_get_int_member_with_default(
             msg, "index", -1);
@@ -884,6 +943,206 @@ on_socket_command(const char  *command,
             json_builder_add_string_value(response, "error");
             json_builder_set_member_name(response, "message");
             json_builder_add_string_value(response, "invalid workspace index");
+        }
+    } else if (strcmp(command, "workspace.equalize_splits") == 0) {
+        int idx = (int)json_object_get_int_member_with_default(
+            msg, "workspace", current_workspace);
+        const char *orientation =
+            json_object_get_string_member_with_default(msg, "orientation", "");
+        Workspace *ws = NULL;
+
+        if (idx >= 0 && workspaces && idx < (int)workspaces->len)
+            ws = g_ptr_array_index(workspaces, idx);
+
+        if (ws && workspace_equalize_splits(ws,
+                                            (orientation && orientation[0])
+                                                ? orientation
+                                                : NULL)) {
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "ok");
+        } else {
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "error");
+            json_builder_set_member_name(response, "message");
+            json_builder_add_string_value(response, "equalize failed");
+        }
+    } else if (strcmp(command, "pane.list") == 0) {
+        int idx = (int)json_object_get_int_member_with_default(
+            msg, "workspace", current_workspace);
+        Workspace *ws = NULL;
+
+        if (idx >= 0 && workspaces && idx < (int)workspaces->len)
+            ws = g_ptr_array_index(workspaces, idx);
+
+        if (!ws) {
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "error");
+            json_builder_set_member_name(response, "message");
+            json_builder_add_string_value(response, "invalid workspace");
+        } else {
+            GtkNotebook *focused_pane = workspace_get_focused_pane(ws);
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "ok");
+            json_builder_set_member_name(response, "workspace");
+            json_builder_add_int_value(response, idx);
+            json_builder_set_member_name(response, "activePane");
+            json_builder_add_int_value(response,
+                focused_pane ? workspace_get_pane_index(ws, focused_pane) : -1);
+            json_builder_set_member_name(response, "activePaneId");
+            json_builder_add_string_value(response,
+                focused_pane ? workspace_get_pane_id(focused_pane) : "");
+            json_builder_set_member_name(response, "panes");
+            json_builder_begin_array(response);
+            if (ws->pane_notebooks) {
+                for (guint pi = 0; pi < ws->pane_notebooks->len; pi++) {
+                    GtkNotebook *nb = g_ptr_array_index(ws->pane_notebooks, pi);
+                    json_builder_begin_object(response);
+                    json_builder_set_member_name(response, "id");
+                    json_builder_add_string_value(response,
+                        workspace_get_pane_id(nb));
+                    json_builder_set_member_name(response, "index");
+                    json_builder_add_int_value(response, (int)pi);
+                    json_builder_set_member_name(response, "focused");
+                    json_builder_add_boolean_value(response, nb == focused_pane);
+                    json_builder_set_member_name(response, "activeTab");
+                    json_builder_add_int_value(response,
+                        gtk_notebook_get_current_page(nb));
+                    json_builder_set_member_name(response, "tabCount");
+                    json_builder_add_int_value(response,
+                        gtk_notebook_get_n_pages(nb));
+                    json_builder_end_object(response);
+                }
+            }
+            json_builder_end_array(response);
+        }
+    } else if (strcmp(command, "pane.focus") == 0) {
+        int idx = (int)json_object_get_int_member_with_default(
+            msg, "workspace", current_workspace);
+        int pane_idx = (int)json_object_get_int_member_with_default(
+            msg, "pane", -1);
+        const char *pane_id =
+            json_object_get_string_member_with_default(msg, "paneId", "");
+        Workspace *ws = NULL;
+        GtkNotebook *pane = NULL;
+
+        if (idx >= 0 && workspaces && idx < (int)workspaces->len)
+            ws = g_ptr_array_index(workspaces, idx);
+        if (ws && pane_id && pane_id[0])
+            pane = workspace_get_pane_by_id(ws, pane_id);
+        if (ws && !pane && pane_idx >= 0)
+            pane = workspace_get_pane_by_index(ws, pane_idx);
+
+        if (ws && pane && workspace_focus_pane(ws, pane)) {
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "ok");
+        } else {
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "error");
+            json_builder_set_member_name(response, "message");
+            json_builder_add_string_value(response, "focus failed");
+        }
+    } else if (strcmp(command, "pane.split") == 0) {
+        int idx = (int)json_object_get_int_member_with_default(
+            msg, "workspace", current_workspace);
+        int pane_idx = (int)json_object_get_int_member_with_default(
+            msg, "pane", -1);
+        const char *pane_id =
+            json_object_get_string_member_with_default(msg, "paneId", "");
+        const char *direction =
+            json_object_get_string_member_with_default(msg, "direction", "right");
+        Workspace *ws = NULL;
+        GtkNotebook *pane = NULL;
+        GtkNotebook *new_pane = NULL;
+        GtkOrientation orientation = GTK_ORIENTATION_HORIZONTAL;
+
+        if (idx >= 0 && workspaces && idx < (int)workspaces->len)
+            ws = g_ptr_array_index(workspaces, idx);
+        if (ws && pane_id && pane_id[0])
+            pane = workspace_get_pane_by_id(ws, pane_id);
+        if (ws && !pane && pane_idx >= 0)
+            pane = workspace_get_pane_by_index(ws, pane_idx);
+
+        if (g_strcmp0(direction, "down") == 0 || g_strcmp0(direction, "up") == 0)
+            orientation = GTK_ORIENTATION_VERTICAL;
+
+        if (ws && pane) {
+            new_pane = workspace_split_pane_target(ws, pane, orientation,
+                                                   g_ghostty_app);
+        }
+
+        if (ws && new_pane) {
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "ok");
+            json_builder_set_member_name(response, "paneId");
+            json_builder_add_string_value(response,
+                workspace_get_pane_id(new_pane));
+            json_builder_set_member_name(response, "pane");
+            json_builder_add_int_value(response,
+                workspace_get_pane_index(ws, new_pane));
+        } else {
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "error");
+            json_builder_set_member_name(response, "message");
+            json_builder_add_string_value(response, "split failed");
+        }
+    } else if (strcmp(command, "pane.close") == 0) {
+        int idx = (int)json_object_get_int_member_with_default(
+            msg, "workspace", current_workspace);
+        int pane_idx = (int)json_object_get_int_member_with_default(
+            msg, "pane", -1);
+        const char *pane_id =
+            json_object_get_string_member_with_default(msg, "paneId", "");
+        Workspace *ws = NULL;
+        GtkNotebook *pane = NULL;
+
+        if (idx >= 0 && workspaces && idx < (int)workspaces->len)
+            ws = g_ptr_array_index(workspaces, idx);
+        if (ws && pane_id && pane_id[0])
+            pane = workspace_get_pane_by_id(ws, pane_id);
+        if (ws && !pane && pane_idx >= 0)
+            pane = workspace_get_pane_by_index(ws, pane_idx);
+
+        if (ws && pane && ws->pane_notebooks &&
+            ws->pane_notebooks->len > 1) {
+            workspace_close_pane(ws, pane);
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "ok");
+        } else {
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "error");
+            json_builder_set_member_name(response, "message");
+            json_builder_add_string_value(response, "close failed");
+        }
+    } else if (strcmp(command, "pane.resize_percent") == 0) {
+        int idx = (int)json_object_get_int_member_with_default(
+            msg, "workspace", current_workspace);
+        int pane_idx = (int)json_object_get_int_member_with_default(
+            msg, "pane", -1);
+        const char *pane_id =
+            json_object_get_string_member_with_default(msg, "paneId", "");
+        const char *axis =
+            json_object_get_string_member_with_default(msg, "axis", "x");
+        double percent = json_object_get_double_member_with_default(
+            msg, "percent", -1.0);
+        Workspace *ws = NULL;
+        GtkNotebook *pane = NULL;
+
+        if (idx >= 0 && workspaces && idx < (int)workspaces->len)
+            ws = g_ptr_array_index(workspaces, idx);
+        if (ws && pane_id && pane_id[0])
+            pane = workspace_get_pane_by_id(ws, pane_id);
+        if (ws && !pane && pane_idx >= 0)
+            pane = workspace_get_pane_by_index(ws, pane_idx);
+
+        if (ws && pane &&
+            workspace_resize_pane_percent(ws, pane, axis[0], percent)) {
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "ok");
+        } else {
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "error");
+            json_builder_set_member_name(response, "message");
+            json_builder_add_string_value(response, "resize failed");
         }
     } else if (strcmp(command, "tab.new") == 0) {
         Workspace *ws = workspace_get_current();
@@ -988,6 +1247,8 @@ on_socket_command(const char  *command,
         int ws_idx = (int)json_object_get_int_member_with_default(msg, "workspace", -1);
         int pane_idx = (int)json_object_get_int_member_with_default(msg, "pane", -1);
         int tab_idx = (int)json_object_get_int_member_with_default(msg, "tab", -1);
+        const char *pane_id =
+            json_object_get_string_member_with_default(msg, "paneId", "");
 
         Workspace *ws = NULL;
         if (ws_idx >= 0 && workspaces && ws_idx < (int)workspaces->len)
@@ -997,10 +1258,13 @@ on_socket_command(const char  *command,
 
         if (ws && text && text[0]) {
             GtkNotebook *nb = NULL;
-            if (pane_idx >= 0 && ws->pane_notebooks && pane_idx < (int)ws->pane_notebooks->len)
+            if (pane_id && pane_id[0])
+                nb = workspace_get_pane_by_id(ws, pane_id);
+            if (!nb &&
+                pane_idx >= 0 && ws->pane_notebooks && pane_idx < (int)ws->pane_notebooks->len)
                 nb = g_ptr_array_index(ws->pane_notebooks, pane_idx);
             else
-                nb = workspace_get_focused_pane(ws);
+                nb = nb ? nb : workspace_get_focused_pane(ws);
 
             GhosttyTerminal *term = NULL;
             if (nb) {
@@ -1039,6 +1303,8 @@ on_socket_command(const char  *command,
         int ws_idx = (int)json_object_get_int_member_with_default(msg, "workspace", -1);
         int pane_idx = (int)json_object_get_int_member_with_default(msg, "pane", -1);
         int tab_idx = (int)json_object_get_int_member_with_default(msg, "tab", -1);
+        const char *pane_id =
+            json_object_get_string_member_with_default(msg, "paneId", "");
 
         Workspace *ws = NULL;
         if (ws_idx >= 0 && workspaces && ws_idx < (int)workspaces->len)
@@ -1048,10 +1314,13 @@ on_socket_command(const char  *command,
 
         if (ws && cmd && cmd[0]) {
             GtkNotebook *nb = NULL;
-            if (pane_idx >= 0 && ws->pane_notebooks && pane_idx < (int)ws->pane_notebooks->len)
+            if (pane_id && pane_id[0])
+                nb = workspace_get_pane_by_id(ws, pane_id);
+            if (!nb &&
+                pane_idx >= 0 && ws->pane_notebooks && pane_idx < (int)ws->pane_notebooks->len)
                 nb = g_ptr_array_index(ws->pane_notebooks, pane_idx);
             else
-                nb = workspace_get_focused_pane(ws);
+                nb = nb ? nb : workspace_get_focused_pane(ws);
 
             GhosttyTerminal *term = NULL;
             if (nb) {
@@ -1080,6 +1349,85 @@ on_socket_command(const char  *command,
         } else {
             json_builder_set_member_name(response, "status");
             json_builder_add_string_value(response, "error");
+        }
+    } else if (strcmp(command, "pane.read_text") == 0) {
+        int ws_idx = (int)json_object_get_int_member_with_default(msg, "workspace", -1);
+        int pane_idx = (int)json_object_get_int_member_with_default(msg, "pane", -1);
+        int tab_idx = (int)json_object_get_int_member_with_default(msg, "tab", -1);
+        int lines = (int)json_object_get_int_member_with_default(msg, "lines", 0);
+        const char *pane_id =
+            json_object_get_string_member_with_default(msg, "paneId", "");
+        gboolean scrollback =
+            json_object_get_boolean_member_with_default(msg, "scrollback", TRUE);
+        Workspace *ws = NULL;
+        GtkNotebook *nb = NULL;
+        GhosttyTerminal *term = NULL;
+
+        if (ws_idx >= 0 && workspaces && ws_idx < (int)workspaces->len)
+            ws = g_ptr_array_index(workspaces, ws_idx);
+        else
+            ws = workspace_get_current();
+
+        if (ws && pane_id && pane_id[0])
+            nb = workspace_get_pane_by_id(ws, pane_id);
+        if (!nb && ws &&
+            pane_idx >= 0 && ws->pane_notebooks && pane_idx < (int)ws->pane_notebooks->len)
+            nb = g_ptr_array_index(ws->pane_notebooks, pane_idx);
+        if (!nb && ws)
+            nb = workspace_get_focused_pane(ws);
+
+        if (nb) {
+            int pg = (tab_idx >= 0) ? tab_idx : gtk_notebook_get_current_page(GTK_NOTEBOOK(nb));
+            if (pg >= 0 && pg < gtk_notebook_get_n_pages(GTK_NOTEBOOK(nb)))
+                term = notebook_terminal_at(GTK_NOTEBOOK(nb), pg);
+        }
+
+        if (term) {
+            ghostty_surface_t surface = ghostty_terminal_get_surface(term);
+            if (surface) {
+                ghostty_text_s captured = {0};
+                ghostty_selection_s sel = {
+                    .top_left = {
+                        .tag = scrollback ? GHOSTTY_POINT_SCREEN : GHOSTTY_POINT_VIEWPORT,
+                        .coord = GHOSTTY_POINT_COORD_TOP_LEFT,
+                        .x = 0,
+                        .y = 0,
+                    },
+                    .bottom_right = {
+                        .tag = scrollback ? GHOSTTY_POINT_SCREEN : GHOSTTY_POINT_VIEWPORT,
+                        .coord = GHOSTTY_POINT_COORD_BOTTOM_RIGHT,
+                        .x = 0,
+                        .y = 0,
+                    },
+                    .rectangle = FALSE,
+                };
+
+                if (ghostty_surface_read_text(surface, sel, &captured) &&
+                    captured.text) {
+                    g_autofree char *trimmed =
+                        prettymux_trim_last_lines(captured.text, lines);
+                    json_builder_set_member_name(response, "status");
+                    json_builder_add_string_value(response, "ok");
+                    json_builder_set_member_name(response, "text");
+                    json_builder_add_string_value(response, trimmed ? trimmed : "");
+                    ghostty_surface_free_text(surface, &captured);
+                } else {
+                    json_builder_set_member_name(response, "status");
+                    json_builder_add_string_value(response, "error");
+                    json_builder_set_member_name(response, "message");
+                    json_builder_add_string_value(response, "read_text failed");
+                }
+            } else {
+                json_builder_set_member_name(response, "status");
+                json_builder_add_string_value(response, "error");
+                json_builder_set_member_name(response, "message");
+                json_builder_add_string_value(response, "terminal has no surface");
+            }
+        } else {
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "error");
+            json_builder_set_member_name(response, "message");
+            json_builder_add_string_value(response, "no terminal found");
         }
     } else if (strcmp(command, "dismiss.welcome") == 0) {
         /* Close any visible dialog by activating the main window */
@@ -2218,6 +2566,11 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
 // ── Entry point ──
 
 int main(int argc, char *argv[]) {
+    int cli_exit = 0;
+
+    if (prettymux_agent_cli_maybe_run(argc, argv, &cli_exit))
+        return cli_exit;
+
     // WebKitGTK's bubblewrap sandbox requires dbus-proxy which may not
     // be available in all environments. Disable it for now.
 #ifndef G_OS_WIN32

@@ -79,8 +79,22 @@ void workspace_refresh_sidebar_label(Workspace *ws);
  */
 void        workspace_split_pane(Workspace *ws, GtkOrientation orientation,
                                  ghostty_app_t app);
+GtkNotebook *workspace_split_pane_target(Workspace *ws, GtkNotebook *pane,
+                                         GtkOrientation orientation,
+                                         ghostty_app_t app);
 void        workspace_close_pane(Workspace *ws, GtkNotebook *pane);
 GtkNotebook *workspace_get_focused_pane(Workspace *ws);
+GtkNotebook *workspace_get_pane_by_index(Workspace *ws, int pane_idx);
+GtkNotebook *workspace_get_pane_by_id(Workspace *ws, const char *pane_id);
+int         workspace_get_pane_index(Workspace *ws, GtkNotebook *pane);
+const char *workspace_get_pane_id(GtkNotebook *pane);
+gboolean    workspace_focus_pane(Workspace *ws, GtkNotebook *pane);
+gboolean    workspace_equalize_splits(Workspace *ws,
+                                      const char *orientation_name);
+gboolean    workspace_resize_pane_percent(Workspace *ws,
+                                          GtkNotebook *pane,
+                                          char axis,
+                                          double percent);
 
 /*
  * Pane zoom.
