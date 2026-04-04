@@ -60,6 +60,8 @@ struct _GhosttyTerminal {
     GtkWidget         *status_cwd;      /* GtkLabel: full CWD path */
     GtkWidget         *status_git;      /* GtkLabel: git branch */
     GtkWidget         *dummy_target;    /* Linked notebook placeholder */
+    char              *status_cwd_full;
+    char              *status_git_full;
 };
 
 G_DEFINE_FINAL_TYPE(GhosttyTerminal, ghostty_terminal, GTK_TYPE_WIDGET)
@@ -134,6 +136,68 @@ ghostty_terminal_shorten_path(const char *path, char *buf, size_t bufsz)
         snprintf(buf, bufsz, "%.28s", path);
 
     return buf;
+}
+
+static void
+ghostty_terminal_refresh_status(GhosttyTerminal *self)
+{
+    const char *full_cwd;
+    const char *git_branch;
+    const char *display_cwd = "";
+    char short_cwd[64];
+    int available_width = 0;
+    int branch_width = 0;
+    int spacing = 0;
+    int text_width = 0;
+    const int fit_padding = 16;
+
+    if (!self)
+        return;
+
+    full_cwd = self->status_cwd_full ? self->status_cwd_full : "";
+    git_branch = self->status_git_full ? self->status_git_full : "";
+
+    if (self->status_git)
+        gtk_label_set_text(GTK_LABEL(self->status_git), git_branch);
+
+    if (full_cwd[0])
+        display_cwd = ghostty_terminal_shorten_path(full_cwd, short_cwd,
+                                                    sizeof(short_cwd));
+
+    if (self->status_bar)
+        available_width = gtk_widget_get_width(self->status_bar);
+
+    if (self->status_git)
+        branch_width = gtk_widget_get_width(self->status_git);
+
+    if (self->status_bar)
+        spacing = gtk_box_get_spacing(GTK_BOX(self->status_bar));
+
+    if (available_width > 0 && branch_width > 0)
+        available_width -= branch_width + spacing;
+
+    if (self->status_cwd && full_cwd[0] && available_width > 1) {
+        PangoLayout *layout =
+            gtk_widget_create_pango_layout(self->status_cwd, full_cwd);
+
+        pango_layout_get_pixel_size(layout, &text_width, NULL);
+        g_object_unref(layout);
+
+        if (text_width + fit_padding <= available_width) {
+            display_cwd = full_cwd;
+        }
+    }
+
+    if (self->status_cwd) {
+        gtk_label_set_text(GTK_LABEL(self->status_cwd), display_cwd);
+        gtk_widget_set_tooltip_text(self->status_cwd,
+                                    full_cwd[0] ? full_cwd : NULL);
+    }
+
+    if (self->status_git) {
+        gtk_widget_set_tooltip_text(self->status_git,
+                                    git_branch[0] ? git_branch : NULL);
+    }
 }
 
 static void
@@ -381,6 +445,8 @@ tick_callback(gpointer user_data)
     } else if (self->dummy_target) {
         gtk_widget_set_visible(GTK_WIDGET(self), FALSE);
     }
+
+    ghostty_terminal_refresh_status(self);
 
     return G_SOURCE_CONTINUE;
 }
@@ -700,6 +766,8 @@ ghostty_terminal_finalize(GObject *object)
     g_free(self->title);
     g_free(self->cwd);
     g_free(self->start_cwd);
+    g_free(self->status_cwd_full);
+    g_free(self->status_git_full);
     G_OBJECT_CLASS(ghostty_terminal_parent_class)->finalize(object);
 }
 
@@ -776,6 +844,8 @@ ghostty_terminal_init(GhosttyTerminal *self)
     self->progress_state = -1;
     self->progress_percent = -1;
     self->dummy_target = NULL;
+    self->status_cwd_full = NULL;
+    self->status_git_full = NULL;
     gtk_widget_set_halign(GTK_WIDGET(self), GTK_ALIGN_START);
     gtk_widget_set_valign(GTK_WIDGET(self), GTK_ALIGN_START);
     gtk_widget_set_overflow(GTK_WIDGET(self), GTK_OVERFLOW_HIDDEN);
@@ -1082,25 +1152,13 @@ ghostty_terminal_set_status(GhosttyTerminal *self,
                             const char *cwd,
                             const char *git_branch)
 {
-    char short_cwd[64];
-
     g_return_if_fail(GHOSTTY_IS_TERMINAL(self));
 
-    if (self->status_cwd) {
-        gtk_label_set_text(GTK_LABEL(self->status_cwd),
-                           (cwd && cwd[0])
-                               ? ghostty_terminal_shorten_path(cwd, short_cwd,
-                                                               sizeof(short_cwd))
-                               : "");
-        gtk_widget_set_tooltip_text(self->status_cwd,
-                                    (cwd && cwd[0]) ? cwd : NULL);
-    }
+    g_free(self->status_cwd_full);
+    self->status_cwd_full = g_strdup((cwd && cwd[0]) ? cwd : "");
+    g_free(self->status_git_full);
+    self->status_git_full = g_strdup((git_branch && git_branch[0])
+                                         ? git_branch : "");
 
-    if (self->status_git) {
-        gtk_label_set_text(GTK_LABEL(self->status_git),
-                           (git_branch && git_branch[0]) ? git_branch : "");
-        gtk_widget_set_tooltip_text(self->status_git,
-                                    (git_branch && git_branch[0])
-                                        ? git_branch : NULL);
-    }
+    ghostty_terminal_refresh_status(self);
 }
