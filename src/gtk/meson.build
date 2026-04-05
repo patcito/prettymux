@@ -60,7 +60,7 @@ if is_linux
   platform_deps += dependency('webkitgtk-6.0')
   platform_link_args += [
     ghostty_lib_dir / 'libghostty.so',
-    '-Wl,-rpath,' + ghostty_lib_dir,
+    '-Wl,-rpath,' + ghostty_lib_dir + ':$ORIGIN/../lib/prettymux',
   ]
 elif is_macos
   ghostty_macos_xcframework = ''

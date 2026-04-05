@@ -20,6 +20,7 @@ gboolean shortcut_set_binding(const char *action, guint keyval,
                               GdkModifierType mods,
                               const ShortcutDef **conflict_out);
 void shortcut_reset_all(void);
+char *shortcut_format_binding(const ShortcutDef *binding);
 
 // Match a keypress against shortcuts. Returns action string or NULL.
 const char *shortcut_match(guint keyval, GdkModifierType state);

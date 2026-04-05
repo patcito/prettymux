@@ -8,15 +8,15 @@ const ShortcutDef default_shortcuts[] = {
     {"workspace.close",   GDK_KEY_d,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Close workspace"},
     {"workspace.next",    GDK_KEY_bracketright,  GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Next workspace"},
     {"workspace.prev",    GDK_KEY_bracketleft,   GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Previous workspace"},
-    {"workspace.focus.1", GDK_KEY_1,             GDK_CONTROL_MASK,                  "Switch to workspace 1"},
-    {"workspace.focus.2", GDK_KEY_2,             GDK_CONTROL_MASK,                  "Switch to workspace 2"},
-    {"workspace.focus.3", GDK_KEY_3,             GDK_CONTROL_MASK,                  "Switch to workspace 3"},
-    {"workspace.focus.4", GDK_KEY_4,             GDK_CONTROL_MASK,                  "Switch to workspace 4"},
-    {"workspace.focus.5", GDK_KEY_5,             GDK_CONTROL_MASK,                  "Switch to workspace 5"},
-    {"workspace.focus.6", GDK_KEY_6,             GDK_CONTROL_MASK,                  "Switch to workspace 6"},
-    {"workspace.focus.7", GDK_KEY_7,             GDK_CONTROL_MASK,                  "Switch to workspace 7"},
-    {"workspace.focus.8", GDK_KEY_8,             GDK_CONTROL_MASK,                  "Switch to workspace 8"},
-    {"workspace.focus.9", GDK_KEY_9,             GDK_CONTROL_MASK,                  "Switch to workspace 9"},
+    {"workspace.focus.1", GDK_KEY_1,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Switch to workspace 1"},
+    {"workspace.focus.2", GDK_KEY_2,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Switch to workspace 2"},
+    {"workspace.focus.3", GDK_KEY_3,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Switch to workspace 3"},
+    {"workspace.focus.4", GDK_KEY_4,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Switch to workspace 4"},
+    {"workspace.focus.5", GDK_KEY_5,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Switch to workspace 5"},
+    {"workspace.focus.6", GDK_KEY_6,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Switch to workspace 6"},
+    {"workspace.focus.7", GDK_KEY_7,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Switch to workspace 7"},
+    {"workspace.focus.8", GDK_KEY_8,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Switch to workspace 8"},
+    {"workspace.focus.9", GDK_KEY_9,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Switch to workspace 9"},
     {"pane.tab.new",      GDK_KEY_t,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "New terminal tab"},
     {"pane.focus.left",   GDK_KEY_Left,          GDK_ALT_MASK,                      "Focus pane left"},
     {"pane.focus.right",  GDK_KEY_Right,         GDK_ALT_MASK,                      "Focus pane right"},
@@ -44,9 +44,10 @@ const ShortcutDef default_shortcuts[] = {
     {"split.horizontal",  GDK_KEY_e,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Split horizontal"},
     {"split.vertical",    GDK_KEY_o,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Split vertical"},
     {"window.fullscreen", GDK_KEY_F11,           0,                                 "Toggle fullscreen"},
-    {"browser.focus_url", GDK_KEY_l,             GDK_CONTROL_MASK,                  "Focus URL bar"},
+    {"browser.focus_url", GDK_KEY_l,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Focus URL bar"},
     {"terminal.copy",     GDK_KEY_c,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Copy selection"},
     {"terminal.paste",    GDK_KEY_v,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Paste"},
+    {"recording.mark",    GDK_KEY_y,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Recording marker"},
     {NULL, 0, 0, NULL},
 };
 
@@ -92,6 +93,28 @@ normalize_keyval(guint keyval)
     case GDK_KEY_asterisk:    return GDK_KEY_8;
     case GDK_KEY_parenleft:   return GDK_KEY_9;
     case GDK_KEY_parenright:  return GDK_KEY_0;
+    case GDK_KEY_ISO_Enter:   return GDK_KEY_Return;
+    case GDK_KEY_KP_Enter:    return GDK_KEY_Return;
+    case GDK_KEY_KP_1:        return GDK_KEY_1;
+    case GDK_KEY_KP_2:        return GDK_KEY_2;
+    case GDK_KEY_KP_3:        return GDK_KEY_3;
+    case GDK_KEY_KP_4:        return GDK_KEY_4;
+    case GDK_KEY_KP_5:        return GDK_KEY_5;
+    case GDK_KEY_KP_6:        return GDK_KEY_6;
+    case GDK_KEY_KP_7:        return GDK_KEY_7;
+    case GDK_KEY_KP_8:        return GDK_KEY_8;
+    case GDK_KEY_KP_9:        return GDK_KEY_9;
+    case GDK_KEY_KP_0:        return GDK_KEY_0;
+    case GDK_KEY_KP_End:      return GDK_KEY_1;
+    case GDK_KEY_KP_Down:     return GDK_KEY_2;
+    case GDK_KEY_KP_Page_Down:return GDK_KEY_3;
+    case GDK_KEY_KP_Left:     return GDK_KEY_4;
+    case GDK_KEY_KP_Begin:    return GDK_KEY_5;
+    case GDK_KEY_KP_Right:    return GDK_KEY_6;
+    case GDK_KEY_KP_Home:     return GDK_KEY_7;
+    case GDK_KEY_KP_Up:       return GDK_KEY_8;
+    case GDK_KEY_KP_Page_Up:  return GDK_KEY_9;
+    case GDK_KEY_KP_Insert:   return GDK_KEY_0;
     default:                  return gdk_keyval_to_lower(keyval);
     }
 }
@@ -176,6 +199,41 @@ migrate_close_shortcut_swap_if_needed(void)
     }
 }
 
+static void
+migrate_shortcut_updates_if_needed(void)
+{
+    gboolean changed = FALSE;
+    ShortcutDef *browser_focus = runtime_shortcut_mutable("browser.focus_url");
+
+    for (int i = 1; i <= 9; i++) {
+        char action[32];
+        ShortcutDef *workspace_focus;
+
+        snprintf(action, sizeof(action), "workspace.focus.%d", i);
+        workspace_focus = runtime_shortcut_mutable(action);
+        if (!workspace_focus)
+            continue;
+
+        if (normalize_keyval(workspace_focus->keyval) == (guint)(GDK_KEY_0 + i) &&
+            normalize_mods(workspace_focus->mods) == GDK_CONTROL_MASK) {
+            workspace_focus->keyval = GDK_KEY_0 + i;
+            workspace_focus->mods = GDK_CONTROL_MASK | GDK_SHIFT_MASK;
+            changed = TRUE;
+        }
+    }
+
+    if (browser_focus &&
+        normalize_keyval(browser_focus->keyval) == GDK_KEY_l &&
+        normalize_mods(browser_focus->mods) == GDK_CONTROL_MASK) {
+        browser_focus->keyval = GDK_KEY_l;
+        browser_focus->mods = GDK_CONTROL_MASK | GDK_SHIFT_MASK;
+        changed = TRUE;
+    }
+
+    if (changed)
+        save_runtime_shortcuts();
+}
+
 void
 shortcuts_init(void)
 {
@@ -208,6 +266,7 @@ shortcuts_init(void)
             }
         }
         migrate_close_shortcut_swap_if_needed();
+        migrate_shortcut_updates_if_needed();
     }
 
     g_key_file_unref(kf);
@@ -288,6 +347,52 @@ shortcut_reset_all(void)
         runtime_shortcuts[i] = default_shortcuts[i];
 
     save_runtime_shortcuts();
+}
+
+char *
+shortcut_format_binding(const ShortcutDef *binding)
+{
+    GString *s;
+    const char *name;
+    char pretty[32];
+
+    if (!binding)
+        return g_strdup("");
+
+    s = g_string_new(NULL);
+    if (binding->mods & GDK_CONTROL_MASK)
+        g_string_append(s, "Ctrl+");
+    if (binding->mods & GDK_SHIFT_MASK)
+        g_string_append(s, "Shift+");
+    if (binding->mods & GDK_ALT_MASK)
+        g_string_append(s, "Alt+");
+    if (binding->mods & GDK_SUPER_MASK)
+        g_string_append(s, "Super+");
+
+    name = gdk_keyval_name(normalize_keyval(binding->keyval));
+    if (!name)
+        return g_string_free(s, FALSE);
+
+    if (strcmp(name, "Return") == 0)
+        snprintf(pretty, sizeof(pretty), "Enter");
+    else if (strcmp(name, "bracketleft") == 0)
+        snprintf(pretty, sizeof(pretty), "[");
+    else if (strcmp(name, "bracketright") == 0)
+        snprintf(pretty, sizeof(pretty), "]");
+    else if (strcmp(name, "comma") == 0)
+        snprintf(pretty, sizeof(pretty), ",");
+    else if (strcmp(name, "Left") == 0 || strcmp(name, "Right") == 0 ||
+             strcmp(name, "Up") == 0 || strcmp(name, "Down") == 0 ||
+             strcmp(name, "Tab") == 0 || strcmp(name, "Escape") == 0)
+        snprintf(pretty, sizeof(pretty), "%s", name);
+    else {
+        snprintf(pretty, sizeof(pretty), "%s", name);
+        if (pretty[0] >= 'a' && pretty[0] <= 'z')
+            pretty[0] = pretty[0] - 'a' + 'A';
+    }
+
+    g_string_append(s, pretty);
+    return g_string_free(s, FALSE);
 }
 
 const char *

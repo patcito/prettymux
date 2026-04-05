@@ -44,10 +44,16 @@ static gboolean g_main_window_active = FALSE;
 static gboolean g_app_quit_in_progress = FALSE;
 static ghostty_config_t g_runtime_ghostty_config = NULL;
 static guint g_desktop_notification_serial = 0;
+static gboolean g_sidebar_toast_force_bottom = FALSE;
+static gboolean g_sidebar_toast_copy_style = FALSE;
+static gboolean g_sidebar_toast_recording_marker = FALSE;
+static gint64 g_recording_origin_us = -1;
 
 static void debug_notification_log(const char *fmt, ...);
 static void apply_toast_position_setting(void);
 static void handle_reported_port(const char *terminal_id, int port);
+static void shortcut_log_event(const char *type, const char *action,
+                               const char *keys);
 
 // Widget references for the main window layout
 static struct {
@@ -62,8 +68,84 @@ static struct {
     GtkWidget *command_palette;   // CommandPalette overlay widget
     GtkWidget *bell_button;       // Bell/notification button in sidebar header
     GtkWidget *toast_revealer;
+    GtkWidget *toast_frame;
     GtkWidget *toast_label;
 } ui = {0};
+
+static void
+shortcut_log_event(const char *type, const char *action, const char *keys)
+{
+    g_autoptr(JsonBuilder) builder = NULL;
+    g_autoptr(JsonGenerator) generator = NULL;
+    g_autoptr(GDateTime) now = NULL;
+    g_autofree char *path = NULL;
+    g_autofree char *dir = NULL;
+    g_autofree char *timestamp = NULL;
+    g_autofree char *json = NULL;
+    gsize json_len = 0;
+    FILE *fp;
+    gint64 now_us = g_get_monotonic_time();
+    gint64 relative_ms;
+    Workspace *ws = workspace_get_current();
+    GtkNotebook *pane = ws ? workspace_get_focused_pane(ws) : NULL;
+    int pane_idx = (ws && pane) ? workspace_get_pane_index(ws, pane) : -1;
+    int tab_idx = (pane && GTK_IS_NOTEBOOK(pane))
+        ? gtk_notebook_get_current_page(pane) : -1;
+
+    if (g_strcmp0(type, "recording_start") == 0) {
+        g_recording_origin_us = now_us;
+        relative_ms = 0;
+    } else if (g_recording_origin_us > 0) {
+        relative_ms = (now_us - g_recording_origin_us) / 1000;
+    } else {
+        relative_ms = now_us / 1000;
+    }
+
+    path = g_build_filename(g_get_home_dir(), ".local", "state",
+                            "prettymux", "shortcuts.jsonl", NULL);
+    dir = g_path_get_dirname(path);
+    if (g_mkdir_with_parents(dir, 0755) != 0)
+        return;
+
+    now = g_date_time_new_now_local();
+    timestamp = g_date_time_format(now, "%Y-%m-%dT%H:%M:%S.%f%z");
+
+    builder = json_builder_new();
+    json_builder_begin_object(builder);
+    json_builder_set_member_name(builder, "type");
+    json_builder_add_string_value(builder, type ? type : "shortcut");
+    json_builder_set_member_name(builder, "ts");
+    json_builder_add_string_value(builder, timestamp ? timestamp : "");
+    json_builder_set_member_name(builder, "t_ms");
+    json_builder_add_int_value(builder, relative_ms);
+    json_builder_set_member_name(builder, "mono_ms");
+    json_builder_add_int_value(builder, now_us / 1000);
+    json_builder_set_member_name(builder, "action");
+    json_builder_add_string_value(builder, action ? action : "");
+    json_builder_set_member_name(builder, "keys");
+    json_builder_add_string_value(builder, keys ? keys : "");
+    json_builder_set_member_name(builder, "workspace");
+    json_builder_add_int_value(builder, current_workspace);
+    json_builder_set_member_name(builder, "pane");
+    json_builder_add_int_value(builder, pane_idx);
+    json_builder_set_member_name(builder, "tab");
+    json_builder_add_int_value(builder, tab_idx);
+    json_builder_end_object(builder);
+
+    generator = json_generator_new();
+    {
+        g_autoptr(JsonNode) root = json_builder_get_root(builder);
+        json_generator_set_root(generator, root);
+        json = json_generator_to_data(generator, &json_len);
+    }
+
+    fp = fopen(path, "a");
+    if (!fp)
+        return;
+    fwrite(json, 1, json_len, fp);
+    fputc('\n', fp);
+    fclose(fp);
+}
 
 static void
 on_main_window_active_changed(GObject *object, GParamSpec *pspec, gpointer user_data)
@@ -177,7 +259,9 @@ apply_toast_position_setting(void)
     if (!ui.toast_revealer)
         return;
 
-    position = app_settings_get_toast_position();
+    position = g_sidebar_toast_force_bottom
+        ? "bottom"
+        : app_settings_get_toast_position();
     gtk_widget_set_halign(ui.toast_revealer, GTK_ALIGN_CENTER);
 
     if (g_strcmp0(position, "bottom") == 0) {
@@ -246,6 +330,58 @@ notebook_terminal_at(GtkNotebook *notebook, int page_num)
     GtkWidget *terminal = page_linked_terminal(
         gtk_notebook_get_nth_page(notebook, page_num));
     return terminal ? GHOSTTY_TERMINAL(terminal) : NULL;
+}
+
+static gboolean
+focus_within_terminal(GhosttyTerminal *term)
+{
+    GtkWidget *focus;
+
+    if (!term || !g_main_window)
+        return FALSE;
+
+    focus = gtk_window_get_focus(GTK_WINDOW(g_main_window));
+    return focus && gtk_widget_is_ancestor(focus, GTK_WIDGET(term));
+}
+
+static gboolean
+is_modifier_key(guint keyval)
+{
+    switch (keyval) {
+    case GDK_KEY_Shift_L:
+    case GDK_KEY_Shift_R:
+    case GDK_KEY_Control_L:
+    case GDK_KEY_Control_R:
+    case GDK_KEY_Alt_L:
+    case GDK_KEY_Alt_R:
+    case GDK_KEY_Meta_L:
+    case GDK_KEY_Meta_R:
+    case GDK_KEY_Super_L:
+    case GDK_KEY_Super_R:
+    case GDK_KEY_Hyper_L:
+    case GDK_KEY_Hyper_R:
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+
+static void
+broadcast_key_to_workspace(Workspace *ws,
+                           GhosttyTerminal *source,
+                           guint keyval,
+                           guint keycode,
+                           GdkModifierType state)
+{
+    if (!ws || !source || !ws->terminals)
+        return;
+
+    for (guint i = 0; i < ws->terminals->len; i++) {
+        GhosttyTerminal *term = g_ptr_array_index(ws->terminals, i);
+        if (!term || term == source)
+            continue;
+        ghostty_terminal_send_key_event(term, keyval, keycode, state);
+    }
 }
 
 static char *
@@ -519,6 +655,12 @@ sidebar_toast_hide(void)
     }
     sidebar_toast_action_free(g_sidebar_toast_action);
     g_sidebar_toast_action = NULL;
+    g_sidebar_toast_force_bottom = FALSE;
+    g_sidebar_toast_copy_style = FALSE;
+    g_sidebar_toast_recording_marker = FALSE;
+    if (ui.toast_frame)
+        gtk_widget_remove_css_class(ui.toast_frame, "copy-toast");
+    apply_toast_position_setting();
     if (ui.toast_revealer)
         gtk_revealer_set_reveal_child(GTK_REVEALER(ui.toast_revealer), FALSE);
 }
@@ -552,11 +694,21 @@ on_sidebar_toast_close_clicked(GtkButton *btn, gpointer user_data)
 {
     (void)btn;
     (void)user_data;
+    if (g_sidebar_toast_recording_marker) {
+        const ShortcutDef *binding = shortcut_find_by_action("recording.mark");
+        g_autofree char *keys = shortcut_format_binding(binding);
+        shortcut_log_event("recording_start", "recording.mark", keys);
+    }
     sidebar_toast_hide();
 }
 
 static void
-sidebar_toast_show(const char *msg, int ws_idx, GtkNotebook *pane_notebook, int tab_idx)
+sidebar_toast_show_internal(const char *msg, int ws_idx,
+                            GtkNotebook *pane_notebook, int tab_idx,
+                            gboolean force_bottom,
+                            gboolean copy_style,
+                            gboolean recording_marker,
+                            guint timeout_ms)
 {
     if (!ui.toast_revealer || !ui.toast_label || !msg || !msg[0])
         return;
@@ -567,10 +719,36 @@ sidebar_toast_show(const char *msg, int ws_idx, GtkNotebook *pane_notebook, int 
     g_sidebar_toast_action->workspace_idx = ws_idx;
     g_sidebar_toast_action->pane_notebook = pane_notebook ? g_object_ref(pane_notebook) : NULL;
     g_sidebar_toast_action->tab_idx = tab_idx;
+    g_sidebar_toast_force_bottom = force_bottom;
+    g_sidebar_toast_copy_style = copy_style;
+    g_sidebar_toast_recording_marker = recording_marker;
+    if (ui.toast_frame) {
+        if (copy_style)
+            gtk_widget_add_css_class(ui.toast_frame, "copy-toast");
+        else
+            gtk_widget_remove_css_class(ui.toast_frame, "copy-toast");
+    }
+    apply_toast_position_setting();
 
     gtk_label_set_text(GTK_LABEL(ui.toast_label), msg);
     gtk_revealer_set_reveal_child(GTK_REVEALER(ui.toast_revealer), TRUE);
-    g_sidebar_toast_timeout_id = g_timeout_add_seconds(8, sidebar_toast_timeout_cb, NULL);
+    g_sidebar_toast_timeout_id = g_timeout_add(timeout_ms > 0 ? timeout_ms : 8000,
+                                               sidebar_toast_timeout_cb, NULL);
+}
+
+static void
+sidebar_toast_show(const char *msg, int ws_idx, GtkNotebook *pane_notebook, int tab_idx)
+{
+    sidebar_toast_show_internal(msg, ws_idx, pane_notebook, tab_idx,
+                                FALSE, FALSE, FALSE, 8000);
+}
+
+static void
+sidebar_toast_show_copy(const char *msg, int ws_idx,
+                        GtkNotebook *pane_notebook, int tab_idx)
+{
+    sidebar_toast_show_internal(msg, ws_idx, pane_notebook, tab_idx,
+                                TRUE, TRUE, FALSE, 2000);
 }
 
 /* ── Notification click-to-navigate ── */
@@ -915,6 +1093,9 @@ static void handle_action(const char *action) {
                                     GdkClipboard *clip = gdk_display_get_clipboard(
                                         gdk_display_get_default());
                                     gdk_clipboard_set_text(clip, text.text);
+                                    sidebar_toast_show_copy("Copied to clipboard",
+                                                            current_workspace,
+                                                            focused, pg);
                                 }
                                 ghostty_surface_free_text(surface, &text);
                             }
@@ -947,6 +1128,15 @@ static void handle_action(const char *action) {
                 }
             }
         }
+    } else if (strcmp(action, "recording.mark") == 0) {
+        Workspace *ws = workspace_get_current();
+        GtkNotebook *pane = ws ? workspace_get_focused_pane(ws) : NULL;
+        int tab_idx = (pane && GTK_IS_NOTEBOOK(pane))
+            ? gtk_notebook_get_current_page(pane) : -1;
+        sidebar_toast_show_internal("Recording marker",
+                                    current_workspace,
+                                    pane, tab_idx,
+                                    FALSE, FALSE, TRUE, 8000);
     }
 
     session_queue_save();
@@ -988,6 +1178,9 @@ static gboolean on_key_pressed(GtkEventControllerKey *ctrl, guint keyval,
     /* ── Shortcut table lookup ── */
     const char *action = shortcut_match(keyval, state);
     if (action) {
+        const ShortcutDef *binding = shortcut_find_by_action(action);
+        g_autofree char *keys = shortcut_format_binding(binding);
+
         /* browser.tab.close (Ctrl+W) should only fire when the browser
            actually has keyboard focus; otherwise let ghostty handle it. */
         if (strcmp(action, "browser.tab.close") == 0) {
@@ -995,8 +1188,21 @@ static gboolean on_key_pressed(GtkEventControllerKey *ctrl, guint keyval,
             if (!focus || !gtk_widget_is_ancestor(focus, ui.browser_notebook))
                 return FALSE;
         }
+        if (strcmp(action, "recording.mark") != 0)
+            shortcut_log_event("shortcut", action, keys);
         handle_action(action);
         return TRUE;
+    }
+
+    Workspace *ws = workspace_get_current();
+    if (ws && ws->broadcast && !is_modifier_key(keyval)) {
+        GtkNotebook *focused = workspace_get_focused_pane(ws);
+        if (focused) {
+            int pg = gtk_notebook_get_current_page(focused);
+            GhosttyTerminal *source = notebook_terminal_at(focused, pg);
+            if (source && focus_within_terminal(source))
+                broadcast_key_to_workspace(ws, source, keyval, keycode, state);
+        }
     }
     return FALSE;
 }
@@ -2377,17 +2583,17 @@ build_toast_overlay(void)
     gtk_widget_set_margin_start(ui.toast_revealer, 12);
     gtk_widget_set_margin_end(ui.toast_revealer, 12);
 
-    GtkWidget *toast_frame = gtk_frame_new(NULL);
-    gtk_widget_add_css_class(toast_frame, "prettymux-toast");
-    gtk_widget_set_size_request(toast_frame, 360, -1);
-    gtk_revealer_set_child(GTK_REVEALER(ui.toast_revealer), toast_frame);
+    ui.toast_frame = gtk_frame_new(NULL);
+    gtk_widget_add_css_class(ui.toast_frame, "prettymux-toast");
+    gtk_widget_set_size_request(ui.toast_frame, 360, -1);
+    gtk_revealer_set_child(GTK_REVEALER(ui.toast_revealer), ui.toast_frame);
 
     GtkWidget *toast_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     gtk_widget_set_margin_start(toast_box, 10);
     gtk_widget_set_margin_end(toast_box, 10);
     gtk_widget_set_margin_top(toast_box, 8);
     gtk_widget_set_margin_bottom(toast_box, 8);
-    gtk_frame_set_child(GTK_FRAME(toast_frame), toast_box);
+    gtk_frame_set_child(GTK_FRAME(ui.toast_frame), toast_box);
 
     GtkWidget *toast_button = gtk_button_new();
     gtk_widget_add_css_class(toast_button, "flat");

@@ -9,6 +9,9 @@
 typedef struct {
     SettingsDialogApplyCallback apply_cb;
     gpointer user_data;
+    GtkWindow *dialog;
+    GtkWidget *scroll;
+    GtkWidget *content;
     GtkWidget *theme_dropdown;
     GtkWidget *toast_position_dropdown;
     GtkWidget *font_spin;
@@ -282,6 +285,39 @@ settings_row(const char *label, GtkWidget *control)
     return box;
 }
 
+static gboolean
+settings_scroll_custom_group_idle(gpointer user_data)
+{
+    SettingsDialogState *state = user_data;
+    GtkAdjustment *adj;
+    graphene_rect_t bounds;
+    double lower;
+    double upper;
+    double target;
+
+    if (!state || !state->scroll || !state->content || !state->custom_group ||
+        !gtk_widget_get_visible(state->custom_group))
+        return G_SOURCE_REMOVE;
+
+    adj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(state->scroll));
+    if (!adj)
+        return G_SOURCE_REMOVE;
+
+    if (gtk_widget_compute_bounds(state->custom_group, state->content, &bounds)) {
+        lower = gtk_adjustment_get_lower(adj);
+        upper = gtk_adjustment_get_upper(adj) - gtk_adjustment_get_page_size(adj);
+        if (upper < lower)
+            upper = lower;
+        target = CLAMP(bounds.origin.y - 24.0, lower, upper);
+        gtk_adjustment_set_value(adj, target);
+    }
+
+    if (state->color_buttons[0])
+        gtk_widget_grab_focus(state->color_buttons[0]);
+
+    return G_SOURCE_REMOVE;
+}
+
 static void
 settings_update_custom_visibility(SettingsDialogState *state)
 {
@@ -289,6 +325,14 @@ settings_update_custom_visibility(SettingsDialogState *state)
     const Theme *theme = theme_get_at((int)selected);
     gboolean is_custom = theme && theme_name_is_custom(theme->name);
     gtk_widget_set_visible(state->custom_group, is_custom);
+
+    if (is_custom) {
+        if (state->dialog)
+            gtk_window_set_default_size(state->dialog, 720, 900);
+        g_idle_add(settings_scroll_custom_group_idle, state);
+    } else if (state->dialog) {
+        gtk_window_set_default_size(state->dialog, 720, 760);
+    }
 
     if (theme && !is_custom) {
         gtk_editable_set_text(GTK_EDITABLE(state->ghostty_theme_entry),
@@ -442,6 +486,9 @@ settings_dialog_present(GtkWindow *parent,
 
     state->apply_cb = apply_cb;
     state->user_data = user_data;
+    state->dialog = dialog;
+    state->scroll = scroll;
+    state->content = content;
 
     for (int i = 0; i < theme_count(); i++) {
         const Theme *candidate = theme_get_at(i);

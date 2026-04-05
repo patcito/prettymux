@@ -465,6 +465,57 @@ tick_callback(gpointer user_data)
 
 /* ── Keyboard ──────────────────────────────────────────────────── */
 
+static void
+ghostty_terminal_send_key_internal(GhosttyTerminal *self,
+                                   guint            keyval,
+                                   guint            keycode,
+                                   GdkModifierType  state,
+                                   GdkEvent        *event)
+{
+    char text_buf[32] = {0};
+    const char *key_text = NULL;
+
+    if (!self || !self->surface)
+        return;
+
+    if (event && gdk_event_get_event_type(event) == GDK_KEY_PRESS) {
+        guint kv = gdk_key_event_get_keyval(event);
+        gunichar uc = gdk_keyval_to_unicode(kv);
+        if (uc >= 0x20 && uc != 0 &&
+            !(state & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK))) {
+            int len = g_unichar_to_utf8(uc, text_buf);
+            text_buf[len] = '\0';
+            key_text = text_buf;
+        }
+    } else {
+        gunichar uc = gdk_keyval_to_unicode(keyval);
+        if (uc >= 0x20 && uc != 0 &&
+            !(state & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK))) {
+            int len = g_unichar_to_utf8(uc, text_buf);
+            text_buf[len] = '\0';
+            key_text = text_buf;
+        }
+    }
+
+    ghostty_input_key_s ke = {0};
+    ke.action = GHOSTTY_ACTION_PRESS;
+    ke.keycode = keycode;
+    ke.mods = translate_mods(state);
+    ke.composing = false;
+    ke.text = key_text;
+
+    guint lower = gdk_keyval_to_lower(keyval);
+    gunichar cp = gdk_keyval_to_unicode(lower);
+    ke.unshifted_codepoint = (cp < 0x110000) ? cp : 0;
+
+    if (event && gdk_event_get_event_type(event) == GDK_KEY_PRESS) {
+        GdkModifierType consumed = gdk_key_event_get_consumed_modifiers(event);
+        ke.consumed_mods = translate_mods(consumed);
+    }
+
+    ghostty_surface_key(self->surface, ke);
+}
+
 static gboolean
 on_key_pressed(GtkEventControllerKey *controller,
                guint                  keyval,
@@ -502,27 +553,7 @@ on_key_pressed(GtkEventControllerKey *controller,
             return TRUE;
     }
 
-    ghostty_input_key_s ke = {0};
-    ke.action = GHOSTTY_ACTION_PRESS;
-    ke.keycode = keycode;
-    ke.mods = translate_mods(state);
-    ke.composing = false;
-    ke.text = key_text;
-
-    /* Set unshifted_codepoint */
-    guint lower = gdk_keyval_to_lower(keyval);
-    gunichar cp = gdk_keyval_to_unicode(lower);
-    ke.unshifted_codepoint = (cp < 0x110000) ? cp : 0;
-
-    /* Set consumed_mods: modifiers consumed by the keyboard layout
-     * (e.g. Shift for uppercase). Ghostty uses this to strip mods
-     * from text events. */
-    if (event && gdk_event_get_event_type(event) == GDK_KEY_PRESS) {
-        GdkModifierType consumed = gdk_key_event_get_consumed_modifiers(event);
-        ke.consumed_mods = translate_mods(consumed);
-    }
-
-    ghostty_surface_key(self->surface, ke);
+    ghostty_terminal_send_key_internal(self, keyval, keycode, state, event);
     gtk_gl_area_queue_render(self->gl_area);
     return TRUE;
 }
@@ -1000,6 +1031,17 @@ ghostty_terminal_get_surface(GhosttyTerminal *self)
 {
     g_return_val_if_fail(GHOSTTY_IS_TERMINAL(self), NULL);
     return self->surface;
+}
+
+void
+ghostty_terminal_send_key_event(GhosttyTerminal *self,
+                                guint            keyval,
+                                guint            keycode,
+                                GdkModifierType  state)
+{
+    g_return_if_fail(GHOSTTY_IS_TERMINAL(self));
+    ghostty_terminal_send_key_internal(self, keyval, keycode, state, NULL);
+    gtk_gl_area_queue_render(self->gl_area);
 }
 
 const char *

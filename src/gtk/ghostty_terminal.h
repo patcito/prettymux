@@ -90,6 +90,10 @@ GtkWidget *ghostty_terminal_get_dummy_target(GhosttyTerminal *self);
  * Give keyboard focus to the terminal's GtkGLArea.
  */
 void ghostty_terminal_focus(GhosttyTerminal *self);
+void ghostty_terminal_send_key_event(GhosttyTerminal *self,
+                                     guint            keyval,
+                                     guint            keycode,
+                                     GdkModifierType  state);
 
 /*
  * ghostty_terminal_queue_render:
