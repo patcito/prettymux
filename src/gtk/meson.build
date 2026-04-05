@@ -169,6 +169,12 @@ prettymux_desktop = configure_file(
   copy: true,
 )
 
+prettymux_desktop_gnome = configure_file(
+  input: '../../packaging/dev.prettymux.app.desktop',
+  output: 'dev.prettymux.app.desktop',
+  copy: true,
+)
+
 prettymux_icon = configure_file(
   input: '../../packaging/prettymux.svg',
   output: 'prettymux.svg',
@@ -176,4 +182,5 @@ prettymux_icon = configure_file(
 )
 
 install_data(prettymux_desktop, install_dir: get_option('datadir') / 'applications')
+install_data(prettymux_desktop_gnome, install_dir: get_option('datadir') / 'applications')
 install_data(prettymux_icon, install_dir: get_option('datadir') / 'icons' / 'hicolor' / 'scalable' / 'apps')

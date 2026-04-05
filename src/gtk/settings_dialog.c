@@ -10,6 +10,7 @@ typedef struct {
     SettingsDialogApplyCallback apply_cb;
     gpointer user_data;
     GtkWidget *theme_dropdown;
+    GtkWidget *toast_position_dropdown;
     GtkWidget *font_spin;
     GtkWidget *ghostty_theme_entry;
     GtkWidget *confirm_tab;
@@ -17,7 +18,7 @@ typedef struct {
     GtkWidget *confirm_workspace;
     GtkWidget *confirm_app;
     GtkWidget *custom_group;
-    GtkWidget *color_buttons[13];
+    GtkWidget *color_buttons[14];
 } SettingsDialogState;
 
 enum {
@@ -27,6 +28,7 @@ enum {
     COLOR_OVERLAY,
     COLOR_SUBTEXT,
     COLOR_ACCENT,
+    COLOR_TOAST_BG,
     COLOR_GREEN,
     COLOR_RED,
     COLOR_YELLOW,
@@ -47,6 +49,7 @@ static const struct {
     {"Overlay", "overlay"},
     {"Subtext", "subtext"},
     {"Tab accent", "accent"},
+    {"Toast background", "toast_bg"},
     {"Green", "green"},
     {"Red", "red"},
     {"Yellow", "yellow"},
@@ -333,6 +336,7 @@ settings_collect_custom_theme(SettingsDialogState *state)
         case COLOR_OVERLAY:   theme.overlay = hex; break;
         case COLOR_SUBTEXT:   theme.subtext = hex; break;
         case COLOR_ACCENT:    theme.accent = hex; break;
+        case COLOR_TOAST_BG:  theme.toast_bg = hex; break;
         case COLOR_GREEN:     theme.green = hex; break;
         case COLOR_RED:       theme.red = hex; break;
         case COLOR_YELLOW:    theme.yellow = hex; break;
@@ -368,6 +372,7 @@ on_apply_clicked(GtkButton *button, gpointer user_data)
 {
     SettingsDialogState *state = user_data;
     guint selected;
+    guint toast_position_selected;
     const Theme *selected_theme;
     Theme custom_theme;
     GtkWindow *dialog;
@@ -386,6 +391,10 @@ on_apply_clicked(GtkButton *button, gpointer user_data)
         gtk_spin_button_get_value(GTK_SPIN_BUTTON(state->font_spin)));
     app_settings_set_ghostty_theme(
         gtk_editable_get_text(GTK_EDITABLE(state->ghostty_theme_entry)));
+    toast_position_selected =
+        gtk_drop_down_get_selected(GTK_DROP_DOWN(state->toast_position_dropdown));
+    app_settings_set_toast_position(
+        toast_position_selected == 1 ? "bottom" : "top");
 
     selected = gtk_drop_down_get_selected(GTK_DROP_DOWN(state->theme_dropdown));
     selected_theme = theme_get_at((int)selected);
@@ -414,8 +423,10 @@ settings_dialog_present(GtkWindow *parent,
                         gpointer user_data)
 {
     static const char *theme_names[] = {"Dark", "Light", "Monokai", "Custom", NULL};
+    static const char *toast_positions[] = {"Top", "Bottom", NULL};
     const Theme *custom_theme = app_settings_get_custom_theme();
     const Theme *current_theme = theme_get_current();
+    const char *toast_position = app_settings_get_toast_position();
     guint current_theme_index = 0;
     SettingsDialogState *state = g_new0(SettingsDialogState, 1);
     GtkWindow *dialog = GTK_WINDOW(gtk_window_new());
@@ -539,6 +550,13 @@ settings_dialog_present(GtkWindow *parent,
     gtk_box_append(GTK_BOX(content),
                    settings_row("Theme", state->theme_dropdown));
 
+    state->toast_position_dropdown = gtk_drop_down_new_from_strings(toast_positions);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(state->toast_position_dropdown),
+                               g_strcmp0(toast_position, "bottom") == 0 ? 1 : 0);
+    gtk_box_append(GTK_BOX(content),
+                   settings_row("Toast position",
+                                state->toast_position_dropdown));
+
     state->custom_group = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     grid = gtk_grid_new();
     gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
@@ -557,6 +575,7 @@ settings_dialog_present(GtkWindow *parent,
         case COLOR_OVERLAY:   hex = custom_theme->overlay; break;
         case COLOR_SUBTEXT:   hex = custom_theme->subtext; break;
         case COLOR_ACCENT:    hex = custom_theme->accent; break;
+        case COLOR_TOAST_BG:  hex = custom_theme->toast_bg; break;
         case COLOR_GREEN:     hex = custom_theme->green; break;
         case COLOR_RED:       hex = custom_theme->red; break;
         case COLOR_YELLOW:    hex = custom_theme->yellow; break;

@@ -6,6 +6,7 @@
 #include <gtk/gtk.h>
 #include <limits.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 #ifdef G_OS_WIN32
 #include <windows.h>
@@ -39,9 +40,14 @@
 ghostty_app_t g_ghostty_app = NULL;
 float g_ghostty_default_font_size = 0.0f;
 static GtkWindow *g_main_window = NULL;
+static gboolean g_main_window_active = FALSE;
 static gboolean g_app_quit_in_progress = FALSE;
-static char *g_app_icon_path = NULL;
 static ghostty_config_t g_runtime_ghostty_config = NULL;
+static guint g_desktop_notification_serial = 0;
+
+static void debug_notification_log(const char *fmt, ...);
+static void apply_toast_position_setting(void);
+static void handle_reported_port(const char *terminal_id, int port);
 
 // Widget references for the main window layout
 static struct {
@@ -55,7 +61,18 @@ static struct {
     GtkWidget *overlay;           // GtkOverlay wrapping the outer_paned
     GtkWidget *command_palette;   // CommandPalette overlay widget
     GtkWidget *bell_button;       // Bell/notification button in sidebar header
+    GtkWidget *toast_revealer;
+    GtkWidget *toast_label;
 } ui = {0};
+
+static void
+on_main_window_active_changed(GObject *object, GParamSpec *pspec, gpointer user_data)
+{
+    (void)pspec;
+    (void)user_data;
+    g_main_window_active = gtk_window_is_active(GTK_WINDOW(object));
+    port_scanner_set_window_active(g_main_window_active);
+}
 
 static void
 apply_theme_to_ghostty_scheme(void)
@@ -148,7 +165,30 @@ apply_runtime_settings(void *user_data)
     }
 
     apply_theme_to_ghostty_scheme();
+    apply_toast_position_setting();
     session_queue_save();
+}
+
+static void
+apply_toast_position_setting(void)
+{
+    const char *position;
+
+    if (!ui.toast_revealer)
+        return;
+
+    position = app_settings_get_toast_position();
+    gtk_widget_set_halign(ui.toast_revealer, GTK_ALIGN_CENTER);
+
+    if (g_strcmp0(position, "bottom") == 0) {
+        gtk_widget_set_valign(ui.toast_revealer, GTK_ALIGN_END);
+        gtk_widget_set_margin_top(ui.toast_revealer, 12);
+        gtk_widget_set_margin_bottom(ui.toast_revealer, 18);
+    } else {
+        gtk_widget_set_valign(ui.toast_revealer, GTK_ALIGN_START);
+        gtk_widget_set_margin_top(ui.toast_revealer, 18);
+        gtk_widget_set_margin_bottom(ui.toast_revealer, 12);
+    }
 }
 
 // ── Notification system ──
@@ -160,6 +200,12 @@ typedef struct {
     int   tab_idx;
 } NotificationEntry;
 
+typedef struct {
+    int workspace_idx;
+    GtkNotebook *pane_notebook;
+    int tab_idx;
+} SidebarToastAction;
+
 static void notification_entry_free(gpointer data) {
     NotificationEntry *e = data;
     g_free(e->text);
@@ -167,6 +213,18 @@ static void notification_entry_free(gpointer data) {
 }
 
 static GPtrArray *g_notifications = NULL;
+static SidebarToastAction *g_sidebar_toast_action = NULL;
+static guint g_sidebar_toast_timeout_id = 0;
+
+static void
+sidebar_toast_action_free(SidebarToastAction *action)
+{
+    if (!action)
+        return;
+    if (action->pane_notebook)
+        g_object_unref(action->pane_notebook);
+    g_free(action);
+}
 
 static GtkWidget *
 page_linked_terminal(GtkWidget *page)
@@ -223,45 +281,147 @@ prettymux_icon_name(void)
     return "prettymux";
 }
 
-static const char *
-prettymux_icon_path(void)
+static void
+ensure_local_desktop_entry(void)
 {
-    static const char *installed_candidates[] = {
-        "/usr/share/icons/hicolor/scalable/apps/prettymux.svg",
-        "/app/share/icons/hicolor/scalable/apps/prettymux.svg",
-        NULL
-    };
+#ifdef G_OS_WIN32
+    return;
+#else
+    const char *app_id = "dev.prettymux.app";
+    g_autofree char *desktop_dir = NULL;
+    g_autofree char *desktop_path = NULL;
+    g_autofree char *exe_path = NULL;
+    g_autofree char *icon_path = NULL;
+    g_autofree char *icon_path_real = NULL;
+    g_autofree char *exe_path_real = NULL;
+    g_autofree char *desktop_contents = NULL;
+    char exe_buf[PATH_MAX];
+    ssize_t exe_len;
 
-    if (g_app_icon_path)
-        return g_app_icon_path;
-
-    for (guint i = 0; installed_candidates[i] != NULL; i++) {
-        if (g_file_test(installed_candidates[i],
-                        G_FILE_TEST_EXISTS | G_FILE_TEST_IS_REGULAR)) {
-            g_app_icon_path = g_strdup(installed_candidates[i]);
-            return g_app_icon_path;
-        }
+    if (g_file_test("/usr/share/applications/dev.prettymux.app.desktop",
+                    G_FILE_TEST_EXISTS) ||
+        g_file_test("/app/share/applications/dev.prettymux.app.desktop",
+                    G_FILE_TEST_EXISTS)) {
+        return;
     }
 
-    g_app_icon_path = g_build_filename(PRETTYMUX_SOURCE_DIR, "..", "..",
-                                       "packaging", "prettymux.svg", NULL);
-    return g_app_icon_path;
+    desktop_dir = g_build_filename(g_get_home_dir(), ".local", "share",
+                                   "applications", NULL);
+    desktop_path = g_build_filename(desktop_dir, "dev.prettymux.app.desktop", NULL);
+
+    exe_len = readlink("/proc/self/exe", exe_buf, sizeof(exe_buf) - 1);
+    if (exe_len <= 0)
+        return;
+    exe_buf[exe_len] = '\0';
+    exe_path = g_strdup(exe_buf);
+    exe_path_real = g_canonicalize_filename(exe_path, NULL);
+
+    icon_path = g_build_filename(PRETTYMUX_SOURCE_DIR, "..", "..",
+                                 "packaging", "prettymux.svg", NULL);
+    if (!g_file_test(icon_path, G_FILE_TEST_EXISTS)) {
+        g_free(icon_path);
+        icon_path = g_strdup("prettymux");
+    } else {
+        icon_path_real = g_canonicalize_filename(icon_path, NULL);
+    }
+
+    if (g_mkdir_with_parents(desktop_dir, 0755) != 0)
+        return;
+
+    desktop_contents = g_strdup_printf(
+        "[Desktop Entry]\n"
+        "Name=PrettyMux\n"
+        "Comment=GPU-accelerated terminal multiplexer\n"
+        "Exec=%s\n"
+        "Icon=%s\n"
+        "Type=Application\n"
+        "Categories=System;TerminalEmulator;\n"
+        "Keywords=terminal;multiplexer;gpu;\n"
+        "StartupNotify=true\n"
+        "DBusActivatable=true\n"
+        "X-GNOME-UsesNotifications=true\n"
+        "X-Flatpak=%s\n",
+        exe_path_real ? exe_path_real : exe_path,
+        icon_path_real ? icon_path_real : icon_path,
+        app_id);
+
+    if (!g_file_set_contents(desktop_path, desktop_contents, -1, NULL))
+        return;
+
+    debug_notification_log("notify desktop-entry ensured path=%s exec=%s icon=%s",
+                           desktop_path, exe_path, icon_path);
+#endif
 }
 
 static void
-send_desktop_notification(const char *title, const char *body)
+debug_notification_log(const char *fmt, ...)
 {
-    GError *nerr = NULL;
-    GSubprocess *nproc = g_subprocess_new(
-        G_SUBPROCESS_FLAGS_NONE, &nerr,
-        "notify-send", title, body,
-        "--app-name=prettymux",
-        "--icon", prettymux_icon_path(),
-        NULL);
-    if (nproc)
-        g_object_unref(nproc);
-    else if (nerr)
-        g_error_free(nerr);
+    va_list ap;
+    g_autofree char *msg = NULL;
+    FILE *fp;
+
+    va_start(ap, fmt);
+    msg = g_strdup_vprintf(fmt, ap);
+    va_end(ap);
+
+    g_message("%s", msg);
+
+    fp = fopen("/tmp/prettymux-notify-debug.log", "a");
+    if (!fp)
+        return;
+    fprintf(fp, "%s\n", msg);
+    fclose(fp);
+}
+
+static void
+send_desktop_notification(const char *title, const char *body,
+                          int ws_idx, int pane_idx, int tab_idx)
+{
+    GApplication *app = g_application_get_default();
+    GNotification *notification;
+    GIcon *icon;
+    gchar *id;
+
+    if (!app) {
+        debug_notification_log("notify skip no-app title=%s body=%s",
+                               title ? title : "",
+                               body ? body : "");
+        return;
+    }
+
+    debug_notification_log(
+        "notify send begin id_next=%u app_id=%s registered=%d dbus=%p active=%d target=(%d,%d,%d) title=%s body=%s",
+        g_desktop_notification_serial + 1,
+        g_application_get_application_id(app)
+            ? g_application_get_application_id(app) : "(null)",
+        g_application_get_is_registered(app),
+        g_application_get_dbus_connection(app),
+        g_main_window_active,
+        ws_idx, pane_idx, tab_idx,
+        title ? title : "",
+        body ? body : "");
+
+    notification = g_notification_new(title ? title : "PrettyMux");
+    if (body && body[0])
+        g_notification_set_body(notification, body);
+    g_notification_set_priority(notification, G_NOTIFICATION_PRIORITY_NORMAL);
+
+    icon = g_themed_icon_new(prettymux_icon_name());
+    g_notification_set_icon(notification, icon);
+    g_object_unref(icon);
+
+    if (ws_idx >= 0 && pane_idx >= 0 && tab_idx >= 0) {
+        g_notification_set_default_action_and_target_value(
+            notification,
+            "app.navigate-to-terminal",
+            g_variant_new("(iii)", ws_idx, pane_idx, tab_idx));
+    }
+
+    id = g_strdup_printf("desktop-%u", ++g_desktop_notification_serial);
+    g_application_send_notification(app, id, notification);
+    debug_notification_log("notify send done id=%s", id);
+    g_free(id);
+    g_object_unref(notification);
 }
 
 static void notifications_init(void) {
@@ -305,6 +465,114 @@ static void bell_button_update(void) {
     }
 }
 
+static void
+navigate_to_notification_target(int ws_idx, GtkNotebook *pane_notebook, int tab_idx)
+{
+    if (ws_idx >= 0 && workspaces &&
+        ws_idx < (int)workspaces->len) {
+        workspace_switch(ws_idx, ui.terminal_stack, ui.workspace_list);
+    }
+
+    if (pane_notebook && GTK_IS_NOTEBOOK(pane_notebook) &&
+        tab_idx >= 0 &&
+        tab_idx < gtk_notebook_get_n_pages(pane_notebook)) {
+        gtk_notebook_set_current_page(pane_notebook, tab_idx);
+        GhosttyTerminal *term = notebook_terminal_at(pane_notebook, tab_idx);
+        if (term)
+            ghostty_terminal_focus(term);
+    }
+
+    if (g_main_window)
+        gtk_window_present(g_main_window);
+}
+
+static gboolean
+notification_target_is_active(int ws_idx, GtkNotebook *pane_notebook, int tab_idx)
+{
+    Workspace *ws;
+    GtkNotebook *focused;
+    int current_tab;
+
+    if (!g_main_window_active)
+        return FALSE;
+    if (ws_idx < 0 || ws_idx != current_workspace || !pane_notebook || tab_idx < 0)
+        return FALSE;
+
+    ws = workspace_get_current();
+    if (!ws)
+        return FALSE;
+
+    focused = workspace_get_focused_pane(ws);
+    if (focused != pane_notebook)
+        return FALSE;
+
+    current_tab = gtk_notebook_get_current_page(focused);
+    return current_tab == tab_idx;
+}
+
+static void
+sidebar_toast_hide(void)
+{
+    if (g_sidebar_toast_timeout_id != 0) {
+        g_source_remove(g_sidebar_toast_timeout_id);
+        g_sidebar_toast_timeout_id = 0;
+    }
+    sidebar_toast_action_free(g_sidebar_toast_action);
+    g_sidebar_toast_action = NULL;
+    if (ui.toast_revealer)
+        gtk_revealer_set_reveal_child(GTK_REVEALER(ui.toast_revealer), FALSE);
+}
+
+static gboolean
+sidebar_toast_timeout_cb(gpointer user_data)
+{
+    (void)user_data;
+    g_sidebar_toast_timeout_id = 0;
+    sidebar_toast_hide();
+    return G_SOURCE_REMOVE;
+}
+
+static void
+on_sidebar_toast_action_clicked(GtkButton *btn, gpointer user_data)
+{
+    (void)btn;
+    (void)user_data;
+
+    if (!g_sidebar_toast_action)
+        return;
+
+    navigate_to_notification_target(g_sidebar_toast_action->workspace_idx,
+                                    g_sidebar_toast_action->pane_notebook,
+                                    g_sidebar_toast_action->tab_idx);
+    sidebar_toast_hide();
+}
+
+static void
+on_sidebar_toast_close_clicked(GtkButton *btn, gpointer user_data)
+{
+    (void)btn;
+    (void)user_data;
+    sidebar_toast_hide();
+}
+
+static void
+sidebar_toast_show(const char *msg, int ws_idx, GtkNotebook *pane_notebook, int tab_idx)
+{
+    if (!ui.toast_revealer || !ui.toast_label || !msg || !msg[0])
+        return;
+
+    sidebar_toast_hide();
+
+    g_sidebar_toast_action = g_new0(SidebarToastAction, 1);
+    g_sidebar_toast_action->workspace_idx = ws_idx;
+    g_sidebar_toast_action->pane_notebook = pane_notebook ? g_object_ref(pane_notebook) : NULL;
+    g_sidebar_toast_action->tab_idx = tab_idx;
+
+    gtk_label_set_text(GTK_LABEL(ui.toast_label), msg);
+    gtk_revealer_set_reveal_child(GTK_REVEALER(ui.toast_revealer), TRUE);
+    g_sidebar_toast_timeout_id = g_timeout_add_seconds(8, sidebar_toast_timeout_cb, NULL);
+}
+
 /* ── Notification click-to-navigate ── */
 
 /*
@@ -324,27 +592,9 @@ on_notif_row_clicked(GtkButton *btn, gpointer user_data)
     (void)btn;
     NotifNavData *nav = user_data;
 
-    /* Navigate to workspace */
-    if (nav->workspace_idx >= 0 && workspaces &&
-        nav->workspace_idx < (int)workspaces->len) {
-        workspace_switch(nav->workspace_idx,
-                         ui.terminal_stack, ui.workspace_list);
-    }
-
-    /* Navigate to tab in the pane notebook */
-    if (nav->pane_notebook && GTK_IS_NOTEBOOK(nav->pane_notebook) &&
-        nav->tab_idx >= 0 &&
-        nav->tab_idx < gtk_notebook_get_n_pages(nav->pane_notebook)) {
-        gtk_notebook_set_current_page(nav->pane_notebook, nav->tab_idx);
-        GhosttyTerminal *term =
-            notebook_terminal_at(nav->pane_notebook, nav->tab_idx);
-        if (term)
-            ghostty_terminal_focus(term);
-    }
-
-    /* Bring window to front */
-    if (g_main_window)
-        gtk_window_present(g_main_window);
+    navigate_to_notification_target(nav->workspace_idx,
+                                    nav->pane_notebook,
+                                    nav->tab_idx);
 
     /* Close the popover */
     if (nav->popover && GTK_IS_POPOVER(nav->popover))
@@ -758,13 +1008,14 @@ typedef struct {
     Workspace       *workspace;
     int              workspace_idx;
     GtkNotebook     *pane_notebook;
+    int              pane_idx;
     int              tab_idx;
 } SurfaceLookup;
 
 static SurfaceLookup
 find_terminal_for_surface(ghostty_surface_t surface)
 {
-    SurfaceLookup result = { NULL, NULL, -1, NULL, -1 };
+    SurfaceLookup result = { NULL, NULL, -1, NULL, -1, -1 };
     if (!surface || !workspaces)
         return result;
 
@@ -788,6 +1039,7 @@ find_terminal_for_surface(ghostty_surface_t surface)
                             if (GTK_WIDGET(notebook_terminal_at(nb, pg)) ==
                                 GTK_WIDGET(term)) {
                                 result.pane_notebook = nb;
+                                result.pane_idx = (int)pi;
                                 result.tab_idx = pg;
                                 return result;
                             }
@@ -801,45 +1053,149 @@ find_terminal_for_surface(ghostty_surface_t surface)
     return result;
 }
 
-// ── Port scanner callback ──
+static SurfaceLookup
+find_terminal_for_id(const char *terminal_id)
+{
+    SurfaceLookup result = { NULL, NULL, -1, NULL, -1, -1 };
+
+    if (!terminal_id || !terminal_id[0] || !workspaces)
+        return result;
+
+    for (guint wi = 0; wi < workspaces->len; wi++) {
+        Workspace *ws = g_ptr_array_index(workspaces, wi);
+        if (!ws || !ws->terminals)
+            continue;
+
+        for (guint ti = 0; ti < ws->terminals->len; ti++) {
+            GhosttyTerminal *term = g_ptr_array_index(ws->terminals, ti);
+            if (!term)
+                continue;
+            if (g_strcmp0(ghostty_terminal_get_id(term), terminal_id) != 0)
+                continue;
+
+            result.terminal = term;
+            result.workspace = ws;
+            result.workspace_idx = (int)wi;
+
+            if (!ws->pane_notebooks)
+                return result;
+
+            for (guint pi = 0; pi < ws->pane_notebooks->len; pi++) {
+                GtkNotebook *nb = g_ptr_array_index(ws->pane_notebooks, pi);
+                int n_pages = gtk_notebook_get_n_pages(nb);
+                for (int pg = 0; pg < n_pages; pg++) {
+                    if (notebook_terminal_at(nb, pg) == term) {
+                        result.pane_notebook = nb;
+                        result.pane_idx = (int)pi;
+                        result.tab_idx = pg;
+                        return result;
+                    }
+                }
+            }
+
+            return result;
+        }
+    }
+
+    return result;
+}
+
+static gboolean
+workspace_should_show_port_notification(Workspace *ws)
+{
+    if (!ws)
+        return FALSE;
+
+    return !(ws->name[0] == '\0' ||
+             strcmp(ws->name, "bash") == 0 ||
+             strcmp(ws->name, "zsh") == 0 ||
+             strcmp(ws->name, "fish") == 0 ||
+             strcmp(ws->name, "sh") == 0);
+}
 
 static void
-on_new_ports_detected(const int *new_ports, int new_port_count,
-                      const int *all_ports, int all_port_count,
-                      gpointer user_data)
+on_port_scanner_detected(const char *terminal_id, int port, gpointer user_data)
 {
-    (void)all_ports;
-    (void)all_port_count;
     (void)user_data;
+    handle_reported_port(terminal_id, port);
+}
 
-    if (new_port_count <= 0)
+static void
+register_terminal_scope(const char *terminal_id,
+                        pid_t       session_id,
+                        const char *tty_name,
+                        const char *tty_path)
+{
+    SurfaceLookup loc;
+
+    if (!terminal_id || !terminal_id[0])
         return;
 
-    /* Update current workspace notification */
-    Workspace *ws = workspace_get_current();
-    if (!ws)
+    loc = find_terminal_for_id(terminal_id);
+    if (!loc.terminal)
         return;
 
-    /* Only show ports if the workspace has a running command
-     * (title is not just a shell name or path) */
-    if (ws->name[0] == '\0' ||
-        strchr(ws->name, '/') != NULL ||
-        strcmp(ws->name, "bash") == 0 ||
-        strcmp(ws->name, "zsh") == 0 ||
-        strcmp(ws->name, "fish") == 0 ||
-        strcmp(ws->name, "sh") == 0)
+    ghostty_terminal_set_scope(loc.terminal, session_id, tty_name, tty_path);
+    port_scanner_register_terminal(terminal_id, session_id, tty_name,
+                                   tty_path, loc.workspace_idx);
+}
+
+static void
+handle_reported_port(const char *terminal_id, int port)
+{
+    if (!terminal_id || !terminal_id[0] || port <= 0)
         return;
 
-    int port = new_ports[0];
+    SurfaceLookup loc = find_terminal_for_id(terminal_id);
+    Workspace *ws = loc.workspace;
+    char msg[64];
+    char notif_msg[96];
+
+    if (loc.workspace_idx >= 0)
+        port_scanner_set_terminal_workspace(terminal_id, loc.workspace_idx);
+
+    if (!workspace_should_show_port_notification(ws))
+        return;
+
     snprintf(ws->notification, sizeof(ws->notification),
              "-> localhost:%d", port);
     workspace_refresh_sidebar_label(ws);
 
-    /* Desktop notification */
-    char msg[64];
     snprintf(msg, sizeof(msg), "Port %d detected", port);
-
-    send_desktop_notification("prettymux", msg);
+    snprintf(notif_msg, sizeof(notif_msg), "Port %d in %s",
+             port, ws->name[0] ? ws->name : "workspace");
+    notifications_add_full(notif_msg, loc.workspace_idx,
+                           loc.pane_notebook, loc.tab_idx);
+    bell_button_update();
+    workspace_mark_tab_notification(loc.pane_notebook, loc.tab_idx);
+    if (!notification_target_is_active(loc.workspace_idx,
+                                       loc.pane_notebook,
+                                       loc.tab_idx)) {
+        if (g_main_window_active) {
+            debug_notification_log(
+                "notify route port toast active=%d target=(%d,%d,%d) msg=%s",
+                g_main_window_active,
+                loc.workspace_idx, loc.pane_idx, loc.tab_idx,
+                notif_msg);
+            sidebar_toast_show(notif_msg, loc.workspace_idx,
+                               loc.pane_notebook, loc.tab_idx);
+        } else {
+            debug_notification_log(
+                "notify route port desktop active=%d target=(%d,%d,%d) msg=%s",
+                g_main_window_active,
+                loc.workspace_idx, loc.pane_idx, loc.tab_idx,
+                msg);
+            send_desktop_notification("PrettyMux", msg,
+                                      loc.workspace_idx,
+                                      loc.pane_idx,
+                                      loc.tab_idx);
+        }
+    } else {
+        debug_notification_log(
+            "notify route port suppressed active-target target=(%d,%d,%d) msg=%s",
+            loc.workspace_idx, loc.pane_idx, loc.tab_idx,
+            notif_msg);
+    }
 }
 
 // ── Socket server callback ──
@@ -1509,6 +1865,36 @@ on_socket_command(const char  *command,
             json_builder_set_member_name(response, "message");
             json_builder_add_string_value(response, "no terminal found");
         }
+    } else if (strcmp(command, "port.report") == 0) {
+        int port = (int)json_object_get_int_member_with_default(msg, "port", 0);
+        const char *terminal_id =
+            json_object_get_string_member_with_default(msg, "terminalId", "");
+
+        if (port > 0 && terminal_id[0]) {
+            handle_reported_port(terminal_id, port);
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "ok");
+        } else {
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "error");
+            json_builder_set_member_name(response, "message");
+            json_builder_add_string_value(response,
+                                          "missing port or terminalId");
+        }
+    } else if (strcmp(command, "terminal.register") == 0) {
+        const char *terminal_id =
+            json_object_get_string_member_with_default(msg, "terminalId", "");
+        pid_t session_id = (pid_t)json_object_get_int_member_with_default(msg,
+                                                                          "sessionId",
+                                                                          0);
+        const char *tty_name =
+            json_object_get_string_member_with_default(msg, "ttyName", "");
+        const char *tty_path =
+            json_object_get_string_member_with_default(msg, "ttyPath", "");
+
+        register_terminal_scope(terminal_id, session_id, tty_name, tty_path);
+        json_builder_set_member_name(response, "status");
+        json_builder_add_string_value(response, "ok");
     } else if (strcmp(command, "dismiss.welcome") == 0) {
         /* Close any visible dialog by activating the main window */
         if (g_main_window)
@@ -1561,7 +1947,8 @@ on_socket_command(const char  *command,
         strcmp(command, "tabs.list") != 0 &&
         strcmp(command, "list.actions") != 0 &&
         strcmp(command, "app.quit") != 0 &&
-        strcmp(command, "tab.edit") != 0) {
+        strcmp(command, "tab.edit") != 0 &&
+        strcmp(command, "port.report") != 0) {
         session_queue_save();
     }
 }
@@ -1654,8 +2041,12 @@ static gboolean action_idle_handler(gpointer user_data)
         break;
 
     case GHOSTTY_ACTION_DESKTOP_NOTIFICATION: {
-        send_desktop_notification("prettymux",
-                                  action.action.desktop_notification.body);
+        SurfaceLookup loc = find_terminal_for_surface(surface);
+        send_desktop_notification("PrettyMux",
+                                  action.action.desktop_notification.body,
+                                  loc.workspace_idx,
+                                  loc.pane_idx,
+                                  loc.tab_idx);
         break;
     }
 
@@ -1739,9 +2130,6 @@ static gboolean action_idle_handler(gpointer user_data)
                              action.action.command_finished.exit_code,
                              ws_name, term_title, secs);
 
-                /* Desktop notification via notify-send */
-                send_desktop_notification("prettymux", body);
-
                 /* Add to in-app notification system */
                 {
                     char notif_msg[256];
@@ -1753,6 +2141,29 @@ static gboolean action_idle_handler(gpointer user_data)
                                            loc.pane_notebook,
                                            loc.tab_idx);
                     bell_button_update();
+                    workspace_mark_tab_notification(loc.pane_notebook,
+                                                    loc.tab_idx);
+                    if (g_main_window_active) {
+                        debug_notification_log(
+                            "notify route command toast active=%d target=(%d,%d,%d) msg=%s",
+                            g_main_window_active,
+                            loc.workspace_idx, loc.pane_idx, loc.tab_idx,
+                            notif_msg);
+                        sidebar_toast_show(notif_msg,
+                                           loc.workspace_idx,
+                                           loc.pane_notebook,
+                                           loc.tab_idx);
+                    } else {
+                        debug_notification_log(
+                            "notify route command desktop active=%d target=(%d,%d,%d) msg=%s",
+                            g_main_window_active,
+                            loc.workspace_idx, loc.pane_idx, loc.tab_idx,
+                            body);
+                        send_desktop_notification("PrettyMux", body,
+                                                  loc.workspace_idx,
+                                                  loc.pane_idx,
+                                                  loc.tab_idx);
+                    }
                 }
             }
         }
@@ -1761,6 +2172,7 @@ static gboolean action_idle_handler(gpointer user_data)
 
     case GHOSTTY_ACTION_RING_BELL: {
         SurfaceLookup loc = find_terminal_for_surface(surface);
+        char body[256];
         if (loc.terminal)
             ghostty_terminal_notify_bell(loc.terminal);
 
@@ -1779,21 +2191,46 @@ static gboolean action_idle_handler(gpointer user_data)
                                    loc.pane_notebook,
                                    loc.tab_idx);
             bell_button_update();
+            workspace_mark_tab_notification(loc.pane_notebook, loc.tab_idx);
         }
 
-        /* Desktop notification if not the active workspace */
-        if (loc.workspace_idx >= 0 && loc.workspace_idx != current_workspace) {
+        if (!notification_target_is_active(loc.workspace_idx,
+                                           loc.pane_notebook,
+                                           loc.tab_idx)) {
             const char *ws_name = loc.workspace ? loc.workspace->name : "?";
             const char *term_title = loc.terminal
                 ? ghostty_terminal_get_title(loc.terminal) : NULL;
             if (!term_title || !term_title[0])
                 term_title = "Terminal";
 
-            char body[256];
             snprintf(body, sizeof(body), "Bell in %s/%s", ws_name, term_title);
 
-            /* Desktop notification via notify-send */
-            send_desktop_notification("prettymux", body);
+            if (g_main_window_active) {
+                debug_notification_log(
+                    "notify route bell toast active=%d target=(%d,%d,%d) msg=%s",
+                    g_main_window_active,
+                    loc.workspace_idx, loc.pane_idx, loc.tab_idx,
+                    body);
+                sidebar_toast_show(body,
+                                   loc.workspace_idx,
+                                   loc.pane_notebook,
+                                   loc.tab_idx);
+            } else {
+                debug_notification_log(
+                    "notify route bell desktop active=%d target=(%d,%d,%d) msg=%s",
+                    g_main_window_active,
+                    loc.workspace_idx, loc.pane_idx, loc.tab_idx,
+                    body);
+                send_desktop_notification("PrettyMux", body,
+                                          loc.workspace_idx,
+                                          loc.pane_idx,
+                                          loc.tab_idx);
+            }
+        } else {
+            debug_notification_log(
+                "notify route bell suppressed active-target target=(%d,%d,%d) msg=%s",
+                loc.workspace_idx, loc.pane_idx, loc.tab_idx,
+                body);
         }
         break;
     }
@@ -1930,6 +2367,52 @@ static void build_sidebar(void) {
     gtk_box_append(GTK_BOX(ui.sidebar_box), bottom_box);
 }
 
+static void
+build_toast_overlay(void)
+{
+    ui.toast_revealer = gtk_revealer_new();
+    gtk_revealer_set_transition_type(GTK_REVEALER(ui.toast_revealer),
+                                     GTK_REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
+    gtk_revealer_set_reveal_child(GTK_REVEALER(ui.toast_revealer), FALSE);
+    gtk_widget_set_margin_start(ui.toast_revealer, 12);
+    gtk_widget_set_margin_end(ui.toast_revealer, 12);
+
+    GtkWidget *toast_frame = gtk_frame_new(NULL);
+    gtk_widget_add_css_class(toast_frame, "prettymux-toast");
+    gtk_widget_set_size_request(toast_frame, 360, -1);
+    gtk_revealer_set_child(GTK_REVEALER(ui.toast_revealer), toast_frame);
+
+    GtkWidget *toast_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_set_margin_start(toast_box, 10);
+    gtk_widget_set_margin_end(toast_box, 10);
+    gtk_widget_set_margin_top(toast_box, 8);
+    gtk_widget_set_margin_bottom(toast_box, 8);
+    gtk_frame_set_child(GTK_FRAME(toast_frame), toast_box);
+
+    GtkWidget *toast_button = gtk_button_new();
+    gtk_widget_add_css_class(toast_button, "flat");
+    gtk_widget_set_hexpand(toast_button, TRUE);
+    gtk_widget_set_halign(toast_button, GTK_ALIGN_FILL);
+    g_signal_connect(toast_button, "clicked",
+                     G_CALLBACK(on_sidebar_toast_action_clicked), NULL);
+
+    ui.toast_label = gtk_label_new("");
+    gtk_label_set_xalign(GTK_LABEL(ui.toast_label), 0.0f);
+    gtk_label_set_wrap(GTK_LABEL(ui.toast_label), TRUE);
+    gtk_label_set_wrap_mode(GTK_LABEL(ui.toast_label), PANGO_WRAP_WORD_CHAR);
+    gtk_button_set_child(GTK_BUTTON(toast_button), ui.toast_label);
+    gtk_box_append(GTK_BOX(toast_box), toast_button);
+
+    GtkWidget *toast_close = gtk_button_new_with_label("×");
+    gtk_widget_add_css_class(toast_close, "flat");
+    g_signal_connect(toast_close, "clicked",
+                     G_CALLBACK(on_sidebar_toast_close_clicked), NULL);
+    gtk_box_append(GTK_BOX(toast_box), toast_close);
+
+    gtk_overlay_add_overlay(GTK_OVERLAY(ui.overlay), ui.toast_revealer);
+    apply_toast_position_setting();
+}
+
 static void on_new_browser_tab_clicked(GtkButton *b, gpointer d) {
     (void)b; (void)d;
     add_browser_tab("https://prettymux-web.vercel.app/?prettymux=t");
@@ -2026,7 +2509,6 @@ perform_app_quit(void)
     g_app_quit_in_progress = TRUE;
     session_begin_shutdown();
     workspace_set_shutting_down();
-    port_scanner_stop();
     socket_server_stop();
 
     GApplication *app = g_application_get_default();
@@ -2225,11 +2707,11 @@ on_app_shutdown(GApplication *app, gpointer user_data)
 {
     (void)app;
     (void)user_data;
+    port_scanner_stop();
+    socket_server_stop();
     if (!g_app_quit_in_progress) {
         session_begin_shutdown();
         workspace_set_shutting_down();
-        port_scanner_stop();
-        socket_server_stop();
     }
 }
 
@@ -2343,8 +2825,8 @@ on_navigate_to_terminal(GSimpleAction *action_obj, GVariant *parameter,
     if (!parameter)
         return;
 
-    int ws_idx = 0, tab_idx = 0, pane_idx = 0;
-    g_variant_get(parameter, "(iii)", &ws_idx, &tab_idx, &pane_idx);
+    int ws_idx = 0, pane_idx = 0, tab_idx = 0;
+    g_variant_get(parameter, "(iii)", &ws_idx, &pane_idx, &tab_idx);
 
     /* Switch to the workspace */
     if (ws_idx >= 0 && workspaces && ws_idx < (int)workspaces->len) {
@@ -2407,7 +2889,14 @@ setup_shell_integration_env(void)
     char *open_cli = g_build_filename(exe_dir, "prettymux-open", NULL);
     char *shell_integ = g_build_filename(exe_dir, "prettymux-shell-integration.sh", NULL);
     char *bashrc_wrapper = g_build_filename(exe_dir, "prettymux-bashrc.sh", NULL);
+    char *ghostty_bash = g_build_filename(exe_dir, "ghostty.bash", NULL);
     char *wrapper_dir = g_build_filename(exe_dir, "bin", NULL);
+
+    if (!g_file_test(shell_integ, G_FILE_TEST_EXISTS)) {
+        g_free(shell_integ);
+        shell_integ = g_build_filename(PRETTYMUX_SOURCE_DIR,
+                                       "prettymux-shell-integration.sh", NULL);
+    }
 
     if (!g_file_test(shell_integ, G_FILE_TEST_EXISTS)) {
         g_free(shell_integ);
@@ -2419,15 +2908,33 @@ setup_shell_integration_env(void)
         shell_integ = g_strdup("/usr/share/prettymux/shell-integration.sh");
     }
 
-    if (!g_file_test(shell_integ, G_FILE_TEST_EXISTS)) {
-        g_free(shell_integ);
-        shell_integ = g_build_filename(PRETTYMUX_SOURCE_DIR,
-                                       "prettymux-shell-integration.sh", NULL);
-    }
-
     if (!g_file_test(open_cli, G_FILE_TEST_EXISTS)) {
         g_free(open_cli);
         open_cli = g_find_program_in_path("prettymux-open");
+    }
+
+    if (!g_file_test(ghostty_bash, G_FILE_TEST_EXISTS)) {
+        g_free(ghostty_bash);
+        ghostty_bash = g_build_filename(PRETTYMUX_SOURCE_DIR,
+                                        "..", "..", "..",
+                                        "ghostty", "src", "shell-integration",
+                                        "bash", "ghostty.bash", NULL);
+    }
+
+    if (!g_file_test(ghostty_bash, G_FILE_TEST_EXISTS)) {
+        g_free(ghostty_bash);
+        ghostty_bash = g_strdup("/app/share/ghostty/shell-integration/bash/ghostty.bash");
+    }
+
+    if (!g_file_test(ghostty_bash, G_FILE_TEST_EXISTS)) {
+        g_free(ghostty_bash);
+        ghostty_bash = g_strdup("/usr/share/ghostty/shell-integration/bash/ghostty.bash");
+    }
+
+    if (!g_file_test(bashrc_wrapper, G_FILE_TEST_EXISTS)) {
+        g_free(bashrc_wrapper);
+        bashrc_wrapper = g_build_filename(PRETTYMUX_SOURCE_DIR,
+                                          "prettymux-bashrc.sh", NULL);
     }
 
     if (!g_file_test(bashrc_wrapper, G_FILE_TEST_EXISTS)) {
@@ -2438,12 +2945,6 @@ setup_shell_integration_env(void)
     if (!g_file_test(bashrc_wrapper, G_FILE_TEST_EXISTS)) {
         g_free(bashrc_wrapper);
         bashrc_wrapper = g_strdup("/usr/share/prettymux/prettymux-bashrc.sh");
-    }
-
-    if (!g_file_test(bashrc_wrapper, G_FILE_TEST_EXISTS)) {
-        g_free(bashrc_wrapper);
-        bashrc_wrapper = g_build_filename(PRETTYMUX_SOURCE_DIR,
-                                          "prettymux-bashrc.sh", NULL);
     }
 
     if (!g_file_test(wrapper_dir, G_FILE_TEST_IS_DIR)) {
@@ -2473,6 +2974,9 @@ setup_shell_integration_env(void)
     if (open_cli && g_file_test(open_cli, G_FILE_TEST_EXISTS))
         g_setenv("PRETTYMUX_OPEN_BIN", open_cli, TRUE);
 
+    if (ghostty_bash && g_file_test(ghostty_bash, G_FILE_TEST_EXISTS))
+        g_setenv("PRETTYMUX_GHOSTTY_BASH_INTEGRATION", ghostty_bash, TRUE);
+
     if (wrapper_dir && g_file_test(wrapper_dir, G_FILE_TEST_IS_DIR)) {
         const char *old_path = g_getenv("PATH");
         if (!old_path || !old_path[0]) {
@@ -2491,6 +2995,7 @@ setup_shell_integration_env(void)
     }
 
     g_free(open_cli);
+    g_free(ghostty_bash);
     g_free(shell_integ);
     g_free(bashrc_wrapper);
     g_free(wrapper_dir);
@@ -2499,6 +3004,12 @@ setup_shell_integration_env(void)
 
 static void on_activate(GtkApplication *app, gpointer user_data) {
     (void)user_data;
+    debug_notification_log("notify app activate app_id=%s registered=%d dbus=%p",
+                           g_application_get_application_id(G_APPLICATION(app))
+                               ? g_application_get_application_id(G_APPLICATION(app))
+                               : "(null)",
+                           g_application_get_is_registered(G_APPLICATION(app)),
+                           g_application_get_dbus_connection(G_APPLICATION(app)));
     app_settings_load();
     theme_set_custom(app_settings_get_custom_theme());
     app_settings_write_ghostty_override();
@@ -2542,6 +3053,9 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_window_set_icon_name(GTK_WINDOW(window), prettymux_icon_name());
     gtk_window_set_default_size(GTK_WINDOW(window), 1400, 900);
     g_main_window = GTK_WINDOW(window);
+    g_main_window_active = gtk_window_is_active(GTK_WINDOW(window));
+    g_signal_connect(window, "notify::is-active",
+                     G_CALLBACK(on_main_window_active_changed), NULL);
 
     // Shortcut handler (capture phase)
     GtkEventController *kc = gtk_event_controller_key_new();
@@ -2555,6 +3069,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
 
     ui.outer_paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
     gtk_overlay_set_child(GTK_OVERLAY(ui.overlay), ui.outer_paned);
+    build_toast_overlay();
 
     build_sidebar();
     gtk_paned_set_start_child(GTK_PANED(ui.outer_paned), ui.sidebar_box);
@@ -2610,6 +3125,10 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     if (sock_path) {
         setup_shell_integration_env();
     }
+    port_scanner_set_callback(on_port_scanner_detected, NULL);
+    port_scanner_set_window_active(g_main_window_active);
+    port_scanner_set_active_workspace(current_workspace);
+    port_scanner_start();
 
     // Create initial workspace + restore or create defaults
     workspace_add(ui.terminal_stack, ui.workspace_list, g_ghostty_app);
@@ -2627,10 +3146,6 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
 
     // Auto-save
     g_timeout_add_seconds(30, autosave_tick, NULL);
-
-    // ── Port scanner ──
-    port_scanner_set_callback(on_new_ports_detected, NULL);
-    port_scanner_start();
 
     gtk_window_present(GTK_WINDOW(window));
 
@@ -2652,8 +3167,10 @@ int main(int argc, char *argv[]) {
     g_setenv("WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS", "1", FALSE);
 #endif
     g_set_prgname("prettymux");
+    ensure_local_desktop_entry();
 
-    AdwApplication *app = adw_application_new(NULL, G_APPLICATION_FLAGS_NONE);
+    AdwApplication *app = adw_application_new("dev.prettymux.app",
+                                              G_APPLICATION_DEFAULT_FLAGS);
     g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
     g_signal_connect(app, "shutdown", G_CALLBACK(on_app_shutdown), NULL);
 

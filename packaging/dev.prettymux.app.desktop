@@ -7,4 +7,5 @@ Type=Application
 Categories=System;TerminalEmulator;
 Keywords=terminal;multiplexer;gpu;
 StartupNotify=true
+DBusActivatable=true
 X-GNOME-UsesNotifications=true

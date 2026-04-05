@@ -13,16 +13,16 @@ enum {
 int current_theme = THEME_INDEX_DARK;
 
 static Theme themes[THEME_COUNT] = {
-    {"Dark",    "#1e1e2e", "#cdd6f4", "#181825", "#313244", "#6c7086",
+    {"Dark",    "#1e1e2e", "#cdd6f4", "#181825", "#313244", "#6c7086", "#1f2430",
                 "#cba6f7", "#a6e3a1", "#f38ba8", "#f9e2af", "#89b4fa",
                 "#fab387", "#45475a", "#585b70"},
-    {"Light",   "#eff1f5", "#4c4f69", "#e6e9ef", "#ccd0da", "#8c8fa1",
+    {"Light",   "#eff1f5", "#4c4f69", "#e6e9ef", "#ccd0da", "#8c8fa1", "#ffffff",
                 "#8839ef", "#40a02b", "#d20f39", "#df8e1d", "#1e66f5",
                 "#fe640b", "#9ca0b0", "#acb0be"},
-    {"Monokai", "#272822", "#f8f8f2", "#1e1f1c", "#3e3d32", "#75715e",
+    {"Monokai", "#272822", "#f8f8f2", "#1e1f1c", "#3e3d32", "#75715e", "#1f201c",
                 "#ae81ff", "#a6e22e", "#f92672", "#e6db74", "#66d9ef",
                 "#fd971f", "#49483e", "#75715e"},
-    {"Custom",  "#16181d", "#e7ecf3", "#1d222b", "#313847", "#98a3b8",
+    {"Custom",  "#16181d", "#e7ecf3", "#1d222b", "#313847", "#98a3b8", "#1b2130",
                 "#7c8cff", "#7ad8a4", "#ff7d96", "#f4c06b", "#6fb9ff",
                 "#ffb38a", "#566179", "#8b74ff"},
 };
@@ -46,6 +46,7 @@ theme_init_default_custom_theme(void)
     custom->overlay = g_strdup(custom->overlay);
     custom->subtext = g_strdup(custom->subtext);
     custom->accent = g_strdup(custom->accent);
+    custom->toast_bg = g_strdup(custom->toast_bg);
     custom->green = g_strdup(custom->green);
     custom->red = g_strdup(custom->red);
     custom->yellow = g_strdup(custom->yellow);
@@ -76,6 +77,7 @@ theme_copy_custom(Theme *dest, const Theme *src)
     theme_store_string(&dest->overlay, src->overlay);
     theme_store_string(&dest->subtext, src->subtext);
     theme_store_string(&dest->accent, src->accent);
+    theme_store_string(&dest->toast_bg, src->toast_bg);
     theme_store_string(&dest->green, src->green);
     theme_store_string(&dest->red, src->red);
     theme_store_string(&dest->yellow, src->yellow);
@@ -202,7 +204,7 @@ theme_apply(void)
         "  background-image: none;"
         "}"
         ".tab-art-box {"
-        "  background: #ffffff;"
+        "  background: transparent;"
         "  border-radius: 7px;"
         "  padding: 1px;"
         "}"
@@ -217,6 +219,16 @@ theme_apply(void)
         ".resize-overlay { background-color: alpha(%s, 0.92); color: %s;"
         "  border: 1px solid %s; border-radius: 6px; padding: 6px 14px;"
         "  font-size: 12px; font-family: monospace; }"
+        ".prettymux-toast {"
+        "  background-color: %s;"
+        "  color: %s;"
+        "  border: 1px solid %s;"
+        "  box-shadow: 0 10px 30px alpha(black, 0.24);"
+        "  opacity: 1;"
+        "}"
+        ".prettymux-toast button {"
+        "  color: %s;"
+        "}"
         ".terminal-status { font-size: 20px; font-family: monospace;"
         "  color: %s; padding: 1px 4px; }"
         ".tab-blink {"
@@ -242,6 +254,7 @@ theme_apply(void)
         t->highlight,
         t->green,
         t->overlay, t->fg, t->muted,
+        t->toast_bg, t->fg, t->muted, t->fg,
         t->subtext,
         tab_accent
     );

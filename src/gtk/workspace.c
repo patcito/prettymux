@@ -1,6 +1,7 @@
 #include "workspace.h"
 #include "close_confirm.h"
 #include "ghostty_terminal.h"
+#include "port_scanner.h"
 #include "project_icon_cache.h"
 #include "resize_overlay.h"
 #include "session.h"
@@ -11,6 +12,8 @@ GPtrArray *workspaces = NULL;
 int current_workspace = 0;
 static gboolean app_shutting_down = FALSE;
 static guint64 next_pane_serial = 1;
+static guint notification_flash_timer_id = 0;
+static gboolean notification_flash_visible = FALSE;
 
 /* Idle callback: set a GtkPaned position to 50% of its allocated size. */
 static gboolean set_paned_half(gpointer data) {
@@ -490,6 +493,113 @@ workspace_has_pane(Workspace *ws, GtkNotebook *notebook)
     return FALSE;
 }
 
+static gboolean
+tab_has_notification_flash(GtkWidget *terminal)
+{
+    return terminal &&
+           GPOINTER_TO_INT(g_object_get_data(G_OBJECT(terminal),
+                                             "notification-flash")) != 0;
+}
+
+static void
+set_tab_flash_class(GtkNotebook *nb, int page_num, gboolean visible)
+{
+    GtkWidget *page;
+    GtkWidget *tab_widget;
+
+    if (!GTK_IS_NOTEBOOK(nb))
+        return;
+
+    page = gtk_notebook_get_nth_page(nb, page_num);
+    if (!page)
+        return;
+
+    tab_widget = gtk_notebook_get_tab_label(nb, page);
+    if (!tab_widget)
+        return;
+
+    if (visible)
+        gtk_widget_add_css_class(tab_widget, "tab-blink");
+    else
+        gtk_widget_remove_css_class(tab_widget, "tab-blink");
+}
+
+static gboolean
+workspace_has_notification_flash(void)
+{
+    if (!workspaces)
+        return FALSE;
+
+    for (guint wi = 0; wi < workspaces->len; wi++) {
+        Workspace *ws = g_ptr_array_index(workspaces, wi);
+        if (!ws || !ws->pane_notebooks)
+            continue;
+
+        for (guint pi = 0; pi < ws->pane_notebooks->len; pi++) {
+            GtkNotebook *nb = g_ptr_array_index(ws->pane_notebooks, pi);
+            if (!GTK_IS_NOTEBOOK(nb))
+                continue;
+
+            for (int ti = 0; ti < gtk_notebook_get_n_pages(nb); ti++) {
+                GtkWidget *terminal = notebook_terminal_at(nb, ti);
+                if (tab_has_notification_flash(terminal))
+                    return TRUE;
+            }
+        }
+    }
+
+    return FALSE;
+}
+
+static gboolean
+notification_flash_tick_cb(gpointer user_data)
+{
+    (void)user_data;
+
+    if (!workspace_has_notification_flash()) {
+        notification_flash_timer_id = 0;
+        notification_flash_visible = FALSE;
+        return G_SOURCE_REMOVE;
+    }
+
+    notification_flash_visible = !notification_flash_visible;
+
+    for (guint wi = 0; workspaces && wi < workspaces->len; wi++) {
+        Workspace *ws = g_ptr_array_index(workspaces, wi);
+        if (!ws || !ws->pane_notebooks)
+            continue;
+
+        for (guint pi = 0; pi < ws->pane_notebooks->len; pi++) {
+            GtkNotebook *nb = g_ptr_array_index(ws->pane_notebooks, pi);
+            if (!GTK_IS_NOTEBOOK(nb))
+                continue;
+
+            for (int ti = 0; ti < gtk_notebook_get_n_pages(nb); ti++) {
+                GtkWidget *terminal = notebook_terminal_at(nb, ti);
+                if (!terminal)
+                    continue;
+
+                set_tab_flash_class(nb, ti,
+                                    tab_has_notification_flash(terminal) &&
+                                    notification_flash_visible);
+            }
+        }
+    }
+
+    return G_SOURCE_CONTINUE;
+}
+
+static void
+ensure_notification_flash_timer(void)
+{
+    if (notification_flash_timer_id != 0 || !workspace_has_notification_flash())
+        return;
+
+    notification_flash_visible = TRUE;
+    notification_flash_timer_id =
+        g_timeout_add(800, notification_flash_tick_cb, NULL);
+}
+
 static void
 workspace_on_paned_position_notify(GObject *object,
                                    GParamSpec *pspec,
@@ -588,6 +698,48 @@ workspace_has_activity(Workspace *ws)
             return TRUE;
     }
     return FALSE;
+}
+
+void
+workspace_mark_tab_notification(GtkNotebook *pane, int page_num)
+{
+    GtkWidget *terminal;
+    Workspace *ws;
+
+    if (!GTK_IS_NOTEBOOK(pane) || page_num < 0 ||
+        page_num >= gtk_notebook_get_n_pages(pane))
+        return;
+
+    ws = g_object_get_data(G_OBJECT(pane), "workspace-ptr");
+    if (ws && workspace_index_of(ws) == current_workspace &&
+        gtk_notebook_get_current_page(pane) == page_num)
+        return;
+
+    terminal = notebook_terminal_at(pane, page_num);
+    if (!terminal)
+        return;
+
+    g_object_set_data(G_OBJECT(terminal), "notification-flash",
+                      GINT_TO_POINTER(1));
+    set_tab_flash_class(pane, page_num, TRUE);
+    ensure_notification_flash_timer();
+}
+
+void
+workspace_clear_tab_notification(GtkNotebook *pane, int page_num)
+{
+    GtkWidget *terminal;
+
+    if (!GTK_IS_NOTEBOOK(pane) || page_num < 0 ||
+        page_num >= gtk_notebook_get_n_pages(pane))
+        return;
+
+    terminal = notebook_terminal_at(pane, page_num);
+    if (!terminal)
+        return;
+
+    g_object_set_data(G_OBJECT(terminal), "notification-flash", NULL);
+    set_tab_flash_class(pane, page_num, FALSE);
 }
 
 /* ── Tab label refresh ─────────────────────────────────────────── */
@@ -2002,22 +2154,11 @@ void workspace_remove(int index, GtkWidget *terminal_stack, GtkWidget *workspace
     g_free(ws);
 }
 
-/* ── Tab blink timeout callback ─────────────────────────────────── */
-
-static gboolean
-tab_blink_timeout_cb(gpointer user_data)
-{
-    GtkWidget *widget = GTK_WIDGET(user_data);
-    if (GTK_IS_WIDGET(widget))
-        gtk_widget_remove_css_class(widget, "tab-blink");
-    g_object_unref(widget);
-    return G_SOURCE_REMOVE;
-}
-
 void workspace_switch(int index, GtkWidget *terminal_stack, GtkWidget *workspace_list) {
     if (!workspaces || index < 0 || index >= (int)workspaces->len)
         return;
     current_workspace = index;
+    port_scanner_set_active_workspace(index);
 
     /* Bug 9 fix: use the workspace's container widget directly instead of
      * building a name string.  workspace_remove doesn't renumber stack
@@ -2038,32 +2179,9 @@ void workspace_switch(int index, GtkWidget *terminal_stack, GtkWidget *workspace
             int pg = gtk_notebook_get_current_page(focused);
             if (pg >= 0) {
                 GtkWidget *terminal = notebook_terminal_at(focused, pg);
-                if (terminal)
+                if (terminal) {
                     ghostty_terminal_clear_activity(GHOSTTY_TERMINAL(terminal));
-            }
-        }
-
-        /* Feature 4: Blink tabs that have activity */
-        if (ws->pane_notebooks) {
-            guint pi;
-            for (pi = 0; pi < ws->pane_notebooks->len; pi++) {
-                GtkNotebook *nb = g_ptr_array_index(ws->pane_notebooks, pi);
-                if (!GTK_IS_NOTEBOOK(nb)) continue;
-                int n_pages = gtk_notebook_get_n_pages(nb);
-                int ti;
-                for (ti = 0; ti < n_pages; ti++) {
-                    GtkWidget *page = gtk_notebook_get_nth_page(nb, ti);
-                    GtkWidget *terminal = page_linked_terminal(page);
-                    if (!terminal)
-                        continue;
-                    if (!ghostty_terminal_has_activity(GHOSTTY_TERMINAL(terminal)))
-                        continue;
-                    GtkWidget *tab_widget = gtk_notebook_get_tab_label(nb, page);
-                    if (!tab_widget)
-                        continue;
-                    gtk_widget_add_css_class(tab_widget, "tab-blink");
-                    g_object_ref(tab_widget);
-                    g_timeout_add(2000, tab_blink_timeout_cb, tab_widget);
+                    workspace_clear_tab_notification(focused, pg);
                 }
             }
         }
@@ -2699,6 +2817,7 @@ on_notebook_switch_page(GtkNotebook *nb, GtkWidget *page,
         focus_terminal_page(terminal);
         focus_terminal_page_later(terminal);
         ghostty_terminal_clear_activity(GHOSTTY_TERMINAL(terminal));
+        workspace_clear_tab_notification(nb, (int)page_num);
         /* Refresh tab labels + sidebar to remove the dot */
         workspace_refresh_tab_labels(ws);
         workspace_refresh_sidebar_label(ws);

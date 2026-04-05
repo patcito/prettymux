@@ -8,6 +8,7 @@ typedef struct {
     gboolean loaded;
     double ghostty_font_size;
     char *ghostty_theme;
+    char *toast_position;
     Theme custom_theme;
 } AppSettingsState;
 
@@ -15,6 +16,7 @@ static AppSettingsState app_settings = {
     .loaded = FALSE,
     .ghostty_font_size = 0.0,
     .ghostty_theme = NULL,
+    .toast_position = NULL,
     .custom_theme = {
         .name = "Custom",
         .bg = "#16181d",
@@ -23,6 +25,7 @@ static AppSettingsState app_settings = {
         .overlay = "#313847",
         .subtext = "#98a3b8",
         .accent = "#7c8cff",
+        .toast_bg = "#1b2130",
         .green = "#7ad8a4",
         .red = "#ff7d96",
         .yellow = "#f4c06b",
@@ -49,6 +52,7 @@ app_settings_init_default_custom_theme(void)
     app_settings.custom_theme.overlay = g_strdup(app_settings.custom_theme.overlay);
     app_settings.custom_theme.subtext = g_strdup(app_settings.custom_theme.subtext);
     app_settings.custom_theme.accent = g_strdup(app_settings.custom_theme.accent);
+    app_settings.custom_theme.toast_bg = g_strdup(app_settings.custom_theme.toast_bg);
     app_settings.custom_theme.green = g_strdup(app_settings.custom_theme.green);
     app_settings.custom_theme.red = g_strdup(app_settings.custom_theme.red);
     app_settings.custom_theme.yellow = g_strdup(app_settings.custom_theme.yellow);
@@ -93,6 +97,7 @@ app_settings_copy_theme(Theme *dest, const Theme *src)
     app_settings_store_theme_string(&dest->overlay, src->overlay);
     app_settings_store_theme_string(&dest->subtext, src->subtext);
     app_settings_store_theme_string(&dest->accent, src->accent);
+    app_settings_store_theme_string(&dest->toast_bg, src->toast_bg);
     app_settings_store_theme_string(&dest->green, src->green);
     app_settings_store_theme_string(&dest->red, src->red);
     app_settings_store_theme_string(&dest->yellow, src->yellow);
@@ -115,6 +120,7 @@ app_settings_load_theme_colors(GKeyFile *kf, const char *group, Theme *theme)
         {"overlay", &theme->overlay},
         {"subtext", &theme->subtext},
         {"accent", &theme->accent},
+        {"toast_bg", &theme->toast_bg},
         {"green", &theme->green},
         {"red", &theme->red},
         {"yellow", &theme->yellow},
@@ -185,12 +191,19 @@ app_settings_load(void)
         if (g_key_file_has_key(kf, "ghostty", "theme", NULL))
             app_settings.ghostty_theme =
                 g_key_file_get_string(kf, "ghostty", "theme", NULL);
+        if (g_key_file_has_key(kf, "ui", "toast_position", NULL))
+            app_settings.toast_position =
+                g_key_file_get_string(kf, "ui", "toast_position", NULL);
         app_settings_load_theme_colors(kf, "custom_theme",
                                        &app_settings.custom_theme);
     }
 
     if (!app_settings.ghostty_theme)
         app_settings.ghostty_theme = g_strdup("");
+    if (!app_settings.toast_position || !app_settings.toast_position[0]) {
+        g_free(app_settings.toast_position);
+        app_settings.toast_position = g_strdup("top");
+    }
 
     g_free(path);
     g_key_file_unref(kf);
@@ -213,6 +226,11 @@ app_settings_save(void)
     g_key_file_set_string(kf, "ghostty", "theme",
                           app_settings.ghostty_theme ?
                               app_settings.ghostty_theme : "");
+    g_key_file_set_string(kf, "ui", "toast_position",
+                          app_settings.toast_position &&
+                          app_settings.toast_position[0]
+                              ? app_settings.toast_position
+                              : "top");
 
     g_key_file_set_string(kf, "custom_theme", "bg", app_settings.custom_theme.bg);
     g_key_file_set_string(kf, "custom_theme", "fg", app_settings.custom_theme.fg);
@@ -220,6 +238,7 @@ app_settings_save(void)
     g_key_file_set_string(kf, "custom_theme", "overlay", app_settings.custom_theme.overlay);
     g_key_file_set_string(kf, "custom_theme", "subtext", app_settings.custom_theme.subtext);
     g_key_file_set_string(kf, "custom_theme", "accent", app_settings.custom_theme.accent);
+    g_key_file_set_string(kf, "custom_theme", "toast_bg", app_settings.custom_theme.toast_bg);
     g_key_file_set_string(kf, "custom_theme", "green", app_settings.custom_theme.green);
     g_key_file_set_string(kf, "custom_theme", "red", app_settings.custom_theme.red);
     g_key_file_set_string(kf, "custom_theme", "yellow", app_settings.custom_theme.yellow);
@@ -269,6 +288,24 @@ app_settings_set_ghostty_theme(const char *theme_name)
     app_settings_load();
     g_free(app_settings.ghostty_theme);
     app_settings.ghostty_theme = g_strdup(theme_name ? theme_name : "");
+}
+
+const char *
+app_settings_get_toast_position(void)
+{
+    app_settings_load();
+    return app_settings.toast_position ? app_settings.toast_position : "top";
+}
+
+void
+app_settings_set_toast_position(const char *position)
+{
+    app_settings_load();
+    g_free(app_settings.toast_position);
+    if (g_strcmp0(position, "bottom") == 0)
+        app_settings.toast_position = g_strdup("bottom");
+    else
+        app_settings.toast_position = g_strdup("top");
 }
 
 const char *

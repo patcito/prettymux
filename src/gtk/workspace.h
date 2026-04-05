@@ -137,6 +137,8 @@ void workspace_navigate_pane(Workspace *ws, int dx, int dy);
  *   reflect activity indicators and progress bars.
  */
 void workspace_refresh_tab_labels(Workspace *ws);
+void workspace_mark_tab_notification(GtkNotebook *pane, int page_num);
+void workspace_clear_tab_notification(GtkNotebook *pane, int page_num);
 
 /*
  * Check if any terminal in the workspace has unread activity.

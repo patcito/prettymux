@@ -46,6 +46,10 @@ struct _GhosttyTerminal {
     char              *title;
     char              *cwd;
     char              *start_cwd;
+    char              *terminal_id;
+    pid_t              session_id;
+    char              *tty_name;
+    char              *tty_path;
     int                exit_code; /* -1 while running */
 
     /* Activity tracking */
@@ -65,6 +69,8 @@ struct _GhosttyTerminal {
 };
 
 G_DEFINE_FINAL_TYPE(GhosttyTerminal, ghostty_terminal, GTK_TYPE_WIDGET)
+
+static guint64 next_terminal_id = 1;
 
 /* ── Helpers ───────────────────────────────────────────────────── */
 
@@ -296,12 +302,18 @@ on_gl_realize(GtkGLArea *area, gpointer user_data)
         "}";
     static const char *open_func = "() { xdg-open \"$@\"; }";
 
-    ghostty_env_var_s env_vars[9];
+    ghostty_env_var_s env_vars[10];
     size_t env_count = 0;
 
     env_vars[env_count].key = "PRETTYMUX";
     env_vars[env_count].value = "1";
     env_count++;
+
+    if (self->terminal_id && self->terminal_id[0]) {
+        env_vars[env_count].key = "PRETTYMUX_TERMINAL_ID";
+        env_vars[env_count].value = self->terminal_id;
+        env_count++;
+    }
 
     const char *sock_path = socket_server_get_path();
     if (sock_path) {
@@ -766,6 +778,9 @@ ghostty_terminal_finalize(GObject *object)
     g_free(self->title);
     g_free(self->cwd);
     g_free(self->start_cwd);
+    g_free(self->terminal_id);
+    g_free(self->tty_name);
+    g_free(self->tty_path);
     g_free(self->status_cwd_full);
     g_free(self->status_git_full);
     G_OBJECT_CLASS(ghostty_terminal_parent_class)->finalize(object);
@@ -839,6 +854,8 @@ ghostty_terminal_init(GhosttyTerminal *self)
     self->title = NULL;
     self->cwd = NULL;
     self->start_cwd = NULL;
+    self->terminal_id =
+        g_strdup_printf("term-%" G_GUINT64_FORMAT, next_terminal_id++);
     self->exit_code = -1;
     self->has_new_output = FALSE;
     self->progress_state = -1;
@@ -999,6 +1016,34 @@ ghostty_terminal_get_cwd(GhosttyTerminal *self)
     return self->cwd;
 }
 
+const char *
+ghostty_terminal_get_id(GhosttyTerminal *self)
+{
+    g_return_val_if_fail(GHOSTTY_IS_TERMINAL(self), NULL);
+    return self->terminal_id;
+}
+
+pid_t
+ghostty_terminal_get_session_id(GhosttyTerminal *self)
+{
+    g_return_val_if_fail(GHOSTTY_IS_TERMINAL(self), 0);
+    return self->session_id;
+}
+
+const char *
+ghostty_terminal_get_tty_name(GhosttyTerminal *self)
+{
+    g_return_val_if_fail(GHOSTTY_IS_TERMINAL(self), NULL);
+    return self->tty_name;
+}
+
+const char *
+ghostty_terminal_get_tty_path(GhosttyTerminal *self)
+{
+    g_return_val_if_fail(GHOSTTY_IS_TERMINAL(self), NULL);
+    return self->tty_path;
+}
+
 int
 ghostty_terminal_get_exit_code(GhosttyTerminal *self)
 {
@@ -1022,6 +1067,21 @@ ghostty_terminal_set_cwd(GhosttyTerminal *self, const char *cwd)
     g_free(self->cwd);
     self->cwd = g_strdup(cwd);
     g_signal_emit(self, signals[SIGNAL_PWD_CHANGED], 0, self->cwd);
+}
+
+void
+ghostty_terminal_set_scope(GhosttyTerminal *self,
+                           pid_t            session_id,
+                           const char      *tty_name,
+                           const char      *tty_path)
+{
+    g_return_if_fail(GHOSTTY_IS_TERMINAL(self));
+
+    self->session_id = session_id;
+    g_free(self->tty_name);
+    self->tty_name = g_strdup(tty_name ? tty_name : "");
+    g_free(self->tty_path);
+    self->tty_path = g_strdup(tty_path ? tty_path : "");
 }
 
 void

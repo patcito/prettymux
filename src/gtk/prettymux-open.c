@@ -46,6 +46,8 @@ usage(void)
         "       prettymux-open --list-actions           List all actions\n"
         "       prettymux-open --quit                   Close prettymux cleanly\n"
         "       prettymux-open --switch-workspace <n>   Switch to workspace N\n"
+        "       prettymux-open --register-terminal <id> --session-id <sid> [--tty-name <tty>] [--tty-path <path>]\n"
+        "       prettymux-open --report-port <port> --terminal-id <id>\n"
         "\n"
         "Targeting (for --exec, --type):\n"
         "  -w <n>    Workspace index (0-based)\n"
@@ -343,6 +345,78 @@ main(int argc, char *argv[])
         if (argc < 3) { fprintf(stderr, "prettymux-open: --switch-workspace requires index\n"); return 1; }
         char msg[128];
         snprintf(msg, sizeof(msg), "{\"command\":\"workspace.switch\",\"index\":%d}", atoi(argv[2]));
+        return send_command(msg);
+    }
+
+    if (strcmp(arg, "--register-terminal") == 0) {
+        const char *terminal_id = NULL;
+        const char *tty_name = "";
+        const char *tty_path = "";
+        int session_id = 0;
+
+        if (argc < 5) {
+            fprintf(stderr,
+                    "prettymux-open: --register-terminal requires <id> --session-id <sid>\n");
+            return 1;
+        }
+
+        terminal_id = argv[2];
+        for (int i = 3; i + 1 < argc; i += 2) {
+            if (strcmp(argv[i], "--session-id") == 0)
+                session_id = atoi(argv[i + 1]);
+            else if (strcmp(argv[i], "--tty-name") == 0)
+                tty_name = argv[i + 1];
+            else if (strcmp(argv[i], "--tty-path") == 0)
+                tty_path = argv[i + 1];
+        }
+
+        if (!terminal_id || !terminal_id[0] || session_id <= 0) {
+            fprintf(stderr,
+                    "prettymux-open: --register-terminal requires <id> --session-id <sid>\n");
+            return 1;
+        }
+
+        char *escaped_id = json_escape(terminal_id);
+        char *escaped_tty_name = json_escape(tty_name);
+        char *escaped_tty_path = json_escape(tty_path);
+        char msg[512];
+        snprintf(msg, sizeof(msg),
+                 "{\"command\":\"terminal.register\",\"terminalId\":\"%s\",\"sessionId\":%d,\"ttyName\":\"%s\",\"ttyPath\":\"%s\"}",
+                 escaped_id, session_id, escaped_tty_name, escaped_tty_path);
+        free(escaped_id);
+        free(escaped_tty_name);
+        free(escaped_tty_path);
+        return send_command(msg);
+    }
+
+    if (strcmp(arg, "--report-port") == 0) {
+        if (argc < 5) {
+            fprintf(stderr,
+                    "prettymux-open: --report-port requires <port> --terminal-id <id>\n");
+            return 1;
+        }
+
+        int port = atoi(argv[2]);
+        const char *terminal_id = NULL;
+        for (int i = 3; i + 1 < argc; i += 2) {
+            if (strcmp(argv[i], "--terminal-id") == 0) {
+                terminal_id = argv[i + 1];
+                break;
+            }
+        }
+
+        if (port <= 0 || !terminal_id || !terminal_id[0]) {
+            fprintf(stderr,
+                    "prettymux-open: --report-port requires <port> --terminal-id <id>\n");
+            return 1;
+        }
+
+        char *escaped = json_escape(terminal_id);
+        char msg[256];
+        snprintf(msg, sizeof(msg),
+                 "{\"command\":\"port.report\",\"port\":%d,\"terminalId\":\"%s\"}",
+                 port, escaped);
+        free(escaped);
         return send_command(msg);
     }
 

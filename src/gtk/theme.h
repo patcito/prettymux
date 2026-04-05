@@ -3,6 +3,7 @@
 typedef struct {
     const char *name;
     const char *bg, *fg, *surface, *overlay, *subtext, *accent;
+    const char *toast_bg;
     const char *green, *red, *yellow, *blue, *peach, *muted, *highlight;
 } Theme;
 

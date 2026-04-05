@@ -6,6 +6,7 @@
  */
 #pragma once
 
+#include <sys/types.h>
 #include <gtk/gtk.h>
 #include "ghostty.h"
 
@@ -50,6 +51,10 @@ const char *ghostty_terminal_get_title(GhosttyTerminal *self);
  * The string is owned by the widget.
  */
 const char *ghostty_terminal_get_cwd(GhosttyTerminal *self);
+const char *ghostty_terminal_get_id(GhosttyTerminal *self);
+pid_t ghostty_terminal_get_session_id(GhosttyTerminal *self);
+const char *ghostty_terminal_get_tty_name(GhosttyTerminal *self);
+const char *ghostty_terminal_get_tty_path(GhosttyTerminal *self);
 
 /*
  * ghostty_terminal_get_exit_code:
@@ -68,6 +73,10 @@ int ghostty_terminal_get_exit_code(GhosttyTerminal *self);
  */
 void ghostty_terminal_set_title(GhosttyTerminal *self, const char *title);
 void ghostty_terminal_set_cwd(GhosttyTerminal *self, const char *cwd);
+void ghostty_terminal_set_scope(GhosttyTerminal *self,
+                                pid_t            session_id,
+                                const char      *tty_name,
+                                const char      *tty_path);
 void ghostty_terminal_notify_bell(GhosttyTerminal *self);
 void ghostty_terminal_notify_command_finished(GhosttyTerminal *self,
                                               int exit_code,

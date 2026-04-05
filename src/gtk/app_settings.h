@@ -12,6 +12,9 @@ const char *app_settings_get_ghostty_theme(void);
 void app_settings_set_ghostty_theme(const char *theme_name);
 const char *app_settings_default_ghostty_theme_for_prettymux_theme(const char *theme_name);
 
+const char *app_settings_get_toast_position(void);
+void app_settings_set_toast_position(const char *position);
+
 const Theme *app_settings_get_custom_theme(void);
 void app_settings_set_custom_theme(const Theme *theme);
 
