@@ -16,3 +16,7 @@ void close_confirm_request(GtkWindow *parent,
                            CloseConfirmCallback callback,
                            gpointer user_data,
                            GDestroyNotify destroy);
+
+gboolean close_confirm_get_enabled(CloseConfirmKind kind);
+void close_confirm_set_enabled(CloseConfirmKind kind, gboolean enabled);
+void close_confirm_reset_defaults(void);

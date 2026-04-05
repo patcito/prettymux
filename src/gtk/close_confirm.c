@@ -80,7 +80,7 @@ close_confirm_load(void)
     g_key_file_unref(kf);
 }
 
-static gboolean
+gboolean
 close_confirm_is_enabled(CloseConfirmKind kind)
 {
     close_confirm_load();
@@ -99,7 +99,7 @@ close_confirm_is_enabled(CloseConfirmKind kind)
     }
 }
 
-static void
+void
 close_confirm_set_enabled(CloseConfirmKind kind, gboolean enabled)
 {
     close_confirm_load();
@@ -121,6 +121,23 @@ close_confirm_set_enabled(CloseConfirmKind kind, gboolean enabled)
         return;
     }
 
+    close_confirm_save();
+}
+
+gboolean
+close_confirm_get_enabled(CloseConfirmKind kind)
+{
+    return close_confirm_is_enabled(kind);
+}
+
+void
+close_confirm_reset_defaults(void)
+{
+    close_confirm_load();
+    confirm_tab_close = TRUE;
+    confirm_pane_close = TRUE;
+    confirm_workspace_close = TRUE;
+    confirm_app_close = TRUE;
     close_confirm_save();
 }
 

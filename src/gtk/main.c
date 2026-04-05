@@ -18,6 +18,7 @@
 #include "ghostty.h"
 #include "ghostty_terminal.h"
 #include "browser_tab.h"
+#include "app_settings.h"
 #include "theme.h"
 #include "shortcuts.h"
 #include "workspace.h"
@@ -27,6 +28,7 @@
 #include "port_scanner.h"
 #include "socket_server.h"
 #include "shortcuts_overlay.h"
+#include "settings_dialog.h"
 #include "pane_move_overlay.h"
 #include "pip_window.h"
 #include "resize_overlay.h"
@@ -39,6 +41,7 @@ float g_ghostty_default_font_size = 0.0f;
 static GtkWindow *g_main_window = NULL;
 static gboolean g_app_quit_in_progress = FALSE;
 static char *g_app_icon_path = NULL;
+static ghostty_config_t g_runtime_ghostty_config = NULL;
 
 // Widget references for the main window layout
 static struct {
@@ -53,6 +56,100 @@ static struct {
     GtkWidget *command_palette;   // CommandPalette overlay widget
     GtkWidget *bell_button;       // Bell/notification button in sidebar header
 } ui = {0};
+
+static void
+apply_theme_to_ghostty_scheme(void)
+{
+    ghostty_color_scheme_e scheme;
+    const Theme *t;
+
+    if (!g_ghostty_app)
+        return;
+
+    t = theme_get_current();
+    scheme = (strcmp(t->name, "Light") == 0)
+        ? GHOSTTY_COLOR_SCHEME_LIGHT
+        : GHOSTTY_COLOR_SCHEME_DARK;
+    ghostty_app_set_color_scheme(g_ghostty_app, scheme);
+
+    if (!workspaces)
+        return;
+
+    for (guint wi = 0; wi < workspaces->len; wi++) {
+        Workspace *ws = g_ptr_array_index(workspaces, wi);
+        if (!ws->terminals)
+            continue;
+        for (guint ti = 0; ti < ws->terminals->len; ti++) {
+            GhosttyTerminal *term = g_ptr_array_index(ws->terminals, ti);
+            ghostty_surface_t surf = ghostty_terminal_get_surface(term);
+            if (surf)
+                ghostty_surface_set_color_scheme(surf, scheme);
+        }
+    }
+}
+
+static void
+sync_ghostty_theme_to_prettymux_theme(void)
+{
+    const Theme *t = theme_get_current();
+
+    app_settings_set_ghostty_theme(
+        app_settings_default_ghostty_theme_for_prettymux_theme(t ? t->name : NULL));
+}
+
+static ghostty_config_t
+load_ghostty_config_with_overrides(void)
+{
+    ghostty_config_t config = ghostty_config_new();
+    char *override_path = NULL;
+    double font_size = 0.0;
+    const char *key = "font-size";
+
+    ghostty_config_load_default_files(config);
+    override_path = app_settings_ghostty_override_path();
+    if (g_file_test(override_path, G_FILE_TEST_EXISTS))
+        ghostty_config_load_file(config, override_path);
+    g_free(override_path);
+
+    g_ghostty_default_font_size = 0.0f;
+    if (ghostty_config_get(config, &font_size, key, strlen(key)) &&
+        font_size > 0.0)
+        g_ghostty_default_font_size = (float)font_size;
+
+    ghostty_config_finalize(config);
+    return config;
+}
+
+static void
+apply_runtime_settings(void *user_data)
+{
+    (void)user_data;
+
+    app_settings_write_ghostty_override();
+    theme_set_custom(app_settings_get_custom_theme());
+
+    if (g_ghostty_app) {
+        g_runtime_ghostty_config = load_ghostty_config_with_overrides();
+        ghostty_app_update_config(g_ghostty_app, g_runtime_ghostty_config);
+
+        if (workspaces) {
+            for (guint wi = 0; wi < workspaces->len; wi++) {
+                Workspace *ws = g_ptr_array_index(workspaces, wi);
+                if (!ws->terminals)
+                    continue;
+                for (guint ti = 0; ti < ws->terminals->len; ti++) {
+                    GhosttyTerminal *term = g_ptr_array_index(ws->terminals, ti);
+                    ghostty_surface_t surf = ghostty_terminal_get_surface(term);
+                    if (surf)
+                        ghostty_surface_update_config(surf, g_runtime_ghostty_config);
+                }
+            }
+        }
+    }
+
+    apply_theme_to_ghostty_scheme();
+    session_queue_save();
+}
 
 // ── Notification system ──
 
@@ -469,31 +566,14 @@ static void handle_action(const char *action) {
             GtkWidget *child = gtk_notebook_get_nth_page(GTK_NOTEBOOK(ui.browser_notebook), pg);
             if (BROWSER_IS_TAB(child)) browser_tab_show_inspector(BROWSER_TAB(child));
         }
+    } else if (strcmp(action, "settings.show") == 0) {
+        if (g_main_window)
+            settings_dialog_present(g_main_window, apply_runtime_settings, NULL);
     } else if (strcmp(action, "theme.cycle") == 0) {
         theme_cycle();
-        /* Tell ghostty to switch color scheme + reload config for each surface */
-        if (g_ghostty_app) {
-            const Theme *t = theme_get_current();
-            ghostty_color_scheme_e scheme = (strcmp(t->name, "Light") == 0)
-                ? GHOSTTY_COLOR_SCHEME_LIGHT
-                : GHOSTTY_COLOR_SCHEME_DARK;
-            ghostty_app_set_color_scheme(g_ghostty_app, scheme);
-
-            /* Also set per-surface so it takes effect even without
-             * window-theme=auto in ghostty config */
-            if (workspaces) {
-                for (guint wi = 0; wi < workspaces->len; wi++) {
-                    Workspace *ws = g_ptr_array_index(workspaces, wi);
-                    if (!ws->terminals) continue;
-                    for (guint ti = 0; ti < ws->terminals->len; ti++) {
-                        GhosttyTerminal *term = g_ptr_array_index(ws->terminals, ti);
-                        ghostty_surface_t surf = ghostty_terminal_get_surface(term);
-                        if (surf)
-                            ghostty_surface_set_color_scheme(surf, scheme);
-                    }
-                }
-            }
-        }
+        sync_ghostty_theme_to_prettymux_theme();
+        app_settings_save();
+        apply_runtime_settings(NULL);
     } else if (strcmp(action, "tab.close") == 0) {
         request_close_current_tab(workspace_get_current());
     } else if (strcmp(action, "pane.tab.move") == 0) {
@@ -2419,22 +2499,15 @@ setup_shell_integration_env(void)
 
 static void on_activate(GtkApplication *app, gpointer user_data) {
     (void)user_data;
+    app_settings_load();
+    theme_set_custom(app_settings_get_custom_theme());
+    app_settings_write_ghostty_override();
+
     // Init ghostty
     if (ghostty_init(0, NULL) != 0) { fprintf(stderr, "ghostty_init failed\n"); return; }
 
-    ghostty_config_t config = ghostty_config_new();
-    ghostty_config_load_default_files(config);
-    {
-        double font_size = 0.0;
-        const char *key = "font-size";
-
-        g_ghostty_default_font_size = 0.0f;
-        if (ghostty_config_get(config, &font_size, key, strlen(key)) &&
-            font_size > 0.0) {
-            g_ghostty_default_font_size = (float)font_size;
-        }
-    }
-    ghostty_config_finalize(config);
+    ghostty_config_t config = load_ghostty_config_with_overrides();
+    g_runtime_ghostty_config = config;
 
     ghostty_runtime_config_s rc = {0};
     rc.wakeup_cb = wakeup_cb;
@@ -2460,6 +2533,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
 
     // Theme
     theme_apply();
+    apply_theme_to_ghostty_scheme();
 
     // Window
     GtkWidget *window = gtk_application_window_new(app);
@@ -2544,6 +2618,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
         session_restore(GTK_WINDOW(window), ui.browser_notebook,
                         ui.terminal_stack, ui.workspace_list, g_ghostty_app,
                         add_browser_tab);
+        apply_theme_to_ghostty_scheme();
     }
     // Always ensure at least one browser tab exists
     if (gtk_notebook_get_n_pages(GTK_NOTEBOOK(ui.browser_notebook)) == 0) {

@@ -6,11 +6,16 @@ typedef struct {
     const char *green, *red, *yellow, *blue, *peach, *muted, *highlight;
 } Theme;
 
-#define THEME_COUNT 3
+#define THEME_COUNT 4
 
 extern int current_theme;
 
+int theme_count(void);
+const Theme *theme_get_at(int index);
 const Theme *theme_get_current(void);
+const char *theme_get_default_tab_accent(const Theme *theme);
 void theme_cycle(void);
 void theme_apply(void);
 void theme_set_by_name(const char *name);
+void theme_set_custom(const Theme *theme);
+const Theme *theme_get_custom(void);

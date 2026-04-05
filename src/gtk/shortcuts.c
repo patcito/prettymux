@@ -37,6 +37,7 @@ const ShortcutDef default_shortcuts[] = {
     {"terminal.search",   GDK_KEY_f,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Terminal search"},
     {"broadcast.toggle",  GDK_KEY_Return,        GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Broadcast mode"},
     {"notes.toggle",      GDK_KEY_q,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Quick notes"},
+    {"settings.show",     GDK_KEY_s,             GDK_CONTROL_MASK | GDK_ALT_MASK,   "Settings"},
     {"theme.cycle",       GDK_KEY_comma,         GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Cycle theme"},
     {"history.show",      GDK_KEY_h,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Command history"},
     {"pip.toggle",        GDK_KEY_m,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Picture in picture"},
@@ -64,6 +65,35 @@ normalize_mods(GdkModifierType mods)
 {
     return mods & (GDK_CONTROL_MASK | GDK_SHIFT_MASK |
                    GDK_ALT_MASK | GDK_SUPER_MASK);
+}
+
+static guint
+normalize_keyval(guint keyval)
+{
+    switch (keyval) {
+    case GDK_KEY_less:        return GDK_KEY_comma;
+    case GDK_KEY_greater:     return GDK_KEY_period;
+    case GDK_KEY_colon:       return GDK_KEY_semicolon;
+    case GDK_KEY_question:    return GDK_KEY_slash;
+    case GDK_KEY_bar:         return GDK_KEY_backslash;
+    case GDK_KEY_underscore:  return GDK_KEY_minus;
+    case GDK_KEY_plus:        return GDK_KEY_equal;
+    case GDK_KEY_braceleft:   return GDK_KEY_bracketleft;
+    case GDK_KEY_braceright:  return GDK_KEY_bracketright;
+    case GDK_KEY_quotedbl:    return GDK_KEY_apostrophe;
+    case GDK_KEY_asciitilde:  return GDK_KEY_grave;
+    case GDK_KEY_exclam:      return GDK_KEY_1;
+    case GDK_KEY_at:          return GDK_KEY_2;
+    case GDK_KEY_numbersign:  return GDK_KEY_3;
+    case GDK_KEY_dollar:      return GDK_KEY_4;
+    case GDK_KEY_percent:     return GDK_KEY_5;
+    case GDK_KEY_asciicircum: return GDK_KEY_6;
+    case GDK_KEY_ampersand:   return GDK_KEY_7;
+    case GDK_KEY_asterisk:    return GDK_KEY_8;
+    case GDK_KEY_parenleft:   return GDK_KEY_9;
+    case GDK_KEY_parenright:  return GDK_KEY_0;
+    default:                  return gdk_keyval_to_lower(keyval);
+    }
 }
 
 static ShortcutDef *
@@ -229,8 +259,8 @@ shortcut_set_binding(const char *action, guint keyval,
 
     for (int i = 0; i < runtime_shortcut_count; i++) {
         if (strcmp(runtime_shortcuts[i].action, action) != 0 &&
-            gdk_keyval_to_lower(runtime_shortcuts[i].keyval) ==
-                gdk_keyval_to_lower(keyval) &&
+            normalize_keyval(runtime_shortcuts[i].keyval) ==
+                normalize_keyval(keyval) &&
             normalize_mods(runtime_shortcuts[i].mods) == normalized_mods) {
             if (conflict_out)
                 *conflict_out = &runtime_shortcuts[i];
@@ -264,11 +294,11 @@ const char *
 shortcut_match(guint keyval, GdkModifierType state)
 {
     GdkModifierType mods = normalize_mods(state);
-    guint lower = gdk_keyval_to_lower(keyval);
+    guint normalized = normalize_keyval(keyval);
 
     shortcuts_init();
     for (int i = 0; i < runtime_shortcut_count; i++) {
-        if (lower == gdk_keyval_to_lower(runtime_shortcuts[i].keyval) &&
+        if (normalized == normalize_keyval(runtime_shortcuts[i].keyval) &&
             mods == normalize_mods(runtime_shortcuts[i].mods)) {
             return runtime_shortcuts[i].action;
         }
