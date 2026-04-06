@@ -1,5 +1,5 @@
 project('prettymux', 'c',
-  version: '0.2.3',
+  version: '0.2.4',
   default_options: ['c_std=c17', 'warning_level=2'])
 
 host_system = host_machine.system()

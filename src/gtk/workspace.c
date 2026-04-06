@@ -2261,8 +2261,17 @@ workspace_split_pane_target(Workspace *ws, GtkNotebook *source_nb,
                             GtkOrientation orientation,
                             ghostty_app_t app)
 {
+    const char *cwd = NULL;
+
     if (!ws || !source_nb)
         return NULL;
+
+    {
+        int page = gtk_notebook_get_current_page(source_nb);
+        GtkWidget *terminal = notebook_terminal_at(source_nb, page);
+        if (GHOSTTY_IS_TERMINAL(terminal))
+            cwd = ghostty_terminal_get_cwd(GHOSTTY_TERMINAL(terminal));
+    }
 
     GtkWidget *source_widget = GTK_WIDGET(source_nb);
     GtkWidget *parent = gtk_widget_get_parent(source_widget);
@@ -2334,7 +2343,11 @@ workspace_split_pane_target(Workspace *ws, GtkNotebook *source_nb,
     g_idle_add(set_paned_half, paned);
 
     /* Add a terminal to the new pane */
-    workspace_add_terminal_to_notebook(ws, GTK_NOTEBOOK(new_nb), app);
+    workspace_add_terminal_to_notebook_cwd(
+        ws,
+        GTK_NOTEBOOK(new_nb),
+        app,
+        (cwd && cwd[0]) ? cwd : NULL);
 
     /* Focus the new terminal's GtkGLArea so it receives key events */
     {
