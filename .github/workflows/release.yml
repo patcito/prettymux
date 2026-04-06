@@ -817,9 +817,11 @@ jobs:
 
           # Fedora RPM
           cp artifacts/prettymux-fedora-rpm/*.rpm release-assets/ || true
+          cp artifacts/prettymux-fedora-rpm/*.rpm release-assets/prettymux.x86_64.rpm || true
 
           # Debian .deb
           cp artifacts/prettymux-deb/*.deb release-assets/ || true
+          cp artifacts/prettymux-deb/*.deb release-assets/prettymux_amd64.deb || true
 
           # Snap
           cp artifacts/prettymux-snap/*.snap release-assets/ || true
