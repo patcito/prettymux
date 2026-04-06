@@ -3202,7 +3202,7 @@ static void
 on_welcome_ok_clicked(GtkButton *btn, gpointer user_data)
 {
     (void)btn;
-    AdwDialog *dlg = ADW_DIALOG(user_data);
+    GtkWindow *dlg = GTK_WINDOW(user_data);
 
     /* Check if the "don't show again" checkbox is checked */
     GtkWidget *check = g_object_get_data(G_OBJECT(dlg), "check-button");
@@ -3216,7 +3216,7 @@ on_welcome_ok_clicked(GtkButton *btn, gpointer user_data)
         g_free(config_dir);
     }
 
-    adw_dialog_close(dlg);
+    gtk_window_destroy(dlg);
 }
 
 static void
@@ -3231,10 +3231,12 @@ show_welcome_dialog(GtkWindow *parent)
     if (already_shown)
         return;
 
-    AdwDialog *dlg = adw_dialog_new();
-    adw_dialog_set_title(dlg, "Welcome to PrettyMux");
-    adw_dialog_set_content_width(dlg, 420);
-    adw_dialog_set_content_height(dlg, 340);
+    GtkWindow *dlg = GTK_WINDOW(gtk_window_new());
+    gtk_window_set_title(dlg, "Welcome to PrettyMux");
+    gtk_window_set_default_size(dlg, 420, 340);
+    gtk_window_set_resizable(dlg, FALSE);
+    gtk_window_set_modal(dlg, TRUE);
+    gtk_window_set_transient_for(dlg, parent);
 
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
     gtk_widget_set_margin_start(box, 32);
@@ -3282,8 +3284,8 @@ show_welcome_dialog(GtkWindow *parent)
     g_signal_connect(ok_btn, "clicked",
                      G_CALLBACK(on_welcome_ok_clicked), dlg);
 
-    adw_dialog_set_child(dlg, box);
-    adw_dialog_present(dlg, GTK_WIDGET(parent));
+    gtk_window_set_child(dlg, box);
+    gtk_window_present(dlg);
 }
 
 /* ── GApplication action: navigate to a specific terminal from notification click ── */

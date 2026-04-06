@@ -591,7 +591,7 @@ static void inject_palette_css(void) {
     );
 
     GtkCssProvider *p = gtk_css_provider_new();
-    gtk_css_provider_load_from_string(p, css);
+    gtk_css_provider_load_from_data(p, css, -1);
     gtk_style_context_add_provider_for_display(
         gdk_display_get_default(),
         GTK_STYLE_PROVIDER(p),

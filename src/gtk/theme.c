@@ -271,6 +271,6 @@ theme_apply(void)
             GTK_STYLE_PROVIDER(css_provider),
             GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
     }
-    gtk_css_provider_load_from_string(css_provider, css);
+    gtk_css_provider_load_from_data(css_provider, css, -1);
     g_free(css);
 }

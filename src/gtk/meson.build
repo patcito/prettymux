@@ -13,7 +13,7 @@ if is_macos
 endif
 
 gtk4 = dependency('gtk4')
-adw = dependency('libadwaita-1', version: '>=1.4')
+adw = dependency('libadwaita-1', version: '>=1.2')
 json_glib = dependency('json-glib-1.0')
 
 ghostty_dir = get_option('ghostty_dir')

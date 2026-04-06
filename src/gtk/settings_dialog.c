@@ -369,8 +369,8 @@ settings_collect_custom_theme(SettingsDialogState *state)
         GdkRGBA rgba;
         char *hex;
 
-        rgba = *gtk_color_dialog_button_get_rgba(
-            GTK_COLOR_DIALOG_BUTTON(state->color_buttons[i]));
+        gtk_color_chooser_get_rgba(GTK_COLOR_CHOOSER(state->color_buttons[i]),
+                                   &rgba);
         hex = hex_from_rgba(&rgba);
 
         switch (i) {
@@ -482,7 +482,6 @@ settings_dialog_present(GtkWindow *parent,
     GtkWidget *apply_button;
     GtkWidget *close_button;
     GtkWidget *grid;
-    GtkColorDialog *color_dialog = gtk_color_dialog_new();
 
     state->apply_cb = apply_cb;
     state->user_data = user_data;
@@ -611,7 +610,7 @@ settings_dialog_present(GtkWindow *parent,
 
     for (int i = 0; i < COLOR_COUNT; i++) {
         GtkWidget *label = gtk_label_new(color_fields[i].label);
-        GtkWidget *button = gtk_color_dialog_button_new(color_dialog);
+        GtkWidget *button = gtk_color_button_new();
         GdkRGBA rgba;
         const char *hex = NULL;
 
@@ -633,7 +632,8 @@ settings_dialog_present(GtkWindow *parent,
         }
 
         rgba_from_hex(hex, &rgba);
-        gtk_color_dialog_button_set_rgba(GTK_COLOR_DIALOG_BUTTON(button), &rgba);
+        gtk_color_chooser_set_rgba(GTK_COLOR_CHOOSER(button), &rgba);
+        gtk_color_chooser_set_use_alpha(GTK_COLOR_CHOOSER(button), FALSE);
         gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
         gtk_grid_attach(GTK_GRID(grid), label, (i % 2) * 2, i / 2, 1, 1);
         gtk_grid_attach(GTK_GRID(grid), button, (i % 2) * 2 + 1, i / 2, 1, 1);

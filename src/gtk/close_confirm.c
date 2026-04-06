@@ -201,12 +201,14 @@ close_confirm_request_free(CloseConfirmRequest *req)
 }
 
 static void
-close_confirm_choose_cb(GObject *source, GAsyncResult *result, gpointer user_data)
+close_confirm_response_cb(AdwMessageDialog *dialog,
+                          const char *response,
+                          gpointer user_data)
 {
     CloseConfirmRequest *req = user_data;
-    const char *response =
-        adw_alert_dialog_choose_finish(ADW_ALERT_DIALOG(source), result);
     gboolean confirmed = g_strcmp0(response, "confirm") == 0;
+
+    (void)dialog;
 
     if (confirmed &&
         req->check_button &&
@@ -227,7 +229,7 @@ close_confirm_request(GtkWindow *parent,
                       gpointer user_data,
                       GDestroyNotify destroy)
 {
-    AdwAlertDialog *dialog;
+    AdwMessageDialog *dialog;
     CloseConfirmRequest *req;
     GtkWidget *check;
 
@@ -239,21 +241,22 @@ close_confirm_request(GtkWindow *parent,
         return;
     }
 
-    dialog = ADW_ALERT_DIALOG(adw_alert_dialog_new(
+    dialog = ADW_MESSAGE_DIALOG(adw_message_dialog_new(
+        parent,
         close_confirm_heading(kind),
         close_confirm_body(kind)));
-    adw_alert_dialog_add_responses(dialog,
-                                   "cancel", "Cancel",
-                                   "confirm", close_confirm_label(kind),
-                                   NULL);
-    adw_alert_dialog_set_response_appearance(dialog, "confirm",
-                                             ADW_RESPONSE_DESTRUCTIVE);
-    adw_alert_dialog_set_default_response(dialog, "confirm");
-    adw_alert_dialog_set_close_response(dialog, "cancel");
+    adw_message_dialog_add_responses(dialog,
+                                     "cancel", "Cancel",
+                                     "confirm", close_confirm_label(kind),
+                                     NULL);
+    adw_message_dialog_set_response_appearance(dialog, "confirm",
+                                               ADW_RESPONSE_DESTRUCTIVE);
+    adw_message_dialog_set_default_response(dialog, "confirm");
+    adw_message_dialog_set_close_response(dialog, "cancel");
 
     check = gtk_check_button_new_with_label(
         "Don't ask again and remember this");
-    adw_alert_dialog_set_extra_child(dialog, check);
+    adw_message_dialog_set_extra_child(dialog, check);
 
     req = g_new0(CloseConfirmRequest, 1);
     req->kind = kind;
@@ -262,6 +265,7 @@ close_confirm_request(GtkWindow *parent,
     req->destroy = destroy;
     req->check_button = check;
 
-    adw_alert_dialog_choose(dialog, GTK_WIDGET(parent), NULL,
-                            close_confirm_choose_cb, req);
+    g_signal_connect(dialog, "response",
+                     G_CALLBACK(close_confirm_response_cb), req);
+    gtk_window_present(GTK_WINDOW(dialog));
 }

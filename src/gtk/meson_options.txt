@@ -1,0 +1,7 @@
+option('ghostty_dir', type: 'string',
+  value: '/home/pe/newnewrepos/w/yo/ghostty',
+  description: 'Path to ghostty source directory')
+
+option('webview2_sdk_dir', type: 'string',
+  value: '',
+  description: 'Path to the unpacked Microsoft.Web.WebView2 SDK directory')

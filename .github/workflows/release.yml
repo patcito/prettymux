@@ -176,37 +176,31 @@ jobs:
   # ---------------------------------------------------------------------------
   build-linux-deb:
     if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'deb') || contains(inputs.jobs, 'linux')
-    needs: fetch-libghostty
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/patcito/prettymux-build-ubuntu:24.04
+      image: ghcr.io/patcito/prettymux-build-debian:bookworm
     steps:
       - name: Checkout prettymux
         uses: actions/checkout@v5
 
-      - name: Download prebuilt ghostty
-        uses: actions/download-artifact@v5
+      - name: Checkout ghostty fork
+        uses: actions/checkout@v5
         with:
-          name: ghostty-prebuilt
+          repository: ${{ env.GHOSTTY_REPO }}
+          ref: ${{ env.GHOSTTY_BRANCH }}
           path: ghostty
 
-      - name: Resolve ghostty directory
+      - name: Build ghostty
         run: |
-          GHOSTTY_DIR="${GITHUB_WORKSPACE}/ghostty"
-          if [ -d "${GHOSTTY_DIR}/ghostty/include" ]; then
-            GHOSTTY_DIR="${GHOSTTY_DIR}/ghostty"
-          fi
-          test -d "${GHOSTTY_DIR}/include"
-          test -f "${GHOSTTY_DIR}/vendor/glad/src/gl.c"
-          echo "GHOSTTY_DIR=${GHOSTTY_DIR}" >> "$GITHUB_ENV"
-          find "${GHOSTTY_DIR}" -type f | head -20
+          cd ghostty
+          zig build -Dapp-runtime=none -Doptimize=ReleaseFast
 
       - name: Build prettymux
         run: |
           cd src/gtk
           meson setup builddir \
             --prefix=/usr \
-            -Dghostty_dir="${GHOSTTY_DIR}"
+            -Dghostty_dir="${GITHUB_WORKSPACE}/ghostty"
           ninja -C builddir
 
       - name: Package artifacts
