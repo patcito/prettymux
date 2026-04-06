@@ -38,6 +38,7 @@ const ShortcutDef default_shortcuts[] = {
     {"broadcast.toggle",  GDK_KEY_Return,        GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Broadcast mode"},
     {"notes.toggle",      GDK_KEY_q,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Quick notes"},
     {"settings.show",     GDK_KEY_s,             GDK_CONTROL_MASK | GDK_ALT_MASK,   "Settings"},
+    {"about.show",        GDK_KEY_a,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "About"},
     {"theme.cycle",       GDK_KEY_comma,         GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Cycle theme"},
     {"history.show",      GDK_KEY_h,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Command history"},
     {"pip.toggle",        GDK_KEY_m,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Picture in picture"},

@@ -5,6 +5,7 @@
 #include "project_icon_cache.h"
 #include "resize_overlay.h"
 #include "session.h"
+#include "shortcuts.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -1111,6 +1112,7 @@ move_terminal_to_notebook(Workspace *src_ws, GtkNotebook *src_nb,
     refresh_terminal_tab_icon(terminal);
     workspace_refresh_sidebar_label(src_ws);
     workspace_refresh_sidebar_label(dest_ws);
+    shortcut_log_event("gesture", "tab.drag.move", "Drag tab to pane");
 
     if (tab_widget)
         g_object_unref(tab_widget);

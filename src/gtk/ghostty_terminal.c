@@ -66,6 +66,10 @@ struct _GhosttyTerminal {
     GtkWidget         *dummy_target;    /* Linked notebook placeholder */
     char              *status_cwd_full;
     char              *status_git_full;
+    gboolean           search_active;
+    char              *search_query;
+    gint64             search_total;
+    gint64             search_selected;
 };
 
 G_DEFINE_FINAL_TYPE(GhosttyTerminal, ghostty_terminal, GTK_TYPE_WIDGET)
@@ -150,6 +154,8 @@ ghostty_terminal_refresh_status(GhosttyTerminal *self)
     const char *full_cwd;
     const char *git_branch;
     const char *display_cwd = "";
+    char search_buf[256];
+    char search_count[64];
     char short_cwd[64];
     int available_width = 0;
     int branch_width = 0;
@@ -159,6 +165,40 @@ ghostty_terminal_refresh_status(GhosttyTerminal *self)
 
     if (!self)
         return;
+
+    if (self->search_active) {
+        if (self->status_cwd) {
+            if (self->search_query && self->search_query[0]) {
+                snprintf(search_buf, sizeof(search_buf), "Search: %s",
+                         self->search_query);
+            } else {
+                snprintf(search_buf, sizeof(search_buf),
+                         "Search: press Enter for next, Shift+Enter for previous, Esc to end");
+            }
+            gtk_label_set_text(GTK_LABEL(self->status_cwd), search_buf);
+            gtk_widget_set_tooltip_text(self->status_cwd,
+                                        self->search_query &&
+                                        self->search_query[0]
+                                            ? self->search_query
+                                            : NULL);
+        }
+
+        if (self->status_git) {
+            if (self->search_total > 0 && self->search_selected >= 0) {
+                snprintf(search_count, sizeof(search_count), "%lld/%lld",
+                         (long long)(self->search_selected + 1),
+                         (long long)self->search_total);
+                gtk_label_set_text(GTK_LABEL(self->status_git), search_count);
+            } else if (self->search_total == 0) {
+                gtk_label_set_text(GTK_LABEL(self->status_git), "0");
+            } else {
+                gtk_label_set_text(GTK_LABEL(self->status_git), "");
+            }
+            gtk_widget_set_tooltip_text(self->status_git, NULL);
+        }
+
+        return;
+    }
 
     full_cwd = self->status_cwd_full ? self->status_cwd_full : "";
     git_branch = self->status_git_full ? self->status_git_full : "";
@@ -814,6 +854,7 @@ ghostty_terminal_finalize(GObject *object)
     g_free(self->tty_path);
     g_free(self->status_cwd_full);
     g_free(self->status_git_full);
+    g_free(self->search_query);
     G_OBJECT_CLASS(ghostty_terminal_parent_class)->finalize(object);
 }
 
@@ -894,6 +935,10 @@ ghostty_terminal_init(GhosttyTerminal *self)
     self->dummy_target = NULL;
     self->status_cwd_full = NULL;
     self->status_git_full = NULL;
+    self->search_active = FALSE;
+    self->search_query = NULL;
+    self->search_total = -1;
+    self->search_selected = -1;
     gtk_widget_set_halign(GTK_WIDGET(self), GTK_ALIGN_START);
     gtk_widget_set_valign(GTK_WIDGET(self), GTK_ALIGN_START);
     gtk_widget_set_overflow(GTK_WIDGET(self), GTK_OVERFLOW_HIDDEN);
@@ -1263,4 +1308,46 @@ ghostty_terminal_set_status(GhosttyTerminal *self,
                                          ? git_branch : "");
 
     ghostty_terminal_refresh_status(self);
+}
+
+void
+ghostty_terminal_set_search_active(GhosttyTerminal *self,
+                                   gboolean         active,
+                                   const char      *query)
+{
+    g_return_if_fail(GHOSTTY_IS_TERMINAL(self));
+
+    self->search_active = active;
+    g_free(self->search_query);
+    self->search_query = g_strdup(query ? query : "");
+    if (!active) {
+        self->search_total = -1;
+        self->search_selected = -1;
+    }
+    ghostty_terminal_refresh_status(self);
+}
+
+void
+ghostty_terminal_set_search_results(GhosttyTerminal *self,
+                                    gint64           total,
+                                    gint64           selected)
+{
+    g_return_if_fail(GHOSTTY_IS_TERMINAL(self));
+    self->search_total = total;
+    self->search_selected = selected;
+    ghostty_terminal_refresh_status(self);
+}
+
+gboolean
+ghostty_terminal_is_search_active(GhosttyTerminal *self)
+{
+    g_return_val_if_fail(GHOSTTY_IS_TERMINAL(self), FALSE);
+    return self->search_active;
+}
+
+const char *
+ghostty_terminal_get_search_query(GhosttyTerminal *self)
+{
+    g_return_val_if_fail(GHOSTTY_IS_TERMINAL(self), NULL);
+    return self->search_query ? self->search_query : "";
 }

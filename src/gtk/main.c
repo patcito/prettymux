@@ -48,12 +48,25 @@ static gboolean g_sidebar_toast_force_bottom = FALSE;
 static gboolean g_sidebar_toast_copy_style = FALSE;
 static gboolean g_sidebar_toast_recording_marker = FALSE;
 static gint64 g_recording_origin_us = -1;
+static GhosttyTerminal *g_terminal_search_target = NULL;
+static gint64 g_terminal_search_total = -1;
+static gint64 g_terminal_search_selected = -1;
+static GtkWindow *g_about_window = NULL;
+
+#ifndef PRETTYMUX_VERSION
+#define PRETTYMUX_VERSION "0.2.0"
+#endif
+
+#define PRETTYMUX_GITHUB_URL "https://github.com/patcito/prettymux"
+#define PRETTYMUX_WEBSITE_URL "https://prettymux-web.vercel.app"
+#define PRETTYMUX_LICENSE_NAME "GPL-3.0-only"
 
 static void debug_notification_log(const char *fmt, ...);
 static void apply_toast_position_setting(void);
 static void handle_reported_port(const char *terminal_id, int port);
-static void shortcut_log_event(const char *type, const char *action,
-                               const char *keys);
+static void terminal_search_send_action(GhosttyTerminal *term, const char *action);
+static void terminal_search_hide(void);
+static void about_dialog_present(GtkWindow *parent);
 
 // Widget references for the main window layout
 static struct {
@@ -72,7 +85,7 @@ static struct {
     GtkWidget *toast_label;
 } ui = {0};
 
-static void
+void
 shortcut_log_event(const char *type, const char *action, const char *keys)
 {
     g_autoptr(JsonBuilder) builder = NULL;
@@ -364,6 +377,63 @@ is_modifier_key(guint keyval)
     default:
         return FALSE;
     }
+}
+
+static gboolean
+terminal_search_handle_key(guint keyval, GdkModifierType state)
+{
+    GdkModifierType mods;
+    const char *old_query;
+    g_autofree char *new_query = NULL;
+
+    if (!g_terminal_search_target ||
+        !ghostty_terminal_is_search_active(g_terminal_search_target))
+        return FALSE;
+
+    mods = state & (GDK_CONTROL_MASK | GDK_SHIFT_MASK |
+                    GDK_ALT_MASK | GDK_SUPER_MASK);
+
+    if (keyval == GDK_KEY_Escape) {
+        terminal_search_send_action(g_terminal_search_target, "end_search");
+        terminal_search_hide();
+        return TRUE;
+    }
+
+    if ((keyval == GDK_KEY_Return || keyval == GDK_KEY_KP_Enter ||
+         keyval == GDK_KEY_ISO_Enter) &&
+        (mods & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK)) == 0) {
+        terminal_search_send_action(g_terminal_search_target,
+                                    (mods & GDK_SHIFT_MASK)
+                                        ? "navigate_search:previous"
+                                        : "navigate_search:next");
+        return TRUE;
+    }
+
+    old_query = ghostty_terminal_get_search_query(g_terminal_search_target);
+
+    if (keyval == GDK_KEY_BackSpace &&
+        (mods & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK)) == 0) {
+        const char *prev = g_utf8_find_prev_char(old_query, old_query + strlen(old_query));
+        new_query = prev ? g_strndup(old_query, prev - old_query) : g_strdup("");
+    } else if ((mods & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK)) == 0) {
+        gunichar uc = gdk_keyval_to_unicode(keyval);
+        if (uc >= 0x20 && uc != 0) {
+            char buf[8] = {0};
+            int len = g_unichar_to_utf8(uc, buf);
+            buf[len] = '\0';
+            new_query = g_strdup_printf("%s%s", old_query ? old_query : "", buf);
+        }
+    }
+
+    if (!new_query)
+        return FALSE;
+
+    ghostty_terminal_set_search_active(g_terminal_search_target, TRUE, new_query);
+    {
+        g_autofree char *action = g_strdup_printf("search:%s", new_query);
+        terminal_search_send_action(g_terminal_search_target, action);
+    }
+    return TRUE;
 }
 
 static void
@@ -751,6 +821,72 @@ sidebar_toast_show_copy(const char *msg, int ws_idx,
                                 TRUE, TRUE, FALSE, 2000);
 }
 
+static void
+terminal_search_update_count_label(void)
+{
+    if (g_terminal_search_target) {
+        ghostty_terminal_set_search_results(g_terminal_search_target,
+                                            g_terminal_search_total,
+                                            g_terminal_search_selected);
+    }
+}
+
+static void
+terminal_search_send_action(GhosttyTerminal *term, const char *action)
+{
+    ghostty_surface_t surface;
+
+    if (!term || !action || !action[0])
+        return;
+
+    surface = ghostty_terminal_get_surface(term);
+    if (!surface)
+        return;
+
+    ghostty_surface_binding_action(surface, action, strlen(action));
+}
+
+static void
+terminal_search_hide(void)
+{
+    if (g_terminal_search_target) {
+        ghostty_terminal_set_search_active(g_terminal_search_target, FALSE, "");
+        ghostty_terminal_focus(g_terminal_search_target);
+        g_object_unref(g_terminal_search_target);
+        g_terminal_search_target = NULL;
+    }
+
+    g_terminal_search_total = -1;
+    g_terminal_search_selected = -1;
+    terminal_search_update_count_label();
+}
+
+static void
+terminal_search_set_target(GhosttyTerminal *term)
+{
+    if (term == g_terminal_search_target)
+        return;
+
+    if (g_terminal_search_target)
+        g_object_unref(g_terminal_search_target);
+
+    g_terminal_search_target = term ? g_object_ref(term) : NULL;
+    g_terminal_search_total = -1;
+    g_terminal_search_selected = -1;
+    terminal_search_update_count_label();
+}
+
+static void
+terminal_search_show(GhosttyTerminal *term, const char *needle)
+{
+    terminal_search_set_target(term);
+    if (!term)
+        return;
+
+    ghostty_terminal_set_search_active(term, TRUE, needle ? needle : "");
+    terminal_search_update_count_label();
+}
+
 /* ── Notification click-to-navigate ── */
 
 /*
@@ -890,6 +1026,108 @@ static void on_browser_new_tab_requested(BrowserTab *bt, const char *url, gpoint
     session_queue_save();
 }
 
+static void
+about_dialog_hide(GtkWindow *window)
+{
+    if (!window)
+        return;
+    gtk_widget_set_visible(GTK_WIDGET(window), FALSE);
+}
+
+static gboolean
+on_about_close_request(GtkWindow *window, gpointer user_data)
+{
+    (void)user_data;
+    about_dialog_hide(window);
+    return TRUE;
+}
+
+static void
+about_dialog_present(GtkWindow *parent)
+{
+    if (!g_about_window) {
+        GtkWidget *outer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 18);
+        g_autofree char *logo_path = NULL;
+        GtkWidget *logo = NULL;
+        GtkWidget *title = gtk_label_new("PrettyMux");
+        GtkWidget *version = gtk_label_new(PRETTYMUX_VERSION);
+        GtkWidget *subtitle = gtk_label_new("GPU-accelerated terminal multiplexer");
+        GtkWidget *info = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+        GtkWidget *license = gtk_label_new(NULL);
+        GtkWidget *website = gtk_link_button_new_with_label(PRETTYMUX_WEBSITE_URL,
+                                                            "Official website");
+        GtkWidget *github = gtk_link_button_new_with_label(PRETTYMUX_GITHUB_URL,
+                                                           "GitHub");
+        GtkWidget *buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        GtkWidget *close_btn = gtk_button_new_with_label("Close");
+
+        logo_path = g_build_filename(PRETTYMUX_SOURCE_DIR, "..", "..",
+                                     "packaging", "prettymux.svg", NULL);
+        if (g_file_test(logo_path, G_FILE_TEST_EXISTS))
+            logo = gtk_image_new_from_file(logo_path);
+        else
+            logo = gtk_image_new_from_icon_name("prettymux");
+
+        g_about_window = GTK_WINDOW(gtk_window_new());
+        gtk_window_set_title(g_about_window, "About PrettyMux");
+        gtk_window_set_modal(g_about_window, TRUE);
+        gtk_window_set_default_size(g_about_window, 440, 360);
+        g_signal_connect(g_about_window, "close-request",
+                         G_CALLBACK(on_about_close_request), NULL);
+
+        gtk_widget_set_margin_top(outer, 24);
+        gtk_widget_set_margin_bottom(outer, 24);
+        gtk_widget_set_margin_start(outer, 24);
+        gtk_widget_set_margin_end(outer, 24);
+
+        gtk_image_set_pixel_size(GTK_IMAGE(logo), 96);
+        gtk_widget_set_halign(logo, GTK_ALIGN_CENTER);
+
+        gtk_label_set_markup(GTK_LABEL(title),
+                             "<span size='xx-large' weight='bold'>PrettyMux</span>");
+        gtk_widget_set_halign(title, GTK_ALIGN_CENTER);
+
+        gtk_label_set_markup(GTK_LABEL(version),
+                             "<span alpha='80%'>Version " PRETTYMUX_VERSION "</span>");
+        gtk_widget_set_halign(version, GTK_ALIGN_CENTER);
+
+        gtk_label_set_wrap(GTK_LABEL(subtitle), TRUE);
+        gtk_label_set_justify(GTK_LABEL(subtitle), GTK_JUSTIFY_CENTER);
+        gtk_widget_set_halign(subtitle, GTK_ALIGN_CENTER);
+        gtk_widget_add_css_class(subtitle, "dim-label");
+
+        gtk_label_set_markup(GTK_LABEL(license),
+                             "<b>License:</b> " PRETTYMUX_LICENSE_NAME);
+        gtk_label_set_xalign(GTK_LABEL(license), 0.0f);
+
+        gtk_widget_set_halign(website, GTK_ALIGN_START);
+        gtk_widget_set_halign(github, GTK_ALIGN_START);
+
+        gtk_box_append(GTK_BOX(info), license);
+        gtk_box_append(GTK_BOX(info), website);
+        gtk_box_append(GTK_BOX(info), github);
+
+        gtk_widget_set_halign(buttons, GTK_ALIGN_END);
+        g_signal_connect_swapped(close_btn, "clicked",
+                                 G_CALLBACK(about_dialog_hide), g_about_window);
+        gtk_box_append(GTK_BOX(buttons), close_btn);
+
+        gtk_box_append(GTK_BOX(outer), logo);
+        gtk_box_append(GTK_BOX(outer), title);
+        gtk_box_append(GTK_BOX(outer), version);
+        gtk_box_append(GTK_BOX(outer), subtitle);
+        gtk_box_append(GTK_BOX(outer), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL));
+        gtk_box_append(GTK_BOX(outer), info);
+        gtk_box_append(GTK_BOX(outer), buttons);
+
+        gtk_window_set_child(g_about_window, outer);
+    }
+
+    if (parent)
+        gtk_window_set_transient_for(g_about_window, parent);
+    gtk_window_present(g_about_window);
+}
+
 static void add_browser_tab(const char *url) {
     GtkWidget *tab = browser_tab_new(url);
     GtkWidget *label = gtk_label_new("Loading...");
@@ -997,6 +1235,9 @@ static void handle_action(const char *action) {
     } else if (strcmp(action, "settings.show") == 0) {
         if (g_main_window)
             settings_dialog_present(g_main_window, apply_runtime_settings, NULL);
+    } else if (strcmp(action, "about.show") == 0) {
+        if (g_main_window)
+            about_dialog_present(g_main_window);
     } else if (strcmp(action, "theme.cycle") == 0) {
         theme_cycle();
         sync_ghostty_theme_to_prettymux_theme();
@@ -1056,9 +1297,11 @@ static void handle_action(const char *action) {
                     if (term) {
                         ghostty_surface_t surface =
                             ghostty_terminal_get_surface(term);
-                        if (surface)
+                        if (surface) {
                             ghostty_surface_binding_action(surface,
-                                                           "search_forward", 14);
+                                                           "start_search", 12);
+                            terminal_search_show(term, "");
+                        }
                     }
                 }
             }
@@ -1151,6 +1394,10 @@ static gboolean on_key_pressed(GtkEventControllerKey *ctrl, guint keyval,
     GdkModifierType mods = state & (GDK_CONTROL_MASK | GDK_SHIFT_MASK |
                                      GDK_ALT_MASK | GDK_SUPER_MASK);
     guint lower = gdk_keyval_to_lower(keyval);
+
+    if (g_terminal_search_target && focus_within_terminal(g_terminal_search_target) &&
+        terminal_search_handle_key(keyval, state))
+        return TRUE;
 
     /* ── Ctrl+Tab / Ctrl+Shift+Tab: cycle terminal tabs ── */
     if ((lower == GDK_KEY_Tab || keyval == GDK_KEY_ISO_Left_Tab) &&
@@ -2499,10 +2746,30 @@ static gboolean action_idle_handler(gpointer user_data)
         break;
     }
 
-    case GHOSTTY_ACTION_START_SEARCH:
-    case GHOSTTY_ACTION_SEARCH_TOTAL:
-    case GHOSTTY_ACTION_SEARCH_SELECTED:
+    case GHOSTTY_ACTION_START_SEARCH: {
+        SurfaceLookup loc = find_terminal_for_surface(surface);
+        if (loc.terminal)
+            terminal_search_show(loc.terminal, action.action.start_search.needle);
         break;
+    }
+
+    case GHOSTTY_ACTION_SEARCH_TOTAL: {
+        SurfaceLookup loc = find_terminal_for_surface(surface);
+        if (loc.terminal == g_terminal_search_target) {
+            g_terminal_search_total = action.action.search_total.total;
+            terminal_search_update_count_label();
+        }
+        break;
+    }
+
+    case GHOSTTY_ACTION_SEARCH_SELECTED: {
+        SurfaceLookup loc = find_terminal_for_surface(surface);
+        if (loc.terminal == g_terminal_search_target) {
+            g_terminal_search_selected = action.action.search_selected.selected;
+            terminal_search_update_count_label();
+        }
+        break;
+    }
 
     default:
         break;

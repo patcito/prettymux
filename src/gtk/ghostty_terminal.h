@@ -127,6 +127,14 @@ int  ghostty_terminal_get_progress_state(GhosttyTerminal *self);
 void ghostty_terminal_set_status(GhosttyTerminal *self,
                                  const char *cwd,
                                  const char *git_branch);
+void ghostty_terminal_set_search_active(GhosttyTerminal *self,
+                                        gboolean         active,
+                                        const char      *query);
+void ghostty_terminal_set_search_results(GhosttyTerminal *self,
+                                         gint64           total,
+                                         gint64           selected);
+gboolean ghostty_terminal_is_search_active(GhosttyTerminal *self);
+const char *ghostty_terminal_get_search_query(GhosttyTerminal *self);
 
 /*
  * Signals:

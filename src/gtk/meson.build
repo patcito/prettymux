@@ -150,7 +150,10 @@ endif
 executable('prettymux', sources + browser_sources,
   dependencies: [gtk4, adw, json_glib] + platform_deps,
   include_directories: extra_include_dirs,
-  c_args: ['-DPRETTYMUX_SOURCE_DIR="' + meson.current_source_dir() + '"'],
+  c_args: [
+    '-DPRETTYMUX_SOURCE_DIR="' + meson.current_source_dir() + '"',
+    '-DPRETTYMUX_VERSION="' + meson.project_version() + '"',
+  ],
   link_args: platform_link_args,
   install: true,
 )
