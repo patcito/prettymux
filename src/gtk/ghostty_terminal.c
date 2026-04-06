@@ -330,19 +330,7 @@ on_gl_realize(GtkGLArea *area, gpointer user_data)
                                    : home;
 
     /* Shell integration env vars */
-    static const char *xdg_open_func =
-        "() { "
-        "case \"$1\" in "
-        "http://*|https://*) "
-        "if [ -n \"$PRETTYMUX_OPEN_BIN\" ] && [ -x \"$PRETTYMUX_OPEN_BIN\" ]; then "
-        "\"$PRETTYMUX_OPEN_BIN\" \"$1\" && return 0; "
-        "fi ;; "
-        "esac; "
-        "/usr/bin/xdg-open \"$@\"; "
-        "}";
-    static const char *open_func = "() { xdg-open \"$@\"; }";
-
-    ghostty_env_var_s env_vars[10];
+    ghostty_env_var_s env_vars[8];
     size_t env_count = 0;
 
     env_vars[env_count].key = "PRETTYMUX";
@@ -396,14 +384,6 @@ on_gl_realize(GtkGLArea *area, gpointer user_data)
         env_vars[env_count].value = path;
         env_count++;
     }
-
-    env_vars[env_count].key = "BASH_FUNC_xdg-open%%";
-    env_vars[env_count].value = xdg_open_func;
-    env_count++;
-
-    env_vars[env_count].key = "BASH_FUNC_open%%";
-    env_vars[env_count].value = open_func;
-    env_count++;
 
     config.env_vars = env_vars;
     config.env_var_count = env_count;
