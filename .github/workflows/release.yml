@@ -228,6 +228,8 @@ jobs:
   build-snap:
     if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'snap') || contains(inputs.jobs, 'linux')
     runs-on: ubuntu-latest
+    env:
+      SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
     steps:
       - name: Checkout prettymux
         uses: actions/checkout@v5
@@ -251,11 +253,9 @@ jobs:
           path: ${{ steps.snapcraft.outputs.snap }}
 
       - name: Publish to Snap Store
-        if: (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') && secrets.SNAPCRAFT_STORE_CREDENTIALS != ''
+        if: (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') && env.SNAPCRAFT_STORE_CREDENTIALS != ''
         continue-on-error: true
         uses: snapcore/action-publish@v1
-        env:
-          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
         with:
           snap: ${{ steps.snapcraft.outputs.snap }}
           release: edge
@@ -420,8 +420,10 @@ jobs:
   # Publish to PPA (Ubuntu)
   # ---------------------------------------------------------------------------
   publish-ppa:
-    if: (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') && (inputs.jobs == 'all' || contains(inputs.jobs, 'ppa'))
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.jobs == 'all' || contains(inputs.jobs, 'ppa')))
     runs-on: ubuntu-latest
+    env:
+      GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
     steps:
       - name: Checkout prettymux
         uses: actions/checkout@v5
@@ -484,9 +486,6 @@ jobs:
           series: noble
           revision: ${{ env.PPA_REVISION }}
           keep_changelog: true
-        env:
-          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
-
   # ---------------------------------------------------------------------------
   # AppImage
   # ---------------------------------------------------------------------------
@@ -550,7 +549,7 @@ jobs:
   # Windows (x64)
   # ---------------------------------------------------------------------------
   build-windows:
-    if: github.event_name == 'workflow_dispatch' && (inputs.jobs == 'all' || contains(inputs.jobs, 'windows'))
+    if: github.event_name == 'workflow_dispatch' && contains(inputs.jobs, 'windows')
     runs-on: windows-latest
     steps:
       - name: Checkout prettymux

@@ -1,4 +1,4 @@
-prettymux (0.2.5-1) noble; urgency=medium
+prettymux (0.2.6-1) noble; urgency=medium
 
   * Port from Qt6/Chromium to GTK4/WebKitGTK
   * Modular C codebase (ghostty_terminal, browser_tab, workspace, etc.)
