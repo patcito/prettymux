@@ -1,18 +1,82 @@
 # prettymux
 
-To install dependencies:
+prettymux is a native Linux terminal multiplexer built with GTK4, libadwaita, WebKit, and Ghostty. It combines vertical tabs, split panes, workspaces, a built-in browser, and agent-friendly notifications in one GPU-accelerated window.
+
+Website: https://prettymux.com/
+
+## Install
+
+### Ubuntu 24.04
 
 ```bash
-bun install
+echo "deb [trusted=yes] https://prettymux.com/apt/ubuntu noble main" | sudo tee /etc/apt/sources.list.d/prettymux.list
+sudo apt update
+sudo apt install prettymux
 ```
 
-To run:
+### Debian Stable
 
 ```bash
-bun run index.ts
+echo "deb [trusted=yes] https://prettymux.com/apt/debian bookworm main" | sudo tee /etc/apt/sources.list.d/prettymux.list
+sudo apt update
+sudo apt install prettymux
 ```
 
-This project was created using `bun init` in bun v1.3.11. [Bun](https://bun.com) is a fast all-in-one JavaScript runtime.
+### Debian Unstable
+
+```bash
+echo "deb [trusted=yes] https://prettymux.com/apt/debian sid main" | sudo tee /etc/apt/sources.list.d/prettymux.list
+sudo apt update
+sudo apt install prettymux
+```
+
+### Fedora
+
+```bash
+sudo dnf install https://github.com/patcito/prettymux/releases/latest/download/prettymux.x86_64.rpm
+```
+
+### Arch Linux
+
+```bash
+yay -S prettymux
+```
+
+For the prebuilt package:
+
+```bash
+yay -S prettymux-bin
+```
+
+### Snap
+
+```bash
+sudo snap install prettymux
+```
+
+### Flatpak
+
+```bash
+flatpak install flathub dev.prettymux.app
+flatpak run dev.prettymux.app
+```
+
+### AppImage
+
+```bash
+wget https://github.com/patcito/prettymux/releases/latest/download/PrettyMux-x86_64.AppImage
+chmod +x PrettyMux-x86_64.AppImage
+./PrettyMux-x86_64.AppImage
+```
+
+## Build From Source
+
+```bash
+git clone https://github.com/patcito/prettymux
+cd prettymux
+meson setup builddir
+ninja -C builddir
+```
 
 ## License
 
