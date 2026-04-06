@@ -90,3 +90,7 @@ ninja -C builddir
 ## License
 
 This project is licensed under the GNU General Public License v3.0 only. See [LICENSE](LICENSE).
+
+## Inspiration
+
+PrettyMux was inspired by [cmux](https://github.com/manaflow-ai/cmux), a similar terminal multiplexer currently only available on macOS.
