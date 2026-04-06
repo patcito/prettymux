@@ -406,6 +406,7 @@ jobs:
           EOF
           chmod 600 ~/.ssh/config
 
+          export GIT_SSH_COMMAND='ssh -i ~/.ssh/aur -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts'
           git config --global user.name "prettymux-bot"
           git config --global user.email "prettymux-bot@users.noreply.github.com"
 
