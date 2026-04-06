@@ -50,6 +50,8 @@ browser_sources = []
 platform_deps = []
 platform_link_args = []
 extra_include_dirs = [ghostty_inc]
+build_rpath = ''
+install_rpath = ''
 
 if is_linux
   browser_sources += files(
@@ -60,8 +62,9 @@ if is_linux
   platform_deps += dependency('webkitgtk-6.0')
   platform_link_args += [
     ghostty_lib_dir / 'libghostty.so',
-    '-Wl,-rpath,' + ghostty_lib_dir + ':$ORIGIN/../lib/prettymux',
   ]
+  build_rpath = ghostty_lib_dir
+  install_rpath = '$ORIGIN/../lib/prettymux'
 elif is_macos
   ghostty_macos_xcframework = ''
   ghostty_macos_lib = ''
@@ -155,6 +158,8 @@ executable('prettymux', sources + browser_sources,
     '-DPRETTYMUX_VERSION="' + meson.project_version() + '"',
   ],
   link_args: platform_link_args,
+  build_rpath: build_rpath,
+  install_rpath: install_rpath,
   install: true,
 )
 

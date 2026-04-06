@@ -326,6 +326,7 @@ jobs:
         run: |
           cd src/gtk
           meson setup builddir \
+            --prefix=/usr \
             -Dghostty_dir=$GITHUB_WORKSPACE/ghostty
           ninja -C builddir
 
@@ -335,22 +336,15 @@ jobs:
           [[ "$VERSION" =~ ^[0-9] ]] || VERSION="0.1.0"
 
           PKGDIR="prettymux-pkg"
-          mkdir -p "$PKGDIR/usr/bin"
           mkdir -p "$PKGDIR/usr/lib/prettymux"
           mkdir -p "$PKGDIR/usr/share/prettymux/bin"
-          mkdir -p "$PKGDIR/usr/share/applications"
-          mkdir -p "$PKGDIR/usr/share/icons/hicolor/scalable/apps"
-
-          install -Dm755 src/gtk/builddir/prettymux "$PKGDIR/usr/bin/prettymux"
-          install -Dm755 src/gtk/builddir/prettymux-open "$PKGDIR/usr/bin/prettymux-open" || true
+          DESTDIR="$PWD/$PKGDIR" meson install -C src/gtk/builddir --no-rebuild
           install -Dm644 ghostty/zig-out/lib/libghostty.so "$PKGDIR/usr/lib/prettymux/libghostty.so" || true
 
           install -Dm644 src/gtk/prettymux-shell-integration.sh "$PKGDIR/usr/share/prettymux/shell-integration.sh" || true
           install -Dm644 src/gtk/prettymux-bashrc.sh "$PKGDIR/usr/share/prettymux/prettymux-bashrc.sh" || true
           install -Dm755 src/gtk/bin/open "$PKGDIR/usr/share/prettymux/bin/open" || true
           install -Dm755 src/gtk/bin/xdg-open "$PKGDIR/usr/share/prettymux/bin/xdg-open" || true
-          install -Dm644 packaging/prettymux.desktop "$PKGDIR/usr/share/applications/prettymux.desktop"
-          install -Dm644 packaging/prettymux.svg "$PKGDIR/usr/share/icons/hicolor/scalable/apps/prettymux.svg"
           install -Dm644 LICENSE "$PKGDIR/usr/share/licenses/prettymux/LICENSE"
 
           printf '%s\n' \
