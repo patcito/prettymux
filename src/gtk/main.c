@@ -58,7 +58,7 @@ static GtkWindow *g_about_window = NULL;
 #endif
 
 #define PRETTYMUX_GITHUB_URL "https://github.com/patcito/prettymux"
-#define PRETTYMUX_WEBSITE_URL "https://prettymux-web.vercel.app"
+#define PRETTYMUX_WEBSITE_URL "https://prettymux.com/"
 #define PRETTYMUX_LICENSE_NAME "GPL-3.0-only"
 
 static void debug_notification_log(const char *fmt, ...);
