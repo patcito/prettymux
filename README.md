@@ -9,7 +9,9 @@ Website: https://prettymux.com/
 ### Ubuntu 24.04
 
 ```bash
-sudo add-apt-repository "deb [trusted=yes] https://prettymux.com/apt/ubuntu noble main"
+sudo apt update
+sudo apt install -y ca-certificates
+echo 'deb [trusted=yes arch=amd64] https://prettymux.com/apt/ubuntu noble main' | sudo tee /etc/apt/sources.list.d/prettymux.list
 sudo apt update
 sudo apt install prettymux
 ```
@@ -17,7 +19,9 @@ sudo apt install prettymux
 ### Debian Stable
 
 ```bash
-sudo add-apt-repository "deb [trusted=yes] https://prettymux.com/apt/debian bookworm main"
+sudo apt update
+sudo apt install -y ca-certificates
+echo 'deb [trusted=yes arch=amd64] https://prettymux.com/apt/debian bookworm main' | sudo tee /etc/apt/sources.list.d/prettymux.list
 sudo apt update
 sudo apt install prettymux
 ```
@@ -25,7 +29,9 @@ sudo apt install prettymux
 ### Debian Unstable
 
 ```bash
-sudo add-apt-repository "deb [trusted=yes] https://prettymux.com/apt/debian sid main"
+sudo apt update
+sudo apt install -y ca-certificates
+echo 'deb [trusted=yes arch=amd64] https://prettymux.com/apt/debian sid main' | sudo tee /etc/apt/sources.list.d/prettymux.list
 sudo apt update
 sudo apt install prettymux
 ```
