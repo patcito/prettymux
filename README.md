@@ -65,10 +65,10 @@ sudo snap install prettymux
 ### Flatpak
 
 ```bash
-flatpak install flathub dev.prettymux.app
+flatpak remote-add --if-not-exists --no-gpg-verify prettymux https://prettymux.com/flatpak/prettymux.flatpakrepo
+flatpak install prettymux dev.prettymux.app
 flatpak run dev.prettymux.app
 ```
--->
 
 ### AppImage
 
