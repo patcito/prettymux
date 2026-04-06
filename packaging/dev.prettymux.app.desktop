@@ -2,7 +2,7 @@
 Name=PrettyMux
 Comment=GPU-accelerated terminal multiplexer
 Exec=prettymux
-Icon=prettymux
+Icon=dev.prettymux.app
 Type=Application
 Categories=System;TerminalEmulator;
 Keywords=terminal;multiplexer;gpu;

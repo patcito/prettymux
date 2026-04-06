@@ -31,13 +31,14 @@ modules:
       - -Dghostty_dir=/app
     subdir: src/gtk
     post-install:
-      - install -Dm644 prettymux-shell-integration.sh /app/share/prettymux/shell-integration.sh || true
-      - install -Dm644 prettymux-bashrc.sh /app/share/prettymux/prettymux-bashrc.sh || true
-      - install -Dm755 bin/open /app/share/prettymux/bin/open || true
-      - install -Dm755 bin/xdg-open /app/share/prettymux/bin/xdg-open || true
-      - install -Dm644 ../../packaging/prettymux.desktop /app/share/applications/dev.prettymux.app.desktop || true
-      - install -Dm644 ../../packaging/prettymux.svg /app/share/icons/hicolor/scalable/apps/prettymux.svg || true
-      - install -Dm644 ../../packaging/prettymux.svg /app/share/icons/hicolor/scalable/apps/dev.prettymux.app.svg || true
+      - install -Dm644 /run/build/prettymux/src/gtk/prettymux-shell-integration.sh /app/share/prettymux/shell-integration.sh
+      - install -Dm644 /run/build/prettymux/src/gtk/prettymux-bashrc.sh /app/share/prettymux/prettymux-bashrc.sh
+      - install -Dm755 /run/build/prettymux/src/gtk/bin/open /app/share/prettymux/bin/open
+      - install -Dm755 /run/build/prettymux/src/gtk/bin/xdg-open /app/share/prettymux/bin/xdg-open
+      - install -Dm644 /run/build/prettymux/packaging/dev.prettymux.app.desktop /app/share/applications/dev.prettymux.app.desktop
+      - install -Dm644 /run/build/prettymux/packaging/dev.prettymux.app.service /app/share/dbus-1/services/dev.prettymux.app.service
+      - install -Dm644 /run/build/prettymux/packaging/prettymux.svg /app/share/icons/hicolor/scalable/apps/prettymux.svg
+      - install -Dm644 /run/build/prettymux/packaging/prettymux.svg /app/share/icons/hicolor/scalable/apps/dev.prettymux.app.svg
     sources:
       - type: dir
         path: ..
