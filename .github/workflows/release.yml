@@ -82,22 +82,17 @@ jobs:
         run: |
           cd src/gtk
           meson setup builddir \
+            --prefix=/usr \
             -Dghostty_dir="${GHOSTTY_DIR}"
           ninja -C builddir
 
       - name: Package artifacts
         run: |
-          mkdir -p dist/usr/bin dist/usr/lib/prettymux dist/usr/share/prettymux/bin \
-            dist/usr/share/applications dist/usr/share/icons/hicolor/scalable/apps
-          cp src/gtk/builddir/prettymux dist/usr/bin/
-          cp src/gtk/builddir/prettymux-open dist/usr/bin/ || true
-          cp src/gtk/prettymux-shell-integration.sh dist/usr/share/prettymux/shell-integration.sh || true
-          cp src/gtk/prettymux-bashrc.sh dist/usr/share/prettymux/prettymux-bashrc.sh || true
-          cp src/gtk/bin/open dist/usr/share/prettymux/bin/open || true
-          cp src/gtk/bin/xdg-open dist/usr/share/prettymux/bin/xdg-open || true
-          cp ghostty/zig-out/lib/libghostty.so dist/usr/lib/prettymux/ || true
-          cp packaging/prettymux.desktop dist/usr/share/applications/
-          cp packaging/prettymux.svg dist/usr/share/icons/hicolor/scalable/apps/
+          rm -rf dist
+          mkdir -p dist/usr/lib/prettymux
+          DESTDIR="$PWD/dist" meson install -C src/gtk/builddir --no-rebuild
+          install -Dm644 ghostty/zig-out/lib/libghostty.so dist/usr/lib/prettymux/libghostty.so || true
+          install -Dm644 LICENSE dist/usr/share/licenses/prettymux/LICENSE || true
           tar czf prettymux-ubuntu-24.04-amd64.tar.gz -C dist .
 
       - name: Upload artifact
@@ -139,6 +134,7 @@ jobs:
           ls -la ghostty/vendor/glad/src/gl.c || echo "gl.c not found"
           cd src/gtk
           meson setup builddir \
+            --prefix=/usr \
             -Dghostty_dir=$(cd $GITHUB_WORKSPACE && pwd)/ghostty
           ninja -C builddir
 
@@ -151,9 +147,10 @@ jobs:
           install -Dm644 LICENSE dist/usr/share/licenses/prettymux/LICENSE || true
 
       - name: Build RPM
+        shell: bash
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          if [[ ! "$VERSION" =~ ^[0-9] ]]; then VERSION="0.1.0"; fi
+          if ! [[ "$VERSION" =~ ^[0-9] ]]; then VERSION="0.1.0"; fi
           export VERSION
           nfpm package -p rpm -f packaging/nfpm.yaml
           mv *.rpm prettymux-${VERSION}-1.x86_64.rpm
@@ -198,6 +195,7 @@ jobs:
         run: |
           cd src/gtk
           meson setup builddir \
+            --prefix=/usr \
             -Dghostty_dir="${GHOSTTY_DIR}"
           ninja -C builddir
 
@@ -210,9 +208,10 @@ jobs:
           install -Dm644 LICENSE dist/usr/share/licenses/prettymux/LICENSE || true
 
       - name: Build .deb
+        shell: bash
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          if [[ ! "$VERSION" =~ ^[0-9] ]]; then VERSION="0.1.0"; fi
+          if ! [[ "$VERSION" =~ ^[0-9] ]]; then VERSION="0.1.0"; fi
           export VERSION
           nfpm package -p deb -f packaging/nfpm.yaml
           mv *.deb prettymux_${VERSION}_amd64.deb
@@ -252,7 +251,8 @@ jobs:
           path: ${{ steps.snapcraft.outputs.snap }}
 
       - name: Publish to Snap Store
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        if: (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') && secrets.SNAPCRAFT_STORE_CREDENTIALS != ''
+        continue-on-error: true
         uses: snapcore/action-publish@v1
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
@@ -550,7 +550,7 @@ jobs:
   # Windows (x64)
   # ---------------------------------------------------------------------------
   build-windows:
-    if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'windows')
+    if: github.event_name == 'workflow_dispatch' && (inputs.jobs == 'all' || contains(inputs.jobs, 'windows'))
     runs-on: windows-latest
     steps:
       - name: Checkout prettymux

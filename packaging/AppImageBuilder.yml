@@ -7,7 +7,7 @@ AppDir:
     id: dev.prettymux.app
     name: PrettyMux
     icon: prettymux
-    version: 0.2.4
+    version: 0.2.5
     exec: usr/bin/prettymux
 
   runtime:
