@@ -55,6 +55,7 @@ For the prebuilt package:
 yay -S prettymux-bin
 ```
 
+<!--
 ### Snap
 
 ```bash
@@ -67,6 +68,7 @@ sudo snap install prettymux
 flatpak install flathub dev.prettymux.app
 flatpak run dev.prettymux.app
 ```
+-->
 
 ### AppImage
 
