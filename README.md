@@ -33,7 +33,7 @@ sudo apt install prettymux
 ### Fedora
 
 ```bash
-sudo dnf install https://github.com/patcito/prettymux/releases/latest/download/prettymux.x86_64.rpm
+sudo dnf install https://github.com/patcito/prettymux/releases/download/v0.2.6/prettymux-0.2.6-1.x86_64.rpm
 ```
 
 ### Arch Linux
