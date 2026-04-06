@@ -389,42 +389,44 @@ jobs:
         env:
           AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
         run: |
-          pacman -Sy --noconfirm --needed openssh
-          install -d -m 700 ~/.ssh
-          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
-          chmod 600 ~/.ssh/aur
-          ssh-keyscan -H -t rsa,ecdsa,ed25519 aur.archlinux.org > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
-          cat > ~/.ssh/config <<'EOF'
+          pacman -Sy --noconfirm --needed openssh shadow
+          id -u aurbuilder >/dev/null 2>&1 || useradd -m -U aurbuilder
+          install -d -m 700 -o aurbuilder -g aurbuilder /home/aurbuilder/.ssh
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > /home/aurbuilder/.ssh/aur
+          chmod 600 /home/aurbuilder/.ssh/aur
+          ssh-keyscan -H -t rsa,ecdsa,ed25519 aur.archlinux.org > /home/aurbuilder/.ssh/known_hosts
+          chmod 600 /home/aurbuilder/.ssh/known_hosts
+          cat > /home/aurbuilder/.ssh/config <<'EOF'
           Host aur.archlinux.org
             HostName aur.archlinux.org
             User aur
-            IdentityFile ~/.ssh/aur
+            IdentityFile /home/aurbuilder/.ssh/aur
             IdentitiesOnly yes
             StrictHostKeyChecking yes
-            UserKnownHostsFile ~/.ssh/known_hosts
+            UserKnownHostsFile /home/aurbuilder/.ssh/known_hosts
           EOF
-          chmod 600 ~/.ssh/config
+          chmod 600 /home/aurbuilder/.ssh/config
+          chown -R aurbuilder:aurbuilder /home/aurbuilder/.ssh
 
-          export GIT_SSH_COMMAND='ssh -i ~/.ssh/aur -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts'
-          git config --global user.name "prettymux-bot"
-          git config --global user.email "prettymux-bot@users.noreply.github.com"
+          su - aurbuilder -c 'git config --global user.name "prettymux-bot"'
+          su - aurbuilder -c 'git config --global user.email "prettymux-bot@users.noreply.github.com"'
 
           rm -rf /tmp/aur-prettymux
-          git clone ssh://aur@aur.archlinux.org/prettymux.git /tmp/aur-prettymux
+          su - aurbuilder -c 'git clone ssh://aur@aur.archlinux.org/prettymux.git /tmp/aur-prettymux'
 
           cp packaging/PKGBUILD /tmp/aur-prettymux/PKGBUILD
-          (
-            cd /tmp/aur-prettymux
-            makepkg --printsrcinfo > .SRCINFO
-            git add PKGBUILD .SRCINFO
+          chown -R aurbuilder:aurbuilder /tmp/aur-prettymux
+          su - aurbuilder -c '
+            cd /tmp/aur-prettymux &&
+            makepkg --printsrcinfo > .SRCINFO &&
+            git add PKGBUILD .SRCINFO &&
             if git diff --cached --quiet; then
               echo "No AUR changes to publish"
               exit 0
-            fi
-            git commit -m "Update PKGBUILD and .SRCINFO"
+            fi &&
+            git commit -m "Update PKGBUILD and .SRCINFO" &&
             git push origin master
-          )
+          '
 
   # ---------------------------------------------------------------------------
   # Publish to PPA (Ubuntu)
