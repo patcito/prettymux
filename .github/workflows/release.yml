@@ -90,8 +90,13 @@ jobs:
         run: |
           rm -rf dist
           mkdir -p dist/usr/lib/prettymux
+          mkdir -p dist/usr/share/prettymux/bin
           DESTDIR="$PWD/dist" meson install -C src/gtk/builddir --no-rebuild
           install -Dm644 ghostty/zig-out/lib/libghostty.so dist/usr/lib/prettymux/libghostty.so || true
+          install -Dm644 src/gtk/prettymux-shell-integration.sh dist/usr/share/prettymux/shell-integration.sh || true
+          install -Dm644 src/gtk/prettymux-bashrc.sh dist/usr/share/prettymux/prettymux-bashrc.sh || true
+          install -Dm755 src/gtk/bin/open dist/usr/share/prettymux/bin/open || true
+          install -Dm755 src/gtk/bin/xdg-open dist/usr/share/prettymux/bin/xdg-open || true
           install -Dm644 LICENSE dist/usr/share/licenses/prettymux/LICENSE || true
           tar czf prettymux-ubuntu-24.04-amd64.tar.gz -C dist .
 
@@ -142,8 +147,13 @@ jobs:
         run: |
           rm -rf dist
           mkdir -p dist/usr/lib/prettymux
+          mkdir -p dist/usr/share/prettymux/bin
           DESTDIR="$PWD/dist" meson install -C src/gtk/builddir --no-rebuild
           install -Dm644 ghostty/zig-out/lib/libghostty.so dist/usr/lib/prettymux/libghostty.so || true
+          install -Dm644 src/gtk/prettymux-shell-integration.sh dist/usr/share/prettymux/shell-integration.sh || true
+          install -Dm644 src/gtk/prettymux-bashrc.sh dist/usr/share/prettymux/prettymux-bashrc.sh || true
+          install -Dm755 src/gtk/bin/open dist/usr/share/prettymux/bin/open || true
+          install -Dm755 src/gtk/bin/xdg-open dist/usr/share/prettymux/bin/xdg-open || true
           install -Dm644 LICENSE dist/usr/share/licenses/prettymux/LICENSE || true
 
       - name: Build RPM
@@ -203,8 +213,13 @@ jobs:
         run: |
           rm -rf dist
           mkdir -p dist/usr/lib/prettymux
+          mkdir -p dist/usr/share/prettymux/bin
           DESTDIR="$PWD/dist" meson install -C src/gtk/builddir --no-rebuild
           install -Dm644 ghostty/zig-out/lib/libghostty.so dist/usr/lib/prettymux/libghostty.so || true
+          install -Dm644 src/gtk/prettymux-shell-integration.sh dist/usr/share/prettymux/shell-integration.sh || true
+          install -Dm644 src/gtk/prettymux-bashrc.sh dist/usr/share/prettymux/prettymux-bashrc.sh || true
+          install -Dm755 src/gtk/bin/open dist/usr/share/prettymux/bin/open || true
+          install -Dm755 src/gtk/bin/xdg-open dist/usr/share/prettymux/bin/xdg-open || true
           install -Dm644 LICENSE dist/usr/share/licenses/prettymux/LICENSE || true
 
       - name: Build .deb
