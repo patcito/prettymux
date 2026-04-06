@@ -1,4 +1,4 @@
-prettymux (0.2.0-1) jammy; urgency=medium
+prettymux (0.2.1-1) noble; urgency=medium
 
   * Port from Qt6/Chromium to GTK4/WebKitGTK
   * Modular C codebase (ghostty_terminal, browser_tab, workspace, etc.)
@@ -14,4 +14,4 @@ prettymux (0.2.0-1) jammy; urgency=medium
   * Port scanning, git branch detection, broadcast mode
   * Thread-safe ghostty action callback (marshaled to main thread)
 
- -- patcito <patcito@gmail.com>  Sun, 30 Mar 2026 00:00:00 +0000
+ -- patcito <patcito@gmail.com>  Mon, 06 Apr 2026 18:40:00 +0200
