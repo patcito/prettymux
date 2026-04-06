@@ -1,7 +1,7 @@
 name: prettymux
 arch: amd64
 platform: linux
-version: ${VERSION:-0.2.2}
+version: ${VERSION:-0.2.3}
 maintainer: patcito
 description: GPU-accelerated terminal multiplexer
 homepage: https://github.com/patcito/prettymux
@@ -22,34 +22,34 @@ overrides:
       - json-glib
 
 contents:
-  - src: dist/prettymux
+  - src: dist/usr/bin/prettymux
     dst: /usr/bin/prettymux
     file_info:
       mode: 0755
 
-  - src: dist/prettymux-open
+  - src: dist/usr/bin/prettymux-open
     dst: /usr/bin/prettymux-open
     file_info:
       mode: 0755
 
-  - src: dist/libghostty.so
+  - src: dist/usr/lib/prettymux/libghostty.so
     dst: /usr/lib/prettymux/libghostty.so
     file_info:
       mode: 0644
 
-  - src: dist/prettymux-shell-integration.sh
+  - src: dist/usr/share/prettymux/shell-integration.sh
     dst: /usr/share/prettymux/shell-integration.sh
     file_info:
       mode: 0644
-  - src: dist/prettymux-bashrc.sh
+  - src: dist/usr/share/prettymux/prettymux-bashrc.sh
     dst: /usr/share/prettymux/prettymux-bashrc.sh
     file_info:
       mode: 0644
-  - src: dist/bin/open
+  - src: dist/usr/share/prettymux/bin/open
     dst: /usr/share/prettymux/bin/open
     file_info:
       mode: 0755
-  - src: dist/bin/xdg-open
+  - src: dist/usr/share/prettymux/bin/xdg-open
     dst: /usr/share/prettymux/bin/xdg-open
     file_info:
       mode: 0755

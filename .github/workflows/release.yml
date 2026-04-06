@@ -144,14 +144,11 @@ jobs:
 
       - name: Package artifacts
         run: |
-          mkdir -p dist/bin
-          cp src/gtk/builddir/prettymux dist/
-          cp src/gtk/builddir/prettymux-open dist/ || true
-          cp src/gtk/prettymux-shell-integration.sh dist/ || true
-          cp src/gtk/prettymux-bashrc.sh dist/ || true
-          cp src/gtk/bin/open dist/bin/open || true
-          cp src/gtk/bin/xdg-open dist/bin/xdg-open || true
-          cp ghostty/zig-out/lib/libghostty.so dist/ || true
+          rm -rf dist
+          mkdir -p dist/usr/lib/prettymux
+          DESTDIR="$PWD/dist" meson install -C src/gtk/builddir --no-rebuild
+          install -Dm644 ghostty/zig-out/lib/libghostty.so dist/usr/lib/prettymux/libghostty.so || true
+          install -Dm644 LICENSE dist/usr/share/licenses/prettymux/LICENSE || true
 
       - name: Build RPM
         run: |
@@ -206,14 +203,11 @@ jobs:
 
       - name: Package artifacts
         run: |
-          mkdir -p dist/bin
-          cp src/gtk/builddir/prettymux dist/
-          cp src/gtk/builddir/prettymux-open dist/ || true
-          cp src/gtk/prettymux-shell-integration.sh dist/ || true
-          cp src/gtk/prettymux-bashrc.sh dist/ || true
-          cp src/gtk/bin/open dist/bin/open || true
-          cp src/gtk/bin/xdg-open dist/bin/xdg-open || true
-          cp ghostty/zig-out/lib/libghostty.so dist/ || true
+          rm -rf dist
+          mkdir -p dist/usr/lib/prettymux
+          DESTDIR="$PWD/dist" meson install -C src/gtk/builddir --no-rebuild
+          install -Dm644 ghostty/zig-out/lib/libghostty.so dist/usr/lib/prettymux/libghostty.so || true
+          install -Dm644 LICENSE dist/usr/share/licenses/prettymux/LICENSE || true
 
       - name: Build .deb
         run: |
