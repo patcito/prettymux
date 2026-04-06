@@ -43,7 +43,7 @@ jobs:
           find ghostty -type f | head -20
 
       - name: Upload ghostty tree
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ghostty-prebuilt
           path: ghostty/
@@ -59,10 +59,10 @@ jobs:
       image: ghcr.io/patcito/prettymux-build-ubuntu:24.04
     steps:
       - name: Checkout prettymux
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Download prebuilt ghostty
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: ghostty-prebuilt
           path: ghostty
@@ -101,7 +101,7 @@ jobs:
           tar czf prettymux-ubuntu-24.04-amd64.tar.gz -C dist .
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: prettymux-ubuntu-24.04-amd64
           path: prettymux-ubuntu-24.04-amd64.tar.gz
@@ -117,10 +117,10 @@ jobs:
       image: ghcr.io/patcito/prettymux-build-fedora:42
     steps:
       - name: Checkout prettymux
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Download prebuilt ghostty
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: ghostty-prebuilt
           path: ghostty
@@ -162,7 +162,7 @@ jobs:
           mv *.rpm prettymux-${VERSION}-1.x86_64.rpm
 
       - name: Upload RPM
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: prettymux-fedora-rpm
           path: '*.rpm'
@@ -178,10 +178,10 @@ jobs:
       image: ghcr.io/patcito/prettymux-build-ubuntu:24.04
     steps:
       - name: Checkout prettymux
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Download prebuilt ghostty
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: ghostty-prebuilt
           path: ghostty
@@ -224,7 +224,7 @@ jobs:
           mv *.deb prettymux_${VERSION}_amd64.deb
 
       - name: Upload .deb
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: prettymux-deb
           path: '*.deb'
@@ -237,10 +237,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout prettymux
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Checkout ghostty fork
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ env.GHOSTTY_REPO }}
           ref: ${{ env.GHOSTTY_BRANCH }}
@@ -252,7 +252,7 @@ jobs:
         # snapcraft.yaml handles full build inside the snap environment
 
       - name: Upload snap
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: prettymux-snap
           path: ${{ steps.snapcraft.outputs.snap }}
@@ -275,10 +275,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout prettymux
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Download prebuilt ghostty
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: ghostty-prebuilt
           path: ghostty
@@ -298,7 +298,7 @@ jobs:
           cache-key: flatpak-builder-${{ github.sha }}
 
       - name: Upload Flatpak bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: prettymux-flatpak
           path: prettymux.flatpak
@@ -314,10 +314,10 @@ jobs:
       image: ghcr.io/patcito/prettymux-build-archlinux:latest
     steps:
       - name: Checkout prettymux
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Download prebuilt ghostty
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: ghostty-prebuilt
           path: ghostty
@@ -373,28 +373,46 @@ jobs:
           tar --zstd -cf ../prettymux-${VERSION}-1-x86_64.pkg.tar.zst .PKGINFO usr/
 
       - name: Upload package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: prettymux-archlinux
           path: '*.pkg.tar.zst'
 
       - name: Upload PKGBUILD
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: prettymux-pkgbuild
           path: packaging/PKGBUILD
 
       - name: Publish to AUR
         if: (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') && env.AUR_SSH_PRIVATE_KEY != ''
-        uses: KSXGitHub/github-actions-deploy-aur@v3
-        with:
-          pkgname: prettymux
-          pkgbuild: packaging/PKGBUILD
-          commit_username: prettymux-bot
-          commit_email: prettymux-bot@users.noreply.github.com
-          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
         env:
           AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          ssh-keyscan -t rsa,ecdsa,ed25519 aur.archlinux.org >> ~/.ssh/known_hosts
+
+          export GIT_SSH_COMMAND='ssh -i ~/.ssh/aur -o IdentitiesOnly=yes'
+          git config --global user.name "prettymux-bot"
+          git config --global user.email "prettymux-bot@users.noreply.github.com"
+
+          rm -rf /tmp/aur-prettymux
+          git clone ssh://aur@aur.archlinux.org/prettymux.git /tmp/aur-prettymux
+
+          cp packaging/PKGBUILD /tmp/aur-prettymux/PKGBUILD
+          (
+            cd /tmp/aur-prettymux
+            makepkg --printsrcinfo > .SRCINFO
+            git add PKGBUILD .SRCINFO
+            if git diff --cached --quiet; then
+              echo "No AUR changes to publish"
+              exit 0
+            fi
+            git commit -m "Update PKGBUILD and .SRCINFO"
+            git push origin master
+          )
 
   # ---------------------------------------------------------------------------
   # Publish to PPA (Ubuntu)
@@ -404,7 +422,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout prettymux
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Download prebuilt ghostty
         run: |
@@ -467,10 +485,10 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout prettymux
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Download prebuilt ghostty
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: ghostty-prebuilt
           path: ghostty
@@ -512,7 +530,7 @@ jobs:
           UPDATE_INFO: gh-releases-zsync|patcito|prettymux|latest|PrettyMux-*x86_64.AppImage.zsync
 
       - name: Upload AppImage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: prettymux-appimage
           path: '*.AppImage'
@@ -525,7 +543,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout prettymux
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up MSYS2 toolchain
         uses: msys2/setup-msys2@v2
@@ -601,7 +619,7 @@ jobs:
           powershell -NoLogo -NoProfile -Command "Compress-Archive -Path dist/* -DestinationPath prettymux-windows-x64.zip"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: prettymux-windows-x64
           path: prettymux-windows-x64.zip
@@ -614,10 +632,10 @@ jobs:
     runs-on: macos-14
     steps:
       - name: Checkout prettymux
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Checkout ghostty fork
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ env.GHOSTTY_REPO }}
           ref: ${{ env.GHOSTTY_BRANCH }}
@@ -669,7 +687,7 @@ jobs:
           tar czf prettymux-macos-arm64.tar.gz -C dist .
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: prettymux-macos-arm64
           path: prettymux-macos-arm64.tar.gz
@@ -682,10 +700,10 @@ jobs:
   #   runs-on: macos-14
   #   steps:
   #     - name: Checkout prettymux
-  #       uses: actions/checkout@v4
+  #       uses: actions/checkout@v5
   #
   #     - name: Checkout ghostty fork
-  #       uses: actions/checkout@v4
+  #       uses: actions/checkout@v5
   #       with:
   #         repository: ${{ env.GHOSTTY_REPO }}
   #         ref: ${{ env.GHOSTTY_BRANCH }}
@@ -718,7 +736,7 @@ jobs:
   #         ninja -C builddir
   #
   #     - name: Upload artifact
-  #       uses: actions/upload-artifact@v4
+  #       uses: actions/upload-artifact@v6
   #       with:
   #         name: prettymux-macos-x64
   #         path: PrettyMux-x64.dmg
@@ -745,12 +763,12 @@ jobs:
       contents: write
     steps:
       - name: Checkout (for git log)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           path: artifacts
 
