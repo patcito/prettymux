@@ -447,15 +447,24 @@ jobs:
 
       - name: Create source tarball
         run: |
-          VERSION=$(dpkg-parsechangelog -l packaging/debian/changelog --show-field Version 2>/dev/null | cut -d- -f1)
-          if [ -z "$VERSION" ]; then
-            VERSION=${GITHUB_REF_NAME#v}
+          BASE_VERSION=""
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v* ]]; then
+            BASE_VERSION=${GITHUB_REF_NAME#v}
           fi
-          if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
-            VERSION=$(sed -n "s/^[[:space:]]*version: '\\([^']*\\)'.*/\\1/p" src/gtk/meson.build | head -1)
+          if [ -z "$BASE_VERSION" ]; then
+            BASE_VERSION=$(dpkg-parsechangelog -l packaging/debian/changelog --show-field Version 2>/dev/null | cut -d- -f1)
           fi
-          if [ -z "$VERSION" ]; then
-            VERSION="0.2.0"
+          if [ -z "$BASE_VERSION" ]; then
+            BASE_VERSION=$(sed -n "s/^[[:space:]]*version: '\\([^']*\\)'.*/\\1/p" src/gtk/meson.build | head -1)
+          fi
+          if [ -z "$BASE_VERSION" ]; then
+            BASE_VERSION="0.2.0"
+          fi
+
+          VERSION="$BASE_VERSION"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            SNAPSHOT_SUFFIX="+git$(date -u +%Y%m%d%H%M).$(git rev-parse --short HEAD)"
+            VERSION="${BASE_VERSION}${SNAPSHOT_SUFFIX}"
           fi
           PPA_REVISION=$((GITHUB_RUN_NUMBER * 10 + GITHUB_RUN_ATTEMPT - 1))
           echo "VERSION=$VERSION" >> $GITHUB_ENV
