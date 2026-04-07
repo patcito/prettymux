@@ -26,7 +26,7 @@ BEGIN
             VALUE "OriginalFilename", "prettymux.exe"
             VALUE "ProductName",      "PrettyMux"
             VALUE "ProductVersion",   "0.2.10"
-            VALUE "LegalCopyright",   "MIT License"
+            VALUE "LegalCopyright",   "GPL-3.0-only"
         END
     END
     BLOCK "VarFileInfo"
