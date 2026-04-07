@@ -73,9 +73,9 @@ flatpak run dev.prettymux.app
 ### AppImage
 
 ```bash
-wget https://github.com/patcito/prettymux/releases/download/v0.2.8/PrettyMux-0.2.8-x86_64.AppImage
-chmod +x PrettyMux-0.2.8-x86_64.AppImage
-./PrettyMux-0.2.8-x86_64.AppImage
+wget https://github.com/patcito/prettymux/releases/download/v0.2.9/PrettyMux-0.2.9-x86_64.AppImage
+chmod +x PrettyMux-0.2.9-x86_64.AppImage
+./PrettyMux-0.2.9-x86_64.AppImage
 ```
 
 ## Build From Source

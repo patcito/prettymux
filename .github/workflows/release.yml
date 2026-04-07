@@ -163,7 +163,7 @@ jobs:
           if ! [[ "$VERSION" =~ ^[0-9] ]]; then VERSION="0.1.0"; fi
           export VERSION
           nfpm package -p rpm -f packaging/nfpm.yaml
-          mv *.rpm prettymux-${VERSION}-1.x86_64.rpm
+          ls -lh *.rpm
 
       - name: Upload RPM
         uses: actions/upload-artifact@v6
@@ -223,7 +223,7 @@ jobs:
           if ! [[ "$VERSION" =~ ^[0-9] ]]; then VERSION="0.1.0"; fi
           export VERSION
           nfpm package -p deb -f packaging/nfpm.yaml
-          mv *.deb prettymux_${VERSION}_amd64.deb
+          ls -lh *.deb
 
       - name: Upload .deb
         uses: actions/upload-artifact@v6
