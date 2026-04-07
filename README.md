@@ -10,8 +10,8 @@ Website: https://prettymux.com/
 
 ```bash
 sudo apt update
-sudo apt install -y ca-certificates
-echo 'deb [trusted=yes arch=amd64] https://prettymux.com/apt/ubuntu noble main' | sudo tee /etc/apt/sources.list.d/prettymux.list
+sudo apt install -y ca-certificates lsb-release
+echo "deb [trusted=yes arch=amd64] https://prettymux.com/apt/ubuntu $(lsb_release -cs 2>/dev/null) main" | sudo tee /etc/apt/sources.list.d/prettymux.list
 sudo apt update
 sudo apt install prettymux
 ```
@@ -73,9 +73,9 @@ flatpak run dev.prettymux.app
 ### AppImage
 
 ```bash
-wget https://github.com/patcito/prettymux/releases/download/v0.2.9/PrettyMux-0.2.9-x86_64.AppImage
-chmod +x PrettyMux-0.2.9-x86_64.AppImage
-./PrettyMux-0.2.9-x86_64.AppImage
+wget https://prettymux.com/appimage/PrettyMux-x86_64.AppImage
+chmod +x PrettyMux-x86_64.AppImage
+./PrettyMux-x86_64.AppImage
 ```
 
 ## Build From Source
