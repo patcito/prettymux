@@ -150,15 +150,47 @@ ghostty_terminal_shorten_path(const char *path, char *buf, size_t bufsz)
     return buf;
 }
 
+static const char *
+ghostty_terminal_shorten_branch(const char *branch, char *buf, size_t bufsz)
+{
+    const char *p;
+    glong len;
+    const char *tail;
+
+    if (!branch || !branch[0]) {
+        buf[0] = '\0';
+        return buf;
+    }
+
+    for (p = branch; *p; p++) {
+        if (g_ascii_isspace(*p)) {
+            snprintf(buf, bufsz, "%s", branch);
+            return buf;
+        }
+    }
+
+    len = g_utf8_strlen(branch, -1);
+    if (len <= 5) {
+        snprintf(buf, bufsz, "%s", branch);
+        return buf;
+    }
+
+    tail = g_utf8_offset_to_pointer(branch, len - 5);
+    snprintf(buf, bufsz, "...%s", tail);
+    return buf;
+}
+
 static void
 ghostty_terminal_refresh_status(GhosttyTerminal *self)
 {
     const char *full_cwd;
     const char *git_branch;
     const char *display_cwd = "";
+    const char *display_branch = "";
     char search_buf[256];
     char search_count[64];
     char short_cwd[64];
+    char short_branch[64];
     int available_width = 0;
     int branch_width = 0;
     int spacing = 0;
@@ -204,9 +236,11 @@ ghostty_terminal_refresh_status(GhosttyTerminal *self)
 
     full_cwd = self->status_cwd_full ? self->status_cwd_full : "";
     git_branch = self->status_git_full ? self->status_git_full : "";
+    display_branch = ghostty_terminal_shorten_branch(git_branch, short_branch,
+                                                     sizeof(short_branch));
 
     if (self->status_git)
-        gtk_label_set_text(GTK_LABEL(self->status_git), git_branch);
+        gtk_label_set_text(GTK_LABEL(self->status_git), display_branch);
 
     if (full_cwd[0])
         display_cwd = ghostty_terminal_shorten_path(full_cwd, short_cwd,
@@ -973,6 +1007,7 @@ ghostty_terminal_init(GhosttyTerminal *self)
     self->status_git = gtk_label_new("");
     gtk_label_set_xalign(GTK_LABEL(self->status_git), 1);
     gtk_label_set_single_line_mode(GTK_LABEL(self->status_git), TRUE);
+    gtk_label_set_ellipsize(GTK_LABEL(self->status_git), PANGO_ELLIPSIZE_START);
     gtk_widget_set_overflow(self->status_git, GTK_OVERFLOW_HIDDEN);
     gtk_box_append(GTK_BOX(self->status_bar), self->status_git);
 

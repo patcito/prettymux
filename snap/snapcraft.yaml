@@ -1,6 +1,6 @@
 name: prettymux
 base: core24
-version: '0.2.10'
+version: '0.2.11'
 license: GPL-3.0-only
 summary: GPU-accelerated terminal multiplexer
 description: |

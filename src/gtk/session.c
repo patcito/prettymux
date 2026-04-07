@@ -13,6 +13,8 @@ static GtkWidget *session_terminal_stack = NULL;
 static GtkWidget *session_workspace_list = NULL;
 static guint session_save_source_id = 0;
 static gboolean session_shutting_down = FALSE;
+static gboolean session_restoring = FALSE;
+static guint64 session_generated_pane_id = 1;
 
 static GtkWidget *
 session_page_linked_terminal(GtkWidget *page)
@@ -87,6 +89,106 @@ typedef struct {
     double ratio;
     guint attempts_left;
 } SessionSplitRestoreData;
+
+static void
+session_assign_pane_id(GtkNotebook *pane, const char *pane_id);
+
+static char *
+session_next_generated_pane_id(void)
+{
+    return g_strdup_printf("pane-restored-%" G_GUINT64_FORMAT,
+                           session_generated_pane_id++);
+}
+
+static void
+session_normalize_workspace_pane_ids(Workspace *ws)
+{
+    GHashTable *seen;
+
+    if (!ws || !ws->pane_notebooks)
+        return;
+
+    seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+
+    for (guint i = 0; i < ws->pane_notebooks->len; i++) {
+        GtkNotebook *pane = g_ptr_array_index(ws->pane_notebooks, i);
+        const char *pane_id = workspace_get_pane_id(pane);
+        gboolean needs_new_id = FALSE;
+        char *owned_id;
+
+        if (!pane_id || !pane_id[0]) {
+            needs_new_id = TRUE;
+        } else if (g_hash_table_contains(seen, pane_id)) {
+            needs_new_id = TRUE;
+        }
+
+        if (needs_new_id) {
+            char *fresh_id = session_next_generated_pane_id();
+            session_assign_pane_id(pane, fresh_id);
+            g_hash_table_add(seen, fresh_id);
+        } else {
+            owned_id = g_strdup(pane_id);
+            g_hash_table_add(seen, owned_id);
+        }
+    }
+
+    g_hash_table_unref(seen);
+}
+
+static void
+session_assign_workspace_pane_ids_from_saved_order(Workspace *ws,
+                                                   JsonArray *panes_arr)
+{
+    GHashTable *seen;
+    guint n_panes;
+
+    if (!ws || !ws->pane_notebooks || !panes_arr)
+        return;
+
+    seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    n_panes = json_array_get_length(panes_arr);
+
+    for (guint i = 0; i < n_panes && i < ws->pane_notebooks->len; i++) {
+        JsonNode *pane_node = json_array_get_element(panes_arr, i);
+        JsonObject *pane_obj;
+        const char *saved_pane_id;
+        char *assigned_id = NULL;
+
+        if (!pane_node || !JSON_NODE_HOLDS_OBJECT(pane_node))
+            continue;
+
+        pane_obj = json_node_get_object(pane_node);
+        saved_pane_id = json_object_get_string_member_with_default(
+            pane_obj, "paneId", "");
+
+        if (saved_pane_id[0] && !g_hash_table_contains(seen, saved_pane_id))
+            assigned_id = g_strdup(saved_pane_id);
+        else
+            assigned_id = session_next_generated_pane_id();
+
+        session_assign_pane_id(g_ptr_array_index(ws->pane_notebooks, i),
+                               assigned_id);
+        g_hash_table_add(seen, assigned_id);
+    }
+
+    for (guint i = n_panes; i < ws->pane_notebooks->len; i++) {
+        char *fresh_id = session_next_generated_pane_id();
+        session_assign_pane_id(g_ptr_array_index(ws->pane_notebooks, i),
+                               fresh_id);
+        g_hash_table_add(seen, fresh_id);
+    }
+
+    g_hash_table_unref(seen);
+}
+
+static gboolean
+session_finish_restore_cb(gpointer data)
+{
+    (void)data;
+    session_restoring = FALSE;
+    session_queue_save();
+    return G_SOURCE_REMOVE;
+}
 
 static GtkPaned *
 session_main_paned(GtkWidget *browser_notebook)
@@ -165,7 +267,8 @@ session_save_workspace_layout(JsonBuilder *builder,
     }
 
     if (GTK_IS_NOTEBOOK(widget)) {
-        const char *pane_id = workspace_get_pane_id(GTK_NOTEBOOK(widget));
+        const char *pane_id;
+        pane_id = workspace_get_pane_id(GTK_NOTEBOOK(widget));
 
         json_builder_begin_object(builder);
         json_builder_set_member_name(builder, "type");
@@ -222,13 +325,17 @@ session_restore_split_position_cb(gpointer data)
         ? gtk_widget_get_width(GTK_WIDGET(restore->paned))
         : gtk_widget_get_height(GTK_WIDGET(restore->paned));
 
-    if (size > 1) {
+    if (size > 10) {
         position = (int)(restore->ratio * (double)size);
         if (position < 0)
             position = 0;
         if (position > size)
             position = size;
         gtk_paned_set_position(restore->paned, position);
+
+        g_object_unref(restore->paned);
+        g_free(restore);
+        return G_SOURCE_REMOVE;
     }
 
     if (restore->attempts_left > 0) {
@@ -283,10 +390,6 @@ session_restore_workspace_layout_node(Workspace *ws,
 
     type = json_object_get_string_member_with_default(layout_obj, "type", "");
     if (g_strcmp0(type, "pane") == 0) {
-        const char *pane_id = json_object_get_string_member_with_default(
-            layout_obj, "paneId", "");
-
-        session_assign_pane_id(seed_pane, pane_id);
         return TRUE;
     }
 
@@ -303,6 +406,7 @@ session_restore_workspace_layout_node(Workspace *ws,
         JsonObject *end_obj = json_object_get_object_member(layout_obj, "end");
         GtkNotebook *new_pane;
         GtkWidget *parent;
+        GtkPaned *this_paned = NULL;
         double ratio = json_object_get_double_member_with_default(layout_obj,
                                                                   "ratio",
                                                                   0.5);
@@ -315,16 +419,27 @@ session_restore_workspace_layout_node(Workspace *ws,
         if (!GTK_IS_NOTEBOOK(new_pane))
             return FALSE;
 
-        if (!session_restore_workspace_layout_node(ws, start_obj, seed_pane,
-                                                   ghostty_app))
-            return FALSE;
-        if (!session_restore_workspace_layout_node(ws, end_obj, new_pane,
-                                                   ghostty_app))
-            return FALSE;
-
         parent = gtk_widget_get_parent(GTK_WIDGET(seed_pane));
         if (GTK_IS_PANED(parent))
-            session_schedule_split_restore(GTK_PANED(parent), ratio);
+            this_paned = g_object_ref(GTK_PANED(parent));
+
+        if (!session_restore_workspace_layout_node(ws, start_obj, seed_pane,
+                                                   ghostty_app)) {
+            if (this_paned)
+                g_object_unref(this_paned);
+            return FALSE;
+        }
+        if (!session_restore_workspace_layout_node(ws, end_obj, new_pane,
+                                                   ghostty_app)) {
+            if (this_paned)
+                g_object_unref(this_paned);
+            return FALSE;
+        }
+
+        if (this_paned) {
+            session_schedule_split_restore(this_paned, ratio);
+            g_object_unref(this_paned);
+        }
 
         return TRUE;
     }
@@ -353,7 +468,7 @@ void session_begin_shutdown(void)
 
 void session_queue_save(void)
 {
-    if (session_shutting_down)
+    if (session_shutting_down || session_restoring)
         return;
 
     if (!session_window || !session_browser_notebook ||
@@ -463,6 +578,8 @@ void session_save(GtkWindow *window, GtkWidget *browser_notebook,
         for (wi = 0; wi < workspaces->len; wi++) {
             Workspace *ws = g_ptr_array_index(workspaces, wi);
             json_builder_begin_object(b);
+
+            session_normalize_workspace_pane_ids(ws);
 
             json_builder_set_member_name(b, "name");
             json_builder_add_string_value(b, ws->name);
@@ -581,8 +698,11 @@ void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
         return;
     }
 
+    session_restoring = TRUE;
+
     JsonParser *parser = json_parser_new();
     if (!json_parser_load_from_file(parser, path, NULL)) {
+        session_restoring = FALSE;
         g_object_unref(parser);
         g_free(path);
         return;
@@ -591,6 +711,7 @@ void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
 
     JsonNode *root = json_parser_get_root(parser);
     if (!JSON_NODE_HOLDS_OBJECT(root)) {
+        session_restoring = FALSE;
         g_object_unref(parser);
         return;
     }
@@ -598,6 +719,7 @@ void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
     JsonObject *obj = json_node_get_object(root);
 
     if (json_object_get_int_member_with_default(obj, "version", 0) != 1) {
+        session_restoring = FALSE;
         g_object_unref(parser);
         return;
     }
@@ -730,6 +852,10 @@ void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
                 guint n_panes = json_array_get_length(panes_arr);
                 guint pi;
 
+                if (restored_layout)
+                    session_assign_workspace_pane_ids_from_saved_order(
+                        ws, panes_arr);
+
                 for (pi = 0; pi < n_panes; pi++) {
                     JsonNode *pane_node = json_array_get_element(
                         panes_arr, pi);
@@ -743,9 +869,12 @@ void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
                         json_object_get_string_member_with_default(
                             pane_obj, "paneId", "");
 
-                    if (saved_pane_id[0])
+                    if (restored_layout) {
+                        if (pi < ws->pane_notebooks->len)
+                            nb = g_ptr_array_index(ws->pane_notebooks, pi);
+                    } else if (saved_pane_id[0]) {
                         nb = workspace_get_pane_by_id(ws, saved_pane_id);
-                    else if (!restored_layout && pi > 0) {
+                    } else if (pi > 0) {
                         workspace_split_pane(ws,
                             GTK_ORIENTATION_HORIZONTAL, ghostty_app);
                     }
@@ -775,9 +904,10 @@ void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
                                     json_object_get_string_member_with_default(
                                         fo, "cwd", "");
                             }
-                            if (first_cwd[0]) {
-                                /* Remove the placeholder tab and create
-                                 * a new one with the correct CWD */
+                            /* Replace the bootstrap tab unconditionally so
+                             * session restore never keeps the temporary
+                             * terminal created before replay. */
+                            {
                                 int n_existing = gtk_notebook_get_n_pages(nb);
                                 if (n_existing > 0) {
                                     GtkWidget *old = gtk_notebook_get_nth_page(nb, 0);
@@ -795,7 +925,12 @@ void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
                                     gtk_notebook_remove_page(nb, 0);
                                 }
                                 workspace_add_terminal_to_notebook_with_cwd(
-                                    ws, nb, ghostty_app, first_cwd);
+                                    ws, nb, ghostty_app,
+                                    first_cwd[0] ? first_cwd : NULL);
+                                if (pi == 0 && first_cwd[0]) {
+                                    snprintf(ws->cwd, sizeof(ws->cwd), "%s",
+                                             first_cwd);
+                                }
                             }
                         }
 
@@ -863,6 +998,9 @@ void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
                             gtk_notebook_set_current_page(nb, active_tab);
                     }
                 }
+
+                if (ws->cwd[0])
+                    workspace_detect_git(ws);
             }
         }
     }
@@ -889,6 +1027,7 @@ void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
     }
 
     g_object_unref(parser);
+    g_timeout_add(500, session_finish_restore_cb, NULL);
 
     /* CWD is now set via ghostty_terminal_new(cwd) — no cd hack needed */
 }

@@ -1034,8 +1034,27 @@ on_terminal_state_changed(GObject *obj, gpointer user_data)
 static void
 on_terminal_pwd_changed(GhosttyTerminal *term, const char *cwd, gpointer user_data)
 {
-    (void)user_data;
+    Workspace *ws = user_data;
+    GtkNotebook *pane;
+    int current_page;
+    GtkWidget *visible_terminal;
+
     workspace_request_terminal_icon(GTK_WIDGET(term), cwd);
+
+    if (!ws || !cwd || !cwd[0])
+        return;
+
+    pane = terminal_parent_notebook(GTK_WIDGET(term));
+    if (!pane || workspace_get_focused_pane(ws) != pane)
+        return;
+
+    current_page = gtk_notebook_get_current_page(pane);
+    visible_terminal = notebook_terminal_at(pane, current_page);
+    if (visible_terminal != GTK_WIDGET(term))
+        return;
+
+    snprintf(ws->cwd, sizeof(ws->cwd), "%s", cwd);
+    workspace_detect_git(ws);
 }
 
 static void
@@ -2844,12 +2863,18 @@ on_notebook_switch_page(GtkNotebook *nb, GtkWidget *page,
                         guint page_num, gpointer user_data)
 {
     (void)nb;
-    (void)page_num;
     Workspace *ws = user_data;
 
     workspace_set_active_pane(ws, nb);
     GtkWidget *terminal = page_linked_terminal(page);
     if (terminal && GHOSTTY_IS_TERMINAL(terminal)) {
+        const char *cwd = ghostty_terminal_get_cwd(GHOSTTY_TERMINAL(terminal));
+
+        if (ws && cwd && cwd[0]) {
+            snprintf(ws->cwd, sizeof(ws->cwd), "%s", cwd);
+            workspace_detect_git(ws);
+        }
+
         focus_terminal_page(terminal);
         focus_terminal_page_later(terminal);
         ghostty_terminal_clear_activity(GHOSTTY_TERMINAL(terminal));
