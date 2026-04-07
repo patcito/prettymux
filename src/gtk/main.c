@@ -20,6 +20,7 @@
 #include "ghostty_terminal.h"
 #include "browser_tab.h"
 #include "app_settings.h"
+#include "hover_focus.h"
 #include "theme.h"
 #include "shortcuts.h"
 #include "workspace.h"
@@ -166,6 +167,7 @@ on_main_window_active_changed(GObject *object, GParamSpec *pspec, gpointer user_
     (void)pspec;
     (void)user_data;
     g_main_window_active = gtk_window_is_active(GTK_WINDOW(object));
+    hover_focus_handle_window_active_changed(g_main_window_active);
     port_scanner_set_window_active(g_main_window_active);
 }
 
@@ -3479,6 +3481,11 @@ setup_shell_integration_env(void)
 
 static void on_activate(GtkApplication *app, gpointer user_data) {
     (void)user_data;
+    if (g_main_window && GTK_IS_WINDOW(g_main_window)) {
+        gtk_window_present(g_main_window);
+        return;
+    }
+
     debug_notification_log("notify app activate app_id=%s registered=%d dbus=%p",
                            g_application_get_application_id(G_APPLICATION(app))
                                ? g_application_get_application_id(G_APPLICATION(app))
@@ -3529,6 +3536,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_window_set_default_size(GTK_WINDOW(window), 1400, 900);
     g_main_window = GTK_WINDOW(window);
     g_main_window_active = gtk_window_is_active(GTK_WINDOW(window));
+    hover_focus_handle_window_active_changed(g_main_window_active);
     g_signal_connect(window, "notify::is-active",
                      G_CALLBACK(on_main_window_active_changed), NULL);
 

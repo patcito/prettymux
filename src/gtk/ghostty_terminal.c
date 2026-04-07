@@ -9,6 +9,7 @@
 
 #include "ghostty_terminal.h"
 #include "app_settings.h"
+#include "hover_focus.h"
 #include "socket_server.h"
 
 #include <gdk/gdk.h>
@@ -706,6 +707,8 @@ on_motion(GtkEventControllerMotion *controller,
 {
     GhosttyTerminal *self = GHOSTTY_TERMINAL(user_data);
 
+    hover_focus_note_pointer_motion();
+
     if (!self->surface)
         return;
 
@@ -724,6 +727,8 @@ on_mouse_enter(GtkEventControllerMotion *controller,
     (void)controller; (void)x; (void)y;
     GhosttyTerminal *self = GHOSTTY_TERMINAL(user_data);
     if (!app_settings_get_focus_on_hover())
+        return;
+    if (!hover_focus_should_enter())
         return;
     if (self->gl_area)
         gtk_widget_grab_focus(GTK_WIDGET(self->gl_area));

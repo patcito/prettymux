@@ -2,6 +2,7 @@
 #include "app_settings.h"
 #include "close_confirm.h"
 #include "ghostty_terminal.h"
+#include "hover_focus.h"
 #include "port_scanner.h"
 #include "project_icon_cache.h"
 #include "resize_overlay.h"
@@ -2015,8 +2016,22 @@ on_notebook_pointer_enter(GtkEventControllerMotion *controller,
     if (!app_settings_get_focus_on_hover())
         return;
 
+    if (!hover_focus_should_enter())
+        return;
+
     if (ws && GTK_IS_NOTEBOOK(widget))
         workspace_set_active_pane(ws, GTK_NOTEBOOK(widget));
+}
+
+static void
+on_notebook_pointer_motion(GtkEventControllerMotion *controller,
+                           double x, double y, gpointer user_data)
+{
+    (void)controller;
+    (void)x;
+    (void)y;
+    (void)user_data;
+    hover_focus_note_pointer_motion();
 }
 
 static void
@@ -2068,6 +2083,8 @@ create_pane_notebook(Workspace *ws, ghostty_app_t app)
                      G_CALLBACK(on_notebook_switch_page), ws);
 
     GtkEventController *motion = gtk_event_controller_motion_new();
+    g_signal_connect(motion, "motion",
+                     G_CALLBACK(on_notebook_pointer_motion), ws);
     g_signal_connect(motion, "enter",
                      G_CALLBACK(on_notebook_pointer_enter), ws);
     gtk_widget_add_controller(notebook, motion);
