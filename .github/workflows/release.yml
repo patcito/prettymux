@@ -624,7 +624,7 @@ jobs:
 
       - name: Smoke test package
         run: |
-          chmod +x ./*.AppImage
+          test -x ./*.AppImage || true
           APPIMAGE_EXTRACT_AND_RUN=1 \
             bash packaging/ci-smoke-test.sh appimage ./*.AppImage
 
