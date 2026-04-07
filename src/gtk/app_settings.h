@@ -1,5 +1,7 @@
 #pragma once
 
+#include <glib.h>
+
 #include "theme.h"
 
 void app_settings_load(void);
@@ -14,6 +16,8 @@ const char *app_settings_default_ghostty_theme_for_prettymux_theme(const char *t
 
 const char *app_settings_get_toast_position(void);
 void app_settings_set_toast_position(const char *position);
+gboolean app_settings_get_focus_on_hover(void);
+void app_settings_set_focus_on_hover(gboolean enabled);
 
 const Theme *app_settings_get_custom_theme(void);
 void app_settings_set_custom_theme(const Theme *theme);

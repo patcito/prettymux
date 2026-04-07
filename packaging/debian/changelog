@@ -1,4 +1,4 @@
-prettymux (0.2.7-1) noble; urgency=medium
+prettymux (0.2.8-1) noble; urgency=medium
 
   * Port from Qt6/Chromium to GTK4/WebKitGTK
   * Modular C codebase (ghostty_terminal, browser_tab, workspace, etc.)
@@ -10,6 +10,8 @@ prettymux (0.2.7-1) noble; urgency=medium
   * prettymux-open CLI tool with full IPC command API
   * Session save/restore with CWD per tab
   * Focus-on-hover for terminal panes
+  * Settings toggle to disable focus-on-hover
+  * Remove legacy Qt frontend sources
   * Activity indicators, progress bars, notification bell
   * Port scanning, git branch detection, broadcast mode
   * Thread-safe ghostty action callback (marshaled to main thread)

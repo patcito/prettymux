@@ -14,6 +14,7 @@ typedef struct {
     GtkWidget *content;
     GtkWidget *theme_dropdown;
     GtkWidget *toast_position_dropdown;
+    GtkWidget *focus_on_hover_switch;
     GtkWidget *font_spin;
     GtkWidget *ghostty_theme_entry;
     GtkWidget *confirm_tab;
@@ -439,6 +440,8 @@ on_apply_clicked(GtkButton *button, gpointer user_data)
         gtk_drop_down_get_selected(GTK_DROP_DOWN(state->toast_position_dropdown));
     app_settings_set_toast_position(
         toast_position_selected == 1 ? "bottom" : "top");
+    app_settings_set_focus_on_hover(
+        gtk_switch_get_active(GTK_SWITCH(state->focus_on_hover_switch)));
 
     selected = gtk_drop_down_get_selected(GTK_DROP_DOWN(state->theme_dropdown));
     selected_theme = theme_get_at((int)selected);
@@ -583,6 +586,13 @@ settings_dialog_present(GtkWindow *parent,
     gtk_box_append(GTK_BOX(content),
                    settings_row("Default Ghostty theme",
                                 state->ghostty_theme_entry));
+
+    state->focus_on_hover_switch = gtk_switch_new();
+    gtk_switch_set_active(GTK_SWITCH(state->focus_on_hover_switch),
+                          app_settings_get_focus_on_hover());
+    gtk_box_append(GTK_BOX(content),
+                   settings_row("Focus panes on hover",
+                                state->focus_on_hover_switch));
 
     gtk_box_append(GTK_BOX(content),
                    settings_section_title("PrettyMux theme",

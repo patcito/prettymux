@@ -65,7 +65,7 @@ sudo snap install prettymux
 ### Flatpak
 
 ```bash
-flatpak remote-add --if-not-exists --no-gpg-verify prettymux https://prettymux.com/flatpak/prettymux.flatpakrepo
+flatpak remote-add --if-not-exists prettymux https://prettymux.com/flatpak/prettymux.flatpakrepo
 flatpak install prettymux dev.prettymux.app
 flatpak run dev.prettymux.app
 ```
@@ -73,9 +73,9 @@ flatpak run dev.prettymux.app
 ### AppImage
 
 ```bash
-wget https://github.com/patcito/prettymux/releases/download/v0.2.7/PrettyMux-0.2.7-x86_64.AppImage
-chmod +x PrettyMux-0.2.7-x86_64.AppImage
-./PrettyMux-0.2.7-x86_64.AppImage
+wget https://github.com/patcito/prettymux/releases/download/v0.2.8/PrettyMux-0.2.8-x86_64.AppImage
+chmod +x PrettyMux-0.2.8-x86_64.AppImage
+./PrettyMux-0.2.8-x86_64.AppImage
 ```
 
 ## Build From Source

@@ -9,6 +9,7 @@ typedef struct {
     double ghostty_font_size;
     char *ghostty_theme;
     char *toast_position;
+    gboolean focus_on_hover;
     Theme custom_theme;
 } AppSettingsState;
 
@@ -17,6 +18,7 @@ static AppSettingsState app_settings = {
     .ghostty_font_size = 0.0,
     .ghostty_theme = NULL,
     .toast_position = NULL,
+    .focus_on_hover = TRUE,
     .custom_theme = {
         .name = "Custom",
         .bg = "#16181d",
@@ -194,6 +196,9 @@ app_settings_load(void)
         if (g_key_file_has_key(kf, "ui", "toast_position", NULL))
             app_settings.toast_position =
                 g_key_file_get_string(kf, "ui", "toast_position", NULL);
+        if (g_key_file_has_key(kf, "ui", "focus_on_hover", NULL))
+            app_settings.focus_on_hover =
+                g_key_file_get_boolean(kf, "ui", "focus_on_hover", NULL);
         app_settings_load_theme_colors(kf, "custom_theme",
                                        &app_settings.custom_theme);
     }
@@ -231,6 +236,8 @@ app_settings_save(void)
                           app_settings.toast_position[0]
                               ? app_settings.toast_position
                               : "top");
+    g_key_file_set_boolean(kf, "ui", "focus_on_hover",
+                           app_settings.focus_on_hover);
 
     g_key_file_set_string(kf, "custom_theme", "bg", app_settings.custom_theme.bg);
     g_key_file_set_string(kf, "custom_theme", "fg", app_settings.custom_theme.fg);
@@ -306,6 +313,20 @@ app_settings_set_toast_position(const char *position)
         app_settings.toast_position = g_strdup("bottom");
     else
         app_settings.toast_position = g_strdup("top");
+}
+
+gboolean
+app_settings_get_focus_on_hover(void)
+{
+    app_settings_load();
+    return app_settings.focus_on_hover;
+}
+
+void
+app_settings_set_focus_on_hover(gboolean enabled)
+{
+    app_settings_load();
+    app_settings.focus_on_hover = enabled != FALSE;
 }
 
 const char *

@@ -1,4 +1,5 @@
 #include "workspace.h"
+#include "app_settings.h"
 #include "close_confirm.h"
 #include "ghostty_terminal.h"
 #include "port_scanner.h"
@@ -2010,6 +2011,9 @@ on_notebook_pointer_enter(GtkEventControllerMotion *controller,
         GTK_EVENT_CONTROLLER(controller));
     (void)x;
     (void)y;
+
+    if (!app_settings_get_focus_on_hover())
+        return;
 
     if (ws && GTK_IS_NOTEBOOK(widget))
         workspace_set_active_pane(ws, GTK_NOTEBOOK(widget));
