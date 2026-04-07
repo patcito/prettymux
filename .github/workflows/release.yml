@@ -18,29 +18,30 @@ env:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Download prebuilt libghostty (shared by all Linux jobs)
+  # Build generic libghostty once (shared by all Linux jobs)
   # ---------------------------------------------------------------------------
   fetch-libghostty:
     if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'ubuntu') || contains(inputs.jobs, 'fedora') || contains(inputs.jobs, 'deb') || contains(inputs.jobs, 'arch') || contains(inputs.jobs, 'flatpak') || contains(inputs.jobs, 'appimage') || contains(inputs.jobs, 'linux')
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/patcito/prettymux-build-debian:bookworm
     steps:
-      - name: Download prebuilt libghostty
-        run: |
-          gh release download ${{ env.GHOSTTY_RELEASE }} \
-            --repo ${{ env.GHOSTTY_REPO }} \
-            --pattern 'ghostty-linux-x86_64.tar.gz' \
-            --pattern 'ghostty-glad.tar.gz'
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Checkout ghostty fork
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ env.GHOSTTY_REPO }}
+          ref: ${{ env.GHOSTTY_BRANCH }}
+          path: ghostty
 
-      - name: Reconstruct ghostty directory layout
+      - name: Build generic libghostty
         run: |
-          mkdir -p ghostty/zig-out ghostty/vendor
-          tar xzf ghostty-linux-x86_64.tar.gz -C ghostty/
-          mv ghostty/lib ghostty/zig-out/lib
-          tar xzf ghostty-glad.tar.gz -C ghostty/vendor/
+          cd ghostty
+          zig build \
+            -Dapp-runtime=none \
+            -Doptimize=ReleaseFast \
+            -Dtarget=x86_64-linux-gnu
           echo "Layout:"
-          find ghostty -type f | head -20
+          find . -type f | head -20
 
       - name: Upload ghostty tree
         uses: actions/upload-artifact@v6
@@ -99,6 +100,14 @@ jobs:
           install -Dm755 src/gtk/bin/xdg-open dist/usr/share/prettymux/bin/xdg-open || true
           install -Dm644 LICENSE dist/usr/share/licenses/prettymux/LICENSE || true
           tar czf prettymux-ubuntu-24.04-amd64.tar.gz -C dist .
+
+      - name: Smoke test package
+        run: |
+          rm -rf smoke-root
+          mkdir -p smoke-root
+          tar xzf prettymux-ubuntu-24.04-amd64.tar.gz -C smoke-root
+          bash packaging/ci-smoke-test.sh ubuntu \
+            sh -lc 'LD_LIBRARY_PATH="$PWD/smoke-root/usr/lib/prettymux" "$PWD/smoke-root/usr/bin/prettymux"'
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -165,6 +174,11 @@ jobs:
           nfpm package -p rpm -f packaging/nfpm.yaml
           ls -lh *.rpm
 
+      - name: Smoke test package
+        run: |
+          dnf install -y ./*.rpm
+          bash packaging/ci-smoke-test.sh fedora prettymux
+
       - name: Upload RPM
         uses: actions/upload-artifact@v6
         with:
@@ -193,7 +207,10 @@ jobs:
       - name: Build ghostty
         run: |
           cd ghostty
-          zig build -Dapp-runtime=none -Doptimize=ReleaseFast
+          zig build \
+            -Dapp-runtime=none \
+            -Doptimize=ReleaseFast \
+            -Dtarget=x86_64-linux-gnu
 
       - name: Build prettymux
         run: |
@@ -225,6 +242,12 @@ jobs:
           nfpm package -p deb -f packaging/nfpm.yaml
           ls -lh *.deb
 
+      - name: Smoke test package
+        run: |
+          apt-get update
+          apt-get install -y ./*.deb
+          bash packaging/ci-smoke-test.sh debian prettymux
+
       - name: Upload .deb
         uses: actions/upload-artifact@v6
         with:
@@ -254,6 +277,15 @@ jobs:
         uses: snapcore/action-build@v1
         id: snapcraft
         # snapcraft.yaml handles full build inside the snap environment
+
+      - name: Smoke test package
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y squashfs-tools
+          rm -rf snap-root
+          unsquashfs -f -d snap-root "${{ steps.snapcraft.outputs.snap }}"
+          bash packaging/ci-smoke-test.sh snap \
+            sh -lc 'LD_LIBRARY_PATH="$PWD/snap-root/usr/lib/prettymux:${LD_LIBRARY_PATH:-}" "$PWD/snap-root/usr/bin/prettymux"'
 
       - name: Upload snap
         uses: actions/upload-artifact@v6
@@ -299,6 +331,11 @@ jobs:
           manifest-path: packaging/dev.prettymux.app.yml
           bundle: prettymux.flatpak
           cache-key: flatpak-builder-${{ github.sha }}
+
+      - name: Smoke test package
+        run: |
+          flatpak install -y --user ./prettymux.flatpak
+          bash packaging/ci-smoke-test.sh flatpak flatpak run dev.prettymux.app
 
       - name: Upload Flatpak bundle
         uses: actions/upload-artifact@v6
@@ -368,6 +405,11 @@ jobs:
 
           cd "$PKGDIR"
           tar --zstd -cf ../prettymux-${VERSION}-1-x86_64.pkg.tar.zst .PKGINFO usr/
+
+      - name: Smoke test package
+        run: |
+          pacman -U --noconfirm ./*.pkg.tar.zst
+          bash packaging/ci-smoke-test.sh arch prettymux
 
       - name: Upload package
         uses: actions/upload-artifact@v6
@@ -547,6 +589,12 @@ jobs:
           recipe: packaging/AppImageBuilder.yml
         env:
           UPDATE_INFO: gh-releases-zsync|patcito|prettymux|latest|PrettyMux-*x86_64.AppImage.zsync
+
+      - name: Smoke test package
+        run: |
+          chmod +x ./*.AppImage
+          APPIMAGE_EXTRACT_AND_RUN=1 \
+            bash packaging/ci-smoke-test.sh appimage ./*.AppImage
 
       - name: Upload AppImage
         uses: actions/upload-artifact@v6
