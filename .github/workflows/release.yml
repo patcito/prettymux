@@ -33,9 +33,25 @@ jobs:
           ref: ${{ env.GHOSTTY_BRANCH }}
           path: ghostty
 
+      - name: Resolve ghostty revision
+        id: ghostty_rev
+        run: |
+          echo "sha=$(git -C ghostty rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Ghostty Zig cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ghostty/.zig-cache
+            .zig-global-cache
+          key: ghostty-linux-${{ env.ZIG_VERSION }}-${{ steps.ghostty_rev.outputs.sha }}
+          restore-keys: |
+            ghostty-linux-${{ env.ZIG_VERSION }}-
+
       - name: Build generic libghostty
         run: |
           cd ghostty
+          export ZIG_GLOBAL_CACHE_DIR="${GITHUB_WORKSPACE}/.zig-global-cache"
           zig build \
             -Dapp-runtime=none \
             -Doptimize=ReleaseFast \
@@ -204,9 +220,25 @@ jobs:
           ref: ${{ env.GHOSTTY_BRANCH }}
           path: ghostty
 
+      - name: Resolve ghostty revision
+        id: ghostty_rev
+        run: |
+          echo "sha=$(git -C ghostty rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Ghostty Zig cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ghostty/.zig-cache
+            .zig-global-cache
+          key: ghostty-linux-${{ env.ZIG_VERSION }}-${{ steps.ghostty_rev.outputs.sha }}
+          restore-keys: |
+            ghostty-linux-${{ env.ZIG_VERSION }}-
+
       - name: Build ghostty
         run: |
           cd ghostty
+          export ZIG_GLOBAL_CACHE_DIR="${GITHUB_WORKSPACE}/.zig-global-cache"
           zig build \
             -Dapp-runtime=none \
             -Doptimize=ReleaseFast \
