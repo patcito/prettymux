@@ -21,11 +21,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "PrettyMux"
             VALUE "FileDescription",  "GPU-accelerated terminal multiplexer"
-            VALUE "FileVersion",      "0.2.11"
+            VALUE "FileVersion",      "0.2.12"
             VALUE "InternalName",     "prettymux"
             VALUE "OriginalFilename", "prettymux.exe"
             VALUE "ProductName",      "PrettyMux"
-            VALUE "ProductVersion",   "0.2.11"
+            VALUE "ProductVersion",   "0.2.12"
             VALUE "LegalCopyright",   "GPL-3.0-only"
         END
     END

@@ -8,6 +8,8 @@ const ShortcutDef default_shortcuts[] = {
     {"workspace.close",   GDK_KEY_d,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Close workspace"},
     {"workspace.next",    GDK_KEY_bracketright,  GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Next workspace"},
     {"workspace.prev",    GDK_KEY_bracketleft,   GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Previous workspace"},
+    {"workspace.next.alt",GDK_KEY_Down,          GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Next workspace"},
+    {"workspace.prev.alt",GDK_KEY_Up,            GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Previous workspace"},
     {"workspace.focus.1", GDK_KEY_1,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Switch to workspace 1"},
     {"workspace.focus.2", GDK_KEY_2,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Switch to workspace 2"},
     {"workspace.focus.3", GDK_KEY_3,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Switch to workspace 3"},

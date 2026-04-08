@@ -55,7 +55,7 @@ static gint64 g_terminal_search_selected = -1;
 static GtkWindow *g_about_window = NULL;
 
 #ifndef PRETTYMUX_VERSION
-#define PRETTYMUX_VERSION "0.2.11"
+#define PRETTYMUX_VERSION "0.2.12"
 #endif
 
 #define PRETTYMUX_GITHUB_URL "https://github.com/patcito/prettymux"
@@ -1183,11 +1183,13 @@ static void handle_action(const char *action) {
         workspace_add(ui.terminal_stack, ui.workspace_list, g_ghostty_app);
     } else if (strcmp(action, "workspace.close") == 0) {
         request_close_current_workspace();
-    } else if (strcmp(action, "workspace.next") == 0) {
+    } else if (strcmp(action, "workspace.next") == 0 ||
+               strcmp(action, "workspace.next.alt") == 0) {
         if (!workspaces || workspaces->len == 0) return;
         workspace_switch((current_workspace + 1) % workspaces->len,
                          ui.terminal_stack, ui.workspace_list);
-    } else if (strcmp(action, "workspace.prev") == 0) {
+    } else if (strcmp(action, "workspace.prev") == 0 ||
+               strcmp(action, "workspace.prev.alt") == 0) {
         if (!workspaces || workspaces->len == 0) return;
         workspace_switch((current_workspace - 1 + workspaces->len) % workspaces->len,
                          ui.terminal_stack, ui.workspace_list);

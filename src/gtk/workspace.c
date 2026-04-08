@@ -98,6 +98,7 @@ static void workspace_request_terminal_icon(GtkWidget *terminal,
                                             const char *path);
 static void refresh_terminal_tab_icon(GtkWidget *terminal);
 static void refresh_all_workspace_sidebar_labels(void);
+static void workspace_focus_first_terminal(Workspace *ws);
 
 /* Context menu data for sidebar rows (defined later) */
 typedef struct {
@@ -137,6 +138,41 @@ page_linked_terminal(GtkWidget *page)
 
     terminal = g_object_get_data(G_OBJECT(page), "linked-terminal");
     return (terminal && GHOSTTY_IS_TERMINAL(terminal)) ? terminal : NULL;
+}
+
+static void
+workspace_focus_first_terminal(Workspace *ws)
+{
+    GtkNotebook *pane;
+    GtkWidget *terminal;
+    const char *cwd;
+
+    if (!ws)
+        return;
+
+    pane = GTK_NOTEBOOK(ws->notebook);
+    if (!GTK_IS_NOTEBOOK(pane) || gtk_notebook_get_n_pages(pane) <= 0)
+        return;
+
+    workspace_set_active_pane(ws, pane);
+    gtk_notebook_set_current_page(pane, 0);
+
+    terminal = notebook_terminal_at(pane, 0);
+    if (!terminal || !GHOSTTY_IS_TERMINAL(terminal))
+        return;
+
+    cwd = ghostty_terminal_get_cwd(GHOSTTY_TERMINAL(terminal));
+    if (cwd && cwd[0]) {
+        snprintf(ws->cwd, sizeof(ws->cwd), "%s", cwd);
+        workspace_detect_git(ws);
+    }
+
+    focus_terminal_page(terminal);
+    focus_terminal_page_later(terminal);
+    ghostty_terminal_clear_activity(GHOSTTY_TERMINAL(terminal));
+    workspace_clear_tab_notification(pane, 0);
+    workspace_refresh_tab_labels(ws);
+    workspace_refresh_sidebar_label(ws);
 }
 
 static GtkWidget *
@@ -2212,25 +2248,11 @@ void workspace_switch(int index, GtkWidget *terminal_stack, GtkWidget *workspace
     if (row)
         gtk_list_box_select_row(GTK_LIST_BOX(workspace_list), row);
 
-    /* Clear activity on the currently visible terminal of the newly
-     * selected workspace, and refresh labels. */
+    /* Always land on the first tab of the first pane when switching
+     * workspaces, including freshly-created ones. */
     Workspace *ws = g_ptr_array_index(workspaces, index);
-    if (ws) {
-        GtkNotebook *focused = workspace_get_focused_pane(ws);
-        if (focused) {
-            int pg = gtk_notebook_get_current_page(focused);
-            if (pg >= 0) {
-                GtkWidget *terminal = notebook_terminal_at(focused, pg);
-                if (terminal) {
-                    ghostty_terminal_clear_activity(GHOSTTY_TERMINAL(terminal));
-                    workspace_clear_tab_notification(focused, pg);
-                }
-            }
-        }
-
-        workspace_refresh_tab_labels(ws);
-        workspace_refresh_sidebar_label(ws);
-    }
+    if (ws)
+        workspace_focus_first_terminal(ws);
 }
 
 /* ── Pane splitting ───────────────────────────────────────────── */
