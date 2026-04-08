@@ -68,6 +68,7 @@ struct _GhosttyTerminal {
     GtkWidget         *dummy_target;    /* Linked notebook placeholder */
     char              *status_cwd_full;
     char              *status_git_full;
+    char              *hover_url;
     gboolean           search_active;
     char              *search_query;
     gint64             search_total;
@@ -694,7 +695,6 @@ on_click_pressed(GtkGestureClick *gesture,
                  double           y,
                  gpointer         user_data)
 {
-    (void)n_press;
     GhosttyTerminal *self = GHOSTTY_TERMINAL(user_data);
 
     if (!self->surface)
@@ -704,6 +704,20 @@ on_click_pressed(GtkGestureClick *gesture,
 
     GdkModifierType state = current_event_mods(GTK_EVENT_CONTROLLER(gesture));
     guint button = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
+
+    if (n_press == 2 &&
+        (state & GDK_SHIFT_MASK) &&
+        button == 1 &&
+        self->hover_url &&
+        self->hover_url[0]) {
+        GdkDisplay *display = gtk_widget_get_display(GTK_WIDGET(self));
+        GdkClipboard *clipboard =
+            display ? gdk_display_get_clipboard(display) : NULL;
+        if (clipboard)
+            gdk_clipboard_set_text(clipboard, self->hover_url);
+        gtk_gesture_set_state(GTK_GESTURE(gesture), GTK_EVENT_SEQUENCE_CLAIMED);
+        return;
+    }
 
     ghostty_surface_mouse_pos(self->surface, x, y, translate_mods(state));
     ghostty_surface_mouse_button(self->surface, GHOSTTY_MOUSE_PRESS,
@@ -718,7 +732,6 @@ on_click_released(GtkGestureClick *gesture,
                   double           y,
                   gpointer         user_data)
 {
-    (void)n_press;
     GhosttyTerminal *self = GHOSTTY_TERMINAL(user_data);
 
     if (!self->surface)
@@ -726,6 +739,15 @@ on_click_released(GtkGestureClick *gesture,
 
     GdkModifierType state = current_event_mods(GTK_EVENT_CONTROLLER(gesture));
     guint button = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
+
+    if (n_press == 2 &&
+        (state & GDK_SHIFT_MASK) &&
+        button == 1 &&
+        self->hover_url &&
+        self->hover_url[0]) {
+        gtk_gesture_set_state(GTK_GESTURE(gesture), GTK_EVENT_SEQUENCE_CLAIMED);
+        return;
+    }
 
     ghostty_surface_mouse_pos(self->surface, x, y, translate_mods(state));
     ghostty_surface_mouse_button(self->surface, GHOSTTY_MOUSE_RELEASE,
@@ -876,6 +898,7 @@ ghostty_terminal_finalize(GObject *object)
     g_free(self->tty_path);
     g_free(self->status_cwd_full);
     g_free(self->status_git_full);
+    g_free(self->hover_url);
     g_free(self->search_query);
     G_OBJECT_CLASS(ghostty_terminal_parent_class)->finalize(object);
 }
@@ -957,6 +980,7 @@ ghostty_terminal_init(GhosttyTerminal *self)
     self->dummy_target = NULL;
     self->status_cwd_full = NULL;
     self->status_git_full = NULL;
+    self->hover_url = NULL;
     self->search_active = FALSE;
     self->search_query = NULL;
     self->search_total = -1;
@@ -1177,6 +1201,14 @@ ghostty_terminal_set_cwd(GhosttyTerminal *self, const char *cwd)
     g_free(self->cwd);
     self->cwd = g_strdup(cwd);
     g_signal_emit(self, signals[SIGNAL_PWD_CHANGED], 0, self->cwd);
+}
+
+void
+ghostty_terminal_set_hover_url(GhosttyTerminal *self, const char *url)
+{
+    g_return_if_fail(GHOSTTY_IS_TERMINAL(self));
+    g_free(self->hover_url);
+    self->hover_url = g_strdup(url ? url : "");
 }
 
 void

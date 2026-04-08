@@ -18,6 +18,8 @@ const char *app_settings_get_toast_position(void);
 void app_settings_set_toast_position(const char *position);
 gboolean app_settings_get_focus_on_hover(void);
 void app_settings_set_focus_on_hover(gboolean enabled);
+gboolean app_settings_get_open_links_in_browser(void);
+void app_settings_set_open_links_in_browser(gboolean enabled);
 
 const Theme *app_settings_get_custom_theme(void);
 void app_settings_set_custom_theme(const Theme *theme);

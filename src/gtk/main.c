@@ -3,6 +3,7 @@
 // GPU-accelerated terminal multiplexer with integrated browser
 
 #include <adwaita.h>
+#include <gio/gio.h>
 #include <gtk/gtk.h>
 #include <limits.h>
 #include <stdio.h>
@@ -55,7 +56,7 @@ static gint64 g_terminal_search_selected = -1;
 static GtkWindow *g_about_window = NULL;
 
 #ifndef PRETTYMUX_VERSION
-#define PRETTYMUX_VERSION "0.2.13"
+#define PRETTYMUX_VERSION "0.2.14"
 #endif
 
 #define PRETTYMUX_GITHUB_URL "https://github.com/patcito/prettymux"
@@ -68,6 +69,7 @@ static void handle_reported_port(const char *terminal_id, int port);
 static void terminal_search_send_action(GhosttyTerminal *term, const char *action);
 static void terminal_search_hide(void);
 static void about_dialog_present(GtkWindow *parent);
+static void open_url_in_preferred_target(const char *url);
 
 // Widget references for the main window layout
 static struct {
@@ -1146,6 +1148,27 @@ static void add_browser_tab(const char *url) {
     gtk_widget_set_visible(tab, TRUE);
 }
 
+static void
+open_url_in_preferred_target(const char *url)
+{
+    GError *error = NULL;
+
+    if (!url || !url[0])
+        return;
+
+    if (app_settings_get_open_links_in_browser()) {
+        add_browser_tab(url);
+        gtk_widget_set_visible(ui.browser_notebook, TRUE);
+        return;
+    }
+
+    if (!g_app_info_launch_default_for_uri(url, NULL, &error)) {
+        g_warning("Failed to open URL in system browser: %s",
+                  error ? error->message : "unknown error");
+        g_clear_error(&error);
+    }
+}
+
 // ── Clipboard paste callback ──
 
 static void
@@ -1763,8 +1786,7 @@ on_socket_command(const char  *command,
         const char *url = json_object_get_string_member_with_default(
             msg, "url", "");
         if (url && url[0]) {
-            add_browser_tab(url);
-            gtk_widget_set_visible(ui.browser_notebook, TRUE);
+            open_url_in_preferred_target(url);
             json_builder_set_member_name(response, "status");
             json_builder_add_string_value(response, "ok");
         } else {
@@ -2456,6 +2478,10 @@ static bool action_cb(ghostty_app_t app, ghostty_target_s target,
         d->str1 = g_strdup(action.action.open_url.url);
         d->action.action.open_url.url = d->str1;
         break;
+    case GHOSTTY_ACTION_MOUSE_OVER_LINK:
+        d->str1 = g_strdup(action.action.mouse_over_link.url);
+        d->action.action.mouse_over_link.url = d->str1;
+        break;
     case GHOSTTY_ACTION_DESKTOP_NOTIFICATION:
         d->str1 = g_strdup(action.action.desktop_notification.body);
         d->str2 = g_strdup(action.action.desktop_notification.title);
@@ -2492,10 +2518,19 @@ static gboolean action_idle_handler(gpointer user_data)
 
     case GHOSTTY_ACTION_OPEN_URL:
         if (action.action.open_url.url) {
-            add_browser_tab(action.action.open_url.url);
-            gtk_widget_set_visible(ui.browser_notebook, TRUE);
+            open_url_in_preferred_target(action.action.open_url.url);
         }
         break;
+
+    case GHOSTTY_ACTION_MOUSE_OVER_LINK: {
+        SurfaceLookup loc = find_terminal_for_surface(surface);
+        if (loc.terminal) {
+            ghostty_terminal_set_hover_url(
+                loc.terminal,
+                action.action.mouse_over_link.url);
+        }
+        break;
+    }
 
     case GHOSTTY_ACTION_DESKTOP_NOTIFICATION: {
         SurfaceLookup loc = find_terminal_for_surface(surface);

@@ -73,6 +73,7 @@ int ghostty_terminal_get_exit_code(GhosttyTerminal *self);
  */
 void ghostty_terminal_set_title(GhosttyTerminal *self, const char *title);
 void ghostty_terminal_set_cwd(GhosttyTerminal *self, const char *cwd);
+void ghostty_terminal_set_hover_url(GhosttyTerminal *self, const char *url);
 void ghostty_terminal_set_scope(GhosttyTerminal *self,
                                 pid_t            session_id,
                                 const char      *tty_name,
