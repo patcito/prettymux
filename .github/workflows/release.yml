@@ -405,6 +405,9 @@ jobs:
       - name: Create Arch package
         run: |
           VERSION=${GITHUB_REF_NAME#v}
+          if ! [[ "$VERSION" =~ ^[0-9] ]]; then
+            VERSION="$(sed -n 's/^pkgver=//p' packaging/PKGBUILD | head -n1)"
+          fi
           [[ "$VERSION" =~ ^[0-9] ]] || VERSION="0.1.0"
 
           PKGDIR="prettymux-pkg"
