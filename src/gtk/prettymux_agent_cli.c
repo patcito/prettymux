@@ -1762,7 +1762,7 @@ run_claude_teams(int argc, char **argv, int *exit_code)
 #ifdef G_OS_WIN32
     g_printerr("prettymux claude-teams: not supported on Windows\n");
     return TRUE;
-#endif
+#else
 
     socket_path = find_socket_path(&error);
     if (!socket_path) {
@@ -1907,10 +1907,11 @@ run_claude_teams(int argc, char **argv, int *exit_code)
                claude_path, state.leader_pane, state.workspace,
                shim_dir, g_getenv("PRETTYMUX_TMUX_LOG"));
 
-    prettymux_execv(claude_path, launch_argv);
+    prettymux_execv(claude_path, (const char *const *)launch_argv);
     g_printerr("prettymux claude-teams: exec failed: %s\n", g_strerror(errno));
     tmux_state_clear(&state);
     if (exit_code)
         *exit_code = 1;
     return TRUE;
+#endif
 }
