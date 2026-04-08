@@ -56,7 +56,7 @@ static gint64 g_terminal_search_selected = -1;
 static GtkWindow *g_about_window = NULL;
 
 #ifndef PRETTYMUX_VERSION
-#define PRETTYMUX_VERSION "0.2.14"
+#define PRETTYMUX_VERSION "0.2.15"
 #endif
 
 #define PRETTYMUX_GITHUB_URL "https://github.com/patcito/prettymux"
@@ -75,6 +75,7 @@ static void open_url_in_preferred_target(const char *url);
 static struct {
     GtkWidget *outer_paned;
     GtkWidget *sidebar_box;
+    GtkWidget *workspace_search;
     GtkWidget *workspace_list;
     GtkWidget *main_paned;
     GtkWidget *terminal_box;      // GtkBox holding terminal_stack + notes panel
@@ -2635,7 +2636,14 @@ static gboolean action_idle_handler(gpointer user_data)
                     bell_button_update();
                     workspace_mark_tab_notification(loc.pane_notebook,
                                                     loc.tab_idx);
-                    if (g_main_window_active) {
+                    if (notification_target_is_active(loc.workspace_idx,
+                                                      loc.pane_notebook,
+                                                      loc.tab_idx)) {
+                        debug_notification_log(
+                            "notify route command suppressed active-target target=(%d,%d,%d) msg=%s",
+                            loc.workspace_idx, loc.pane_idx, loc.tab_idx,
+                            notif_msg);
+                    } else if (g_main_window_active) {
                         debug_notification_log(
                             "notify route command toast active=%d target=(%d,%d,%d) msg=%s",
                             g_main_window_active,
@@ -2826,6 +2834,57 @@ static void on_workspace_row_activated(GtkListBox *list, GtkListBoxRow *row, gpo
     session_queue_save();
 }
 
+static gboolean
+workspace_row_matches_query(Workspace *ws, const char *query)
+{
+    g_autofree char *needle = NULL;
+    g_autofree char *name = NULL;
+    g_autofree char *cwd = NULL;
+    g_autofree char *branch = NULL;
+
+    if (!ws || !query || !query[0])
+        return TRUE;
+
+    needle = g_utf8_strdown(query, -1);
+    name = g_utf8_strdown(ws->name ? ws->name : "", -1);
+    cwd = g_utf8_strdown(ws->cwd, -1);
+    branch = g_utf8_strdown(ws->git_branch, -1);
+
+    return (name && strstr(name, needle)) ||
+           (cwd && strstr(cwd, needle)) ||
+           (branch && strstr(branch, needle));
+}
+
+static gboolean
+workspace_list_filter_func(GtkListBoxRow *row, gpointer user_data)
+{
+    GtkWidget *search = GTK_WIDGET(user_data);
+    GtkWidget *child;
+    Workspace *ws;
+    const char *query;
+
+    if (!GTK_IS_EDITABLE(search))
+        return TRUE;
+
+    query = gtk_editable_get_text(GTK_EDITABLE(search));
+    if (!query || !query[0])
+        return TRUE;
+
+    child = gtk_list_box_row_get_child(row);
+    ws = child ? g_object_get_data(G_OBJECT(child), "workspace") : NULL;
+    return workspace_row_matches_query(ws, query);
+}
+
+static void
+on_workspace_search_changed(GtkSearchEntry *entry, gpointer user_data)
+{
+    GtkListBox *list = GTK_LIST_BOX(user_data);
+    (void)entry;
+
+    if (GTK_IS_LIST_BOX(list))
+        gtk_list_box_invalidate_filter(list);
+}
+
 // ── Build window ──
 
 static void on_add_workspace_clicked(GtkButton *b, gpointer d) {
@@ -2839,17 +2898,25 @@ static void build_sidebar(void) {
     gtk_widget_set_size_request(ui.sidebar_box, 180, -1);
 
     // Search
-    GtkWidget *search = gtk_search_entry_new();
-    gtk_widget_set_margin_start(search, 8);
-    gtk_widget_set_margin_end(search, 8);
-    gtk_widget_set_margin_top(search, 8);
-    gtk_widget_set_margin_bottom(search, 4);
-    gtk_box_append(GTK_BOX(ui.sidebar_box), search);
+    ui.workspace_search = gtk_search_entry_new();
+    gtk_search_entry_set_placeholder_text(GTK_SEARCH_ENTRY(ui.workspace_search),
+                                          "Search workspaces");
+    gtk_widget_set_margin_start(ui.workspace_search, 8);
+    gtk_widget_set_margin_end(ui.workspace_search, 8);
+    gtk_widget_set_margin_top(ui.workspace_search, 8);
+    gtk_widget_set_margin_bottom(ui.workspace_search, 4);
+    gtk_box_append(GTK_BOX(ui.sidebar_box), ui.workspace_search);
 
     // Workspace list
     ui.workspace_list = gtk_list_box_new();
     gtk_list_box_set_selection_mode(GTK_LIST_BOX(ui.workspace_list), GTK_SELECTION_SINGLE);
     g_signal_connect(ui.workspace_list, "row-activated", G_CALLBACK(on_workspace_row_activated), NULL);
+    gtk_list_box_set_filter_func(GTK_LIST_BOX(ui.workspace_list),
+                                 workspace_list_filter_func,
+                                 ui.workspace_search, NULL);
+    g_signal_connect(ui.workspace_search, "search-changed",
+                     G_CALLBACK(on_workspace_search_changed),
+                     ui.workspace_list);
 
     GtkWidget *scroll = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);

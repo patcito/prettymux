@@ -916,6 +916,9 @@ void workspace_refresh_sidebar_label(Workspace *ws) {
         gtk_widget_add_css_class(ws->sidebar_label, "has-activity");
     else
         gtk_widget_remove_css_class(ws->sidebar_label, "has-activity");
+
+    if (GTK_IS_LIST_BOX(g_workspace_list))
+        gtk_list_box_invalidate_filter(GTK_LIST_BOX(g_workspace_list));
 }
 
 /* ── Feature 2: Git branch detection (async) ────────────────────── */
@@ -1971,6 +1974,7 @@ static GtkWidget *create_workspace_row(Workspace *ws, int ws_idx) {
     GtkWidget *box = create_editable_tab_label(
         ws->name, NULL, ws, TRUE, &inner_label);
     gtk_widget_add_css_class(box, "sidebar-row");
+    g_object_set_data(G_OBJECT(box), "workspace", ws);
     ws->sidebar_label = inner_label;
     /* Prevent sidebar from expanding — ellipsize long paths */
     gtk_label_set_ellipsize(GTK_LABEL(inner_label), PANGO_ELLIPSIZE_MIDDLE);

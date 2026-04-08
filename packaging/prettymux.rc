@@ -7,8 +7,8 @@
 // IDI_ICON1 ICON "prettymux.ico"
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION     0,2,9,0
-PRODUCTVERSION  0,2,9,0
+FILEVERSION     0,2,15,0
+PRODUCTVERSION  0,2,15,0
 FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
 FILEFLAGS       0
 FILEOS          VOS_NT_WINDOWS32
@@ -21,11 +21,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "PrettyMux"
             VALUE "FileDescription",  "GPU-accelerated terminal multiplexer"
-            VALUE "FileVersion",      "0.2.14"
+            VALUE "FileVersion",      "0.2.15"
             VALUE "InternalName",     "prettymux"
             VALUE "OriginalFilename", "prettymux.exe"
             VALUE "ProductName",      "PrettyMux"
-            VALUE "ProductVersion",   "0.2.14"
+            VALUE "ProductVersion",   "0.2.15"
             VALUE "LegalCopyright",   "GPL-3.0-only"
         END
     END
