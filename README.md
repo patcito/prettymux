@@ -57,29 +57,17 @@ yay -S prettymux-bin
 
 ### macOS Beta
 
-```bash
-# Open the latest release page
-open https://github.com/patcito/prettymux/releases/latest
-
-# Download the latest beta archive named:
-# prettymux-macos-arm64.tar.gz
-#
-# Then extract it and run:
-tar xzf prettymux-macos-arm64.tar.gz
-./prettymux
+```sh
+curl -L -o PrettyMux-macos-arm64.dmg \
+  https://github.com/patcito/prettymux/releases/latest/download/PrettyMux-macos-arm64.dmg
+open PrettyMux-macos-arm64.dmg
 ```
 
 ### Windows Beta
 
 ```powershell
-# Open the latest release page
-start https://github.com/patcito/prettymux/releases/latest
-
-# Download the latest beta archive named:
-# prettymux-windows-x64.zip
-#
-# Then extract it and run:
-# prettymux.exe
+Invoke-WebRequest https://github.com/patcito/prettymux/releases/latest/download/PrettyMux-Installer-x64.msi -OutFile PrettyMux-Installer-x64.msi
+Start-Process msiexec.exe -Wait -ArgumentList '/i', 'PrettyMux-Installer-x64.msi'
 ```
 
 <!--

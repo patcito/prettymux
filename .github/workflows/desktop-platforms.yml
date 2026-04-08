@@ -1,11 +1,19 @@
 name: Desktop Platform Builds
 
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       jobs:
         description: 'Jobs to run (comma-separated: windows,macos — or "all")'
         required: true
+        type: string
+      release_tag:
+        description: 'Existing GitHub release tag to upload assets to (optional)'
+        required: false
+        default: ''
         type: string
 
 env:
@@ -16,7 +24,7 @@ env:
 
 jobs:
   build-windows:
-    if: inputs.jobs == 'all' || contains(inputs.jobs, 'windows')
+    if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'windows')
     runs-on: windows-latest
     steps:
       - name: Checkout prettymux
@@ -87,22 +95,114 @@ jobs:
           ninja -C builddir
 
       - name: Package artifacts
-        shell: bash
+        shell: msys2 {0}
         run: |
           mkdir -p dist
           cp src/gtk/builddir/prettymux.exe dist/
           cp ghostty/zig-out/lib/ghostty.dll dist/ || true
           cp webview2/build/native/x64/WebView2Loader.dll dist/ || true
+
+          copy_runtime_deps() {
+            declare -A seen
+            local queue=("$@")
+            local file dep
+            while [ ${#queue[@]} -gt 0 ]; do
+              file="${queue[0]}"
+              queue=("${queue[@]:1}")
+              while IFS= read -r dep; do
+                [ -f "$dep" ] || continue
+                if [ -n "${seen[$dep]:-}" ]; then
+                  continue
+                fi
+                seen["$dep"]=1
+                cp -n "$dep" dist/
+                queue+=("$dep")
+              done < <(ldd "$file" 2>/dev/null | awk '/=> \/[[:alnum:]_\/.+:-]+\.dll/ { print $3 }')
+            done
+          }
+
+          copy_runtime_deps dist/prettymux.exe dist/ghostty.dll dist/WebView2Loader.dll
           powershell -NoLogo -NoProfile -Command "Compress-Archive -Path dist/* -DestinationPath prettymux-windows-x64.zip"
+
+      - name: Install WiX
+        shell: pwsh
+        run: dotnet tool install --global wix --version 5.0.2
+
+      - name: Build MSI installer
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_NAME -match '^v(.+)$') {
+            $version = $Matches[1]
+          } else {
+            $meson = Get-Content 'src/gtk/meson.build' -Raw
+            if ($meson -match "version:\s*'([^']+)'") {
+              $version = $Matches[1]
+            } else {
+              throw "Could not determine PrettyMux version from src/gtk/meson.build"
+            }
+          }
+          $distPath = (Resolve-Path 'dist').Path
+          $files = Get-ChildItem $distPath -File | Sort-Object Name
+          $components = @()
+          $refs = @()
+          $i = 0
+          foreach ($file in $files) {
+            $i++
+            $componentId = "Cmp$($i)"
+            $fileId = "Fil$($i)"
+            $source = $file.FullName.Replace('&', '&amp;').Replace("'", '&apos;')
+            $name = $file.Name.Replace('&', '&amp;').Replace("'", '&apos;')
+            $components += "            <Component Id='$componentId' Guid='*'>"
+            $components += "              <File Id='$fileId' Name='$name' Source='$source' KeyPath='yes'/>"
+            $components += "            </Component>"
+            $refs += "      <ComponentRef Id='$componentId'/>"
+          }
+
+          $wxs = @"
+          <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+            <Package Name="PrettyMux" Manufacturer="PrettyMux" Version="$version" UpgradeCode="8D13C681-5BF6-4A9C-96A0-03C4E5D660A6" Language="1033">
+              <SummaryInformation Description="PrettyMux installer" Manufacturer="PrettyMux" />
+              <MajorUpgrade DowngradeErrorMessage="A newer version of PrettyMux is already installed." />
+              <MediaTemplate EmbedCab="yes" />
+              <StandardDirectory Id="ProgramFiles64Folder">
+                <Directory Id="INSTALLFOLDER" Name="PrettyMux">
+          $($components -join "`n")
+                </Directory>
+              </StandardDirectory>
+              <Feature Id="MainFeature" Title="PrettyMux" Level="1">
+          $($refs -join "`n")
+              </Feature>
+            </Package>
+          </Wix>
+          "@
+          Set-Content -Path installer.wxs -Value $wxs -Encoding UTF8
+          $env:Path += ";$HOME\\.dotnet\\tools"
+          wix build installer.wxs -arch x64 -o PrettyMux-Installer-x64.msi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
           name: prettymux-windows-x64
-          path: prettymux-windows-x64.zip
+          path: |
+            prettymux-windows-x64.zip
+            PrettyMux-Installer-x64.msi
+
+      - name: Upload release asset
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            tag="${GITHUB_REF_NAME}"
+          else
+            tag="${{ inputs.release_tag }}"
+          fi
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --title "$tag" --notes ""
+          gh release upload "$tag" PrettyMux-Installer-x64.msi --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
 
   build-macos:
-    if: inputs.jobs == 'all' || contains(inputs.jobs, 'macos')
+    if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'macos')
     runs-on: macos-14
     steps:
       - name: Checkout prettymux
@@ -153,15 +253,70 @@ jobs:
           meson setup builddir -Dghostty_dir=${{ github.workspace }}/ghostty
           ninja -C builddir
 
-      - name: Package macOS app
+      - name: Build macOS app bundle
         run: |
-          mkdir -p dist
-          cp src/gtk/builddir/prettymux dist/
-          cp src/gtk/builddir/prettymux-open dist/ 2>/dev/null || true
-          tar czf prettymux-macos-arm64.tar.gz -C dist .
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
+            VERSION="$(sed -n "s/.*version: '\\([^']*\\)'.*/\\1/p" src/gtk/meson.build | head -n1)"
+          fi
+          if [ -z "$VERSION" ]; then
+            echo "Could not determine PrettyMux version from src/gtk/meson.build" >&2
+            exit 1
+          fi
+          APP="dist/PrettyMux.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp src/gtk/builddir/prettymux "$APP/Contents/MacOS/PrettyMux"
+          cp src/gtk/builddir/prettymux-open "$APP/Contents/MacOS/prettymux-open" 2>/dev/null || true
+          cat > "$APP/Contents/Info.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleDevelopmentRegion</key>
+            <string>en</string>
+            <key>CFBundleExecutable</key>
+            <string>PrettyMux</string>
+            <key>CFBundleIdentifier</key>
+            <string>dev.prettymux.app</string>
+            <key>CFBundleInfoDictionaryVersion</key>
+            <string>6.0</string>
+            <key>CFBundleName</key>
+            <string>PrettyMux</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleShortVersionString</key>
+            <string>${VERSION}</string>
+            <key>CFBundleVersion</key>
+            <string>${VERSION}</string>
+            <key>LSMinimumSystemVersion</key>
+            <string>14.0</string>
+            <key>NSHighResolutionCapable</key>
+            <true/>
+          </dict>
+          </plist>
+          EOF
+
+      - name: Create DMG
+        uses: L-Super/create-dmg-actions@v1.0.3
+        with:
+          dmg_name: 'PrettyMux-macos-arm64'
+          src_dir: '${{ github.workspace }}/dist/PrettyMux.app'
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
           name: prettymux-macos-arm64
-          path: prettymux-macos-arm64.tar.gz
+          path: PrettyMux-macos-arm64.dmg
+
+      - name: Upload release asset
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            tag="${GITHUB_REF_NAME}"
+          else
+            tag="${{ inputs.release_tag }}"
+          fi
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --title "$tag" --notes ""
+          gh release upload "$tag" PrettyMux-macos-arm64.dmg --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
