@@ -56,7 +56,7 @@ static gint64 g_terminal_search_selected = -1;
 static GtkWindow *g_about_window = NULL;
 
 #ifndef PRETTYMUX_VERSION
-#define PRETTYMUX_VERSION "0.2.15"
+#define PRETTYMUX_VERSION "0.2.16"
 #endif
 
 #define PRETTYMUX_GITHUB_URL "https://github.com/patcito/prettymux"
@@ -2899,8 +2899,9 @@ static void build_sidebar(void) {
 
     // Search
     ui.workspace_search = gtk_search_entry_new();
-    gtk_search_entry_set_placeholder_text(GTK_SEARCH_ENTRY(ui.workspace_search),
-                                          "Search workspaces");
+    g_object_set(G_OBJECT(ui.workspace_search),
+                 "placeholder-text", "Search workspaces",
+                 NULL);
     gtk_widget_set_margin_start(ui.workspace_search, 8);
     gtk_widget_set_margin_end(ui.workspace_search, 8);
     gtk_widget_set_margin_top(ui.workspace_search, 8);
