@@ -1907,7 +1907,7 @@ run_claude_teams(int argc, char **argv, int *exit_code)
                claude_path, state.leader_pane, state.workspace,
                shim_dir, g_getenv("PRETTYMUX_TMUX_LOG"));
 
-    prettymux_execv(claude_path, (const char *const *)launch_argv);
+    prettymux_execv(claude_path, launch_argv);
     g_printerr("prettymux claude-teams: exec failed: %s\n", g_strerror(errno));
     tmux_state_clear(&state);
     if (exit_code)

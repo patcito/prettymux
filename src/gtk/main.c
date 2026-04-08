@@ -55,7 +55,7 @@ static gint64 g_terminal_search_selected = -1;
 static GtkWindow *g_about_window = NULL;
 
 #ifndef PRETTYMUX_VERSION
-#define PRETTYMUX_VERSION "0.2.12"
+#define PRETTYMUX_VERSION "0.2.13"
 #endif
 
 #define PRETTYMUX_GITHUB_URL "https://github.com/patcito/prettymux"
