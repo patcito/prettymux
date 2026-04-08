@@ -55,6 +55,33 @@ For the prebuilt package:
 yay -S prettymux-bin
 ```
 
+### macOS Beta
+
+```bash
+# Open the latest release page
+open https://github.com/patcito/prettymux/releases/latest
+
+# Download the latest beta archive named:
+# prettymux-macos-arm64.tar.gz
+#
+# Then extract it and run:
+tar xzf prettymux-macos-arm64.tar.gz
+./prettymux
+```
+
+### Windows Beta
+
+```powershell
+# Open the latest release page
+start https://github.com/patcito/prettymux/releases/latest
+
+# Download the latest beta archive named:
+# prettymux-windows-x64.zip
+#
+# Then extract it and run:
+# prettymux.exe
+```
+
 <!--
 ### Snap
 
