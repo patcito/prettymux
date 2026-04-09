@@ -70,6 +70,36 @@ Invoke-WebRequest https://github.com/patcito/prettymux/releases/latest/download/
 Start-Process msiexec.exe -Wait -ArgumentList '/i', 'PrettyMux-Installer-x64.msi'
 ```
 
+## Screenshots
+
+### Terminal Splitting and Workspace Tabs
+
+![Terminal Splitting and Workspace Tabs](https://prettymux.com/screenshots/terminal-splitting.jpg)
+
+### Browser Integration
+
+![Browser Integration](https://prettymux.com/screenshots/browser-integration.jpg)
+
+### Search Palette
+
+![Search Palette](https://prettymux.com/screenshots/search-palette.jpg)
+
+### Shortcuts Overlay
+
+![Shortcuts Overlay](https://prettymux.com/screenshots/shortcuts-overlay.jpg)
+
+### Theme Cycling
+
+![Theme Cycling](https://prettymux.com/screenshots/theme-cycling.jpg)
+
+### Broadcast Mode
+
+![Broadcast Mode](https://prettymux.com/screenshots/broadcast-mode.jpg)
+
+### Quick Notes
+
+![Quick Notes](https://prettymux.com/screenshots/quick-notes.jpg)
+
 ## Automation with `prettymux-open`
 
 `prettymux-open` lets you script a running PrettyMux instance from the shell. You can open URLs, trigger actions, create workspaces, run commands in terminals, and move tabs between panes.
