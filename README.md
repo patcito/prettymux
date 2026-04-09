@@ -4,6 +4,16 @@ prettymux is a native Linux terminal multiplexer built with GTK4, libadwaita, We
 
 Website: https://prettymux.com/
 
+## Menu
+
+- [Install](#install)
+- [Video](#video)
+- [Screenshots](#screenshots)
+- [Automation with `prettymux-open`](#automation-with-prettymux-open)
+- [Build From Source](#build-from-source)
+- [License](#license)
+- [Inspiration](#inspiration)
+
 ## Install
 
 ### Ubuntu 24.04
@@ -70,6 +80,10 @@ Invoke-WebRequest https://github.com/patcito/prettymux/releases/latest/download/
 Start-Process msiexec.exe -Wait -ArgumentList '/i', 'PrettyMux-Installer-x64.msi'
 ```
 
+## Video
+
+[![PrettyMux video](https://prettymux.com/video-poster.png)](https://prettymux.com/)
+
 ## Screenshots
 
 ### Terminal Splitting and Workspace Tabs
@@ -121,6 +135,23 @@ prettymux-open --move-tab --from-w 0 --from-p 0 --from-t 1 --to-w 1 --to-p 0
 
 Run `prettymux-open --list-actions`, `prettymux-open --list-workspaces`, or `prettymux-open --list-tabs` to inspect what can be automated.
 
+## Build From Source
+
+```bash
+git clone https://github.com/patcito/prettymux
+cd prettymux
+meson setup builddir
+ninja -C builddir
+```
+
+## License
+
+This project is licensed under the GNU General Public License v3.0 only. See [LICENSE](LICENSE).
+
+## Inspiration
+
+PrettyMux was inspired by [cmux](https://github.com/manaflow-ai/cmux), a similar terminal multiplexer currently only available on macOS.
+
 <!--
 ### Snap
 
@@ -143,20 +174,4 @@ wget https://prettymux.com/appimage/PrettyMux-x86_64.AppImage
 chmod +x PrettyMux-x86_64.AppImage
 ./PrettyMux-x86_64.AppImage
 ```
-
-## Build From Source
-
-```bash
-git clone https://github.com/patcito/prettymux
-cd prettymux
-meson setup builddir
-ninja -C builddir
-```
-
-## License
-
-This project is licensed under the GNU General Public License v3.0 only. See [LICENSE](LICENSE).
-
-## Inspiration
-
-PrettyMux was inspired by [cmux](https://github.com/manaflow-ai/cmux), a similar terminal multiplexer currently only available on macOS.
+-->
