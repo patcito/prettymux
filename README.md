@@ -82,7 +82,7 @@ Start-Process msiexec.exe -Wait -ArgumentList '/i', 'PrettyMux-Installer-x64.msi
 
 ## Video
 
-[![PrettyMux video](https://prettymux.com/video-poster.png)](https://prettymux.com/)
+[![PrettyMux video](https://prettymux.com/video-poster.png)](https://www.youtube.com/watch?v=w3lszWxPpYw)
 
 ## Screenshots
 
