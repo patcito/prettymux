@@ -26,6 +26,8 @@ typedef struct {
     GtkWidget *color_buttons[14];
 } SettingsDialogState;
 
+static GtkWindow *g_settings_dialog = NULL;
+
 enum {
     COLOR_BG = 0,
     COLOR_FG,
@@ -398,18 +400,29 @@ settings_collect_custom_theme(SettingsDialogState *state)
 }
 
 static void
-hide_settings_window(GtkWindow *dialog)
+settings_dialog_destroy(GtkWindow *dialog)
 {
     if (!dialog)
         return;
-    gtk_widget_set_visible(GTK_WIDGET(dialog), FALSE);
+    gtk_window_destroy(dialog);
+}
+
+static void
+on_settings_dialog_destroy(GtkWindow *window, gpointer user_data)
+{
+    SettingsDialogState *state = user_data;
+
+    if (g_settings_dialog == window)
+        g_settings_dialog = NULL;
+
+    g_free(state);
 }
 
 static gboolean
 on_settings_close_request(GtkWindow *window, gpointer user_data)
 {
     (void)user_data;
-    hide_settings_window(window);
+    settings_dialog_destroy(window);
     return TRUE;
 }
 
@@ -464,7 +477,7 @@ on_apply_clicked(GtkButton *button, gpointer user_data)
         state->apply_cb(state->user_data);
 
     dialog = GTK_WINDOW(g_object_get_data(G_OBJECT(button), "settings-dialog"));
-    hide_settings_window(dialog);
+    settings_dialog_destroy(dialog);
 }
 
 void
@@ -495,6 +508,14 @@ settings_dialog_present(GtkWindow *parent,
     state->scroll = scroll;
     state->content = content;
 
+    if (g_settings_dialog) {
+        gtk_window_present(g_settings_dialog);
+        g_free(state);
+        return;
+    }
+
+    g_settings_dialog = dialog;
+
     for (int i = 0; i < theme_count(); i++) {
         const Theme *candidate = theme_get_at(i);
         if (candidate && g_strcmp0(candidate->name, current_theme->name) == 0) {
@@ -509,6 +530,8 @@ settings_dialog_present(GtkWindow *parent,
     gtk_window_set_default_size(dialog, 720, 760);
     g_signal_connect(dialog, "close-request",
                      G_CALLBACK(on_settings_close_request), NULL);
+    g_signal_connect(dialog, "destroy",
+                     G_CALLBACK(on_settings_dialog_destroy), state);
 
     gtk_widget_set_margin_top(outer, 18);
     gtk_widget_set_margin_bottom(outer, 18);
@@ -672,7 +695,7 @@ settings_dialog_present(GtkWindow *parent,
 
     close_button = gtk_button_new_with_label("Cancel");
     g_signal_connect_swapped(close_button, "clicked",
-                             G_CALLBACK(hide_settings_window), dialog);
+                             G_CALLBACK(settings_dialog_destroy), dialog);
     gtk_box_append(GTK_BOX(buttons), close_button);
 
     apply_button = gtk_button_new_with_label("Apply");
@@ -686,6 +709,5 @@ settings_dialog_present(GtkWindow *parent,
     gtk_box_append(GTK_BOX(outer), buttons);
 
     gtk_window_set_child(dialog, outer);
-    g_object_set_data(G_OBJECT(dialog), "settings-state", state);
     gtk_window_present(dialog);
 }
