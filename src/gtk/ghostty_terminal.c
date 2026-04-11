@@ -8,6 +8,7 @@
  */
 
 #include "ghostty_terminal.h"
+#include "app_state.h"
 #include "app_settings.h"
 #include "hover_focus.h"
 #include "socket_server.h"
