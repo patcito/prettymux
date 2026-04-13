@@ -112,6 +112,8 @@ jobs:
           install -Dm644 ghostty/zig-out/lib/libghostty.so dist/usr/lib/prettymux/libghostty.so || true
           install -Dm644 src/gtk/prettymux-shell-integration.sh dist/usr/share/prettymux/shell-integration.sh || true
           install -Dm644 src/gtk/prettymux-bashrc.sh dist/usr/share/prettymux/prettymux-bashrc.sh || true
+          install -Dm644 ghostty/src/shell-integration/bash/ghostty.bash dist/usr/share/prettymux/ghostty.bash || true
+          install -Dm644 ghostty/src/shell-integration/bash/bash-preexec.sh dist/usr/share/prettymux/bash-preexec.sh || true
           install -Dm755 src/gtk/bin/open dist/usr/share/prettymux/bin/open || true
           install -Dm755 src/gtk/bin/xdg-open dist/usr/share/prettymux/bin/xdg-open || true
           install -Dm644 LICENSE dist/usr/share/licenses/prettymux/LICENSE || true
@@ -177,6 +179,8 @@ jobs:
           install -Dm644 ghostty/zig-out/lib/libghostty.so dist/usr/lib/prettymux/libghostty.so || true
           install -Dm644 src/gtk/prettymux-shell-integration.sh dist/usr/share/prettymux/shell-integration.sh || true
           install -Dm644 src/gtk/prettymux-bashrc.sh dist/usr/share/prettymux/prettymux-bashrc.sh || true
+          install -Dm644 ghostty/src/shell-integration/bash/ghostty.bash dist/usr/share/prettymux/ghostty.bash || true
+          install -Dm644 ghostty/src/shell-integration/bash/bash-preexec.sh dist/usr/share/prettymux/bash-preexec.sh || true
           install -Dm755 src/gtk/bin/open dist/usr/share/prettymux/bin/open || true
           install -Dm755 src/gtk/bin/xdg-open dist/usr/share/prettymux/bin/xdg-open || true
           install -Dm644 LICENSE dist/usr/share/licenses/prettymux/LICENSE || true
@@ -261,6 +265,8 @@ jobs:
           install -Dm644 ghostty/zig-out/lib/libghostty.so dist/usr/lib/prettymux/libghostty.so || true
           install -Dm644 src/gtk/prettymux-shell-integration.sh dist/usr/share/prettymux/shell-integration.sh || true
           install -Dm644 src/gtk/prettymux-bashrc.sh dist/usr/share/prettymux/prettymux-bashrc.sh || true
+          install -Dm644 ghostty/src/shell-integration/bash/ghostty.bash dist/usr/share/prettymux/ghostty.bash || true
+          install -Dm644 ghostty/src/shell-integration/bash/bash-preexec.sh dist/usr/share/prettymux/bash-preexec.sh || true
           install -Dm755 src/gtk/bin/open dist/usr/share/prettymux/bin/open || true
           install -Dm755 src/gtk/bin/xdg-open dist/usr/share/prettymux/bin/xdg-open || true
           install -Dm644 LICENSE dist/usr/share/licenses/prettymux/LICENSE || true
@@ -420,6 +426,8 @@ jobs:
 
           install -Dm644 src/gtk/prettymux-shell-integration.sh "$PKGDIR/usr/share/prettymux/shell-integration.sh" || true
           install -Dm644 src/gtk/prettymux-bashrc.sh "$PKGDIR/usr/share/prettymux/prettymux-bashrc.sh" || true
+          install -Dm644 ghostty/src/shell-integration/bash/ghostty.bash "$PKGDIR/usr/share/prettymux/ghostty.bash" || true
+          install -Dm644 ghostty/src/shell-integration/bash/bash-preexec.sh "$PKGDIR/usr/share/prettymux/bash-preexec.sh" || true
           install -Dm755 src/gtk/bin/open "$PKGDIR/usr/share/prettymux/bin/open" || true
           install -Dm755 src/gtk/bin/xdg-open "$PKGDIR/usr/share/prettymux/bin/xdg-open" || true
           install -Dm644 LICENSE "$PKGDIR/usr/share/licenses/prettymux/LICENSE"
@@ -615,6 +623,8 @@ jobs:
           cp ghostty/zig-out/lib/libghostty.so AppDir/usr/lib/prettymux/ || true
           cp src/gtk/prettymux-shell-integration.sh AppDir/usr/share/prettymux/shell-integration.sh || true
           cp src/gtk/prettymux-bashrc.sh AppDir/usr/share/prettymux/prettymux-bashrc.sh || true
+          cp ghostty/src/shell-integration/bash/ghostty.bash AppDir/usr/share/prettymux/ghostty.bash || true
+          cp ghostty/src/shell-integration/bash/bash-preexec.sh AppDir/usr/share/prettymux/bash-preexec.sh || true
           cp src/gtk/bin/open AppDir/usr/share/prettymux/bin/open || true
           cp src/gtk/bin/xdg-open AppDir/usr/share/prettymux/bin/xdg-open || true
           cp packaging/prettymux.desktop AppDir/usr/share/applications/prettymux.desktop

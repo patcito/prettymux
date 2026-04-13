@@ -1,7 +1,7 @@
 name: prettymux
 arch: amd64
 platform: linux
-version: 0.2.21
+version: 0.2.22
 maintainer: patcito
 description: GPU-accelerated terminal multiplexer
 homepage: https://github.com/patcito/prettymux
@@ -43,6 +43,14 @@ contents:
       mode: 0644
   - src: dist/usr/share/prettymux/prettymux-bashrc.sh
     dst: /usr/share/prettymux/prettymux-bashrc.sh
+    file_info:
+      mode: 0644
+  - src: dist/usr/share/prettymux/ghostty.bash
+    dst: /usr/share/prettymux/ghostty.bash
+    file_info:
+      mode: 0644
+  - src: dist/usr/share/prettymux/bash-preexec.sh
+    dst: /usr/share/prettymux/bash-preexec.sh
     file_info:
       mode: 0644
   - src: dist/usr/share/prettymux/bin/open

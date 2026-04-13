@@ -1,6 +1,6 @@
 name: prettymux
 base: core24
-version: '0.2.21'
+version: '0.2.22'
 license: GPL-3.0-only
 summary: GPU-accelerated terminal multiplexer
 description: |
@@ -68,6 +68,8 @@ parts:
       cp $CRAFT_PART_SRC/src/gtk/prettymux-shell-integration.sh $CRAFT_PART_INSTALL/usr/bin/
       cp $CRAFT_PART_SRC/src/gtk/prettymux-shell-integration.sh $CRAFT_PART_INSTALL/usr/share/prettymux/shell-integration.sh
       cp $CRAFT_PART_SRC/src/gtk/prettymux-bashrc.sh $CRAFT_PART_INSTALL/usr/share/prettymux/prettymux-bashrc.sh
+      cp $CRAFT_STAGE/ghostty/src/shell-integration/bash/ghostty.bash $CRAFT_PART_INSTALL/usr/share/prettymux/ghostty.bash
+      cp $CRAFT_STAGE/ghostty/src/shell-integration/bash/bash-preexec.sh $CRAFT_PART_INSTALL/usr/share/prettymux/bash-preexec.sh
       mkdir -p $CRAFT_PART_INSTALL/usr/share/prettymux/bin
       cp $CRAFT_PART_SRC/src/gtk/bin/open $CRAFT_PART_INSTALL/usr/share/prettymux/bin/
       cp $CRAFT_PART_SRC/src/gtk/bin/xdg-open $CRAFT_PART_INSTALL/usr/share/prettymux/bin/

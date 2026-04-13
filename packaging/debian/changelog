@@ -1,3 +1,9 @@
+prettymux (0.2.22-1) noble; urgency=medium
+
+  * Bundle Ghostty shell integration in packaged builds.
+
+ -- patcito <release@prettymux.com>  Mon, 13 Apr 2026 19:05:00 +0200
+
 prettymux (0.2.21-1) noble; urgency=medium
 
   * Add configurable bottom status bar colors with dedicated theme fields

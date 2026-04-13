@@ -162,16 +162,21 @@ app_settings_write_ghostty_override(void)
     GString *contents;
     char *path;
     char *dir;
+    const char *theme_name;
 
     app_settings_load();
+
+    theme_name = (app_settings.ghostty_theme && app_settings.ghostty_theme[0])
+        ? app_settings.ghostty_theme
+        : app_settings_default_ghostty_theme_for_prettymux_theme(NULL);
 
     contents = g_string_new("");
     if (app_settings.ghostty_font_size > 0.0)
         g_string_append_printf(contents, "font-size = %.1f\n",
                                app_settings.ghostty_font_size);
-    if (app_settings.ghostty_theme && app_settings.ghostty_theme[0])
+    if (theme_name && theme_name[0])
         g_string_append_printf(contents, "theme = %s\n",
-                               app_settings.ghostty_theme);
+                               theme_name);
 
     path = app_settings_ghostty_override_path();
     dir = g_path_get_dirname(path);
@@ -435,6 +440,16 @@ app_settings_default_ghostty_theme_for_prettymux_theme(const char *theme_name)
     return g_strcmp0(theme_name, "Light") == 0
         ? "Light Owl"
         : "Catppuccin Frappe";
+}
+
+void
+app_settings_ensure_ghostty_theme_default(const char *prettymux_theme_name)
+{
+    app_settings_load();
+    if (app_settings.ghostty_theme && app_settings.ghostty_theme[0])
+        return;
+    app_settings_set_ghostty_theme(
+        app_settings_default_ghostty_theme_for_prettymux_theme(prettymux_theme_name));
 }
 
 const Theme *

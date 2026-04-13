@@ -49,7 +49,7 @@
 // ── Global state ──
 
 #ifndef PRETTYMUX_VERSION
-#define PRETTYMUX_VERSION "0.2.21"
+#define PRETTYMUX_VERSION "0.2.22"
 #endif
 
 static void terminal_search_send_action(GhosttyTerminal *term, const char *action);
@@ -274,6 +274,7 @@ apply_runtime_settings(void *user_data)
 {
     (void)user_data;
 
+    app_settings_ensure_ghostty_theme_default(theme_get_current()->name);
     app_settings_write_ghostty_override();
     theme_set_custom(app_settings_get_custom_theme());
 
@@ -622,6 +623,16 @@ setup_shell_integration_env(void)
 
     if (!g_file_test(ghostty_bash, G_FILE_TEST_EXISTS)) {
         g_free(ghostty_bash);
+        ghostty_bash = g_strdup("/app/share/prettymux/ghostty.bash");
+    }
+
+    if (!g_file_test(ghostty_bash, G_FILE_TEST_EXISTS)) {
+        g_free(ghostty_bash);
+        ghostty_bash = g_strdup("/usr/share/prettymux/ghostty.bash");
+    }
+
+    if (!g_file_test(ghostty_bash, G_FILE_TEST_EXISTS)) {
+        g_free(ghostty_bash);
         ghostty_bash = g_strdup("/app/share/ghostty/shell-integration/bash/ghostty.bash");
     }
 
@@ -716,6 +727,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
                            g_application_get_dbus_connection(G_APPLICATION(app)));
     app_settings_load();
     theme_set_custom(app_settings_get_custom_theme());
+    app_settings_ensure_ghostty_theme_default(theme_get_current()->name);
     app_settings_write_ghostty_override();
 
     // Init ghostty

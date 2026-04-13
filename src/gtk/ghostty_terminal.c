@@ -1027,6 +1027,7 @@ ghostty_terminal_init(GhosttyTerminal *self)
     gtk_widget_set_halign(self->status_cwd, GTK_ALIGN_FILL);
     gtk_widget_set_overflow(self->status_cwd, GTK_OVERFLOW_HIDDEN);
     gtk_label_set_ellipsize(GTK_LABEL(self->status_cwd), PANGO_ELLIPSIZE_MIDDLE);
+    gtk_widget_add_css_class(self->status_cwd, "terminal-status-label");
     gtk_box_append(GTK_BOX(self->status_bar), self->status_cwd);
 
     self->status_git = gtk_label_new("");
@@ -1034,6 +1035,7 @@ ghostty_terminal_init(GhosttyTerminal *self)
     gtk_label_set_single_line_mode(GTK_LABEL(self->status_git), TRUE);
     gtk_label_set_ellipsize(GTK_LABEL(self->status_git), PANGO_ELLIPSIZE_START);
     gtk_widget_set_overflow(self->status_git, GTK_OVERFLOW_HIDDEN);
+    gtk_widget_add_css_class(self->status_git, "terminal-status-label");
     gtk_box_append(GTK_BOX(self->status_bar), self->status_git);
 
     gtk_box_append(GTK_BOX(self->vbox), self->status_bar);

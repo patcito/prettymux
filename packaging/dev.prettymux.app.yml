@@ -34,6 +34,8 @@ modules:
     post-install:
       - install -Dm644 /run/build/prettymux/src/gtk/prettymux-shell-integration.sh /app/share/prettymux/shell-integration.sh
       - install -Dm644 /run/build/prettymux/src/gtk/prettymux-bashrc.sh /app/share/prettymux/prettymux-bashrc.sh
+      - install -Dm644 /run/build/prettymux/ghostty/src/shell-integration/bash/ghostty.bash /app/share/prettymux/ghostty.bash
+      - install -Dm644 /run/build/prettymux/ghostty/src/shell-integration/bash/bash-preexec.sh /app/share/prettymux/bash-preexec.sh
       - install -Dm755 /run/build/prettymux/src/gtk/bin/open /app/share/prettymux/bin/open
       - install -Dm755 /run/build/prettymux/src/gtk/bin/xdg-open /app/share/prettymux/bin/xdg-open
       - install -Dm644 /run/build/prettymux/packaging/dev.prettymux.app.desktop /app/share/applications/dev.prettymux.app.desktop
