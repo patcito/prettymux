@@ -352,8 +352,6 @@ jobs:
     if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'flatpak') || contains(inputs.jobs, 'linux')
     needs: fetch-libghostty
     runs-on: ubuntu-latest
-    container:
-      image: ubuntu:24.04
     steps:
       - name: Checkout prettymux
         uses: actions/checkout@v5
