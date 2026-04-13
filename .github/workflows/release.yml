@@ -375,7 +375,7 @@ jobs:
       - name: Build Flatpak
         run: |
           rm -rf flatpak-build flatpak-repo prettymux.flatpak
-          flatpak-builder --force-clean --repo=flatpak-repo flatpak-build packaging/dev.prettymux.app.yml
+          flatpak-builder --disable-rofiles-fuse --force-clean --repo=flatpak-repo flatpak-build packaging/dev.prettymux.app.yml
           flatpak build-bundle flatpak-repo prettymux.flatpak dev.prettymux.app master
 
       - name: Smoke test package
