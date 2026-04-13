@@ -1,4 +1,8 @@
-prettymux (0.2.20-1) noble; urgency=medium
+prettymux (0.2.21-1) noble; urgency=medium
+
+  * Add configurable bottom status bar colors with dedicated theme fields
+
+ -- patcito <patcito@users.noreply.github.com>  Mon, 13 Apr 2026 17:30:00 +0200
 
   * Fix renderer probe window and add GTK renderer setting with cached auto-probe
 

@@ -15,16 +15,16 @@ int current_theme = THEME_INDEX_DARK;
 static Theme themes[THEME_COUNT] = {
     {"Dark",    "#1e1e2e", "#cdd6f4", "#181825", "#313244", "#6c7086", "#1f2430",
                 "#cba6f7", "#a6e3a1", "#f38ba8", "#f9e2af", "#89b4fa",
-                "#fab387", "#45475a", "#585b70"},
+                "#fab387", "#45475a", "#585b70", "#181825", "#cdd6f4"},
     {"Light",   "#eff1f5", "#4c4f69", "#e6e9ef", "#ccd0da", "#8c8fa1", "#ffffff",
                 "#8839ef", "#40a02b", "#d20f39", "#df8e1d", "#1e66f5",
-                "#fe640b", "#9ca0b0", "#acb0be"},
+                "#fe640b", "#9ca0b0", "#acb0be", "#181825", "#cdd6f4"},
     {"Monokai", "#272822", "#f8f8f2", "#1e1f1c", "#3e3d32", "#75715e", "#1f201c",
                 "#ae81ff", "#a6e22e", "#f92672", "#e6db74", "#66d9ef",
-                "#fd971f", "#49483e", "#75715e"},
+                "#fd971f", "#49483e", "#75715e", "#181825", "#cdd6f4"},
     {"Custom",  "#16181d", "#e7ecf3", "#1d222b", "#313847", "#98a3b8", "#1b2130",
                 "#7c8cff", "#7ad8a4", "#ff7d96", "#f4c06b", "#6fb9ff",
-                "#ffb38a", "#566179", "#8b74ff"},
+                "#ffb38a", "#566179", "#8b74ff", "#181825", "#cdd6f4"},
 };
 
 static GtkCssProvider *css_provider = NULL;
@@ -54,6 +54,8 @@ theme_init_default_custom_theme(void)
     custom->peach = g_strdup(custom->peach);
     custom->muted = g_strdup(custom->muted);
     custom->highlight = g_strdup(custom->highlight);
+    custom->status_bar_bg = g_strdup(custom->status_bar_bg);
+    custom->status_bar_fg = g_strdup(custom->status_bar_fg);
 }
 
 static void
@@ -85,6 +87,8 @@ theme_copy_custom(Theme *dest, const Theme *src)
     theme_store_string(&dest->peach, src->peach);
     theme_store_string(&dest->muted, src->muted);
     theme_store_string(&dest->highlight, src->highlight);
+    theme_store_string(&dest->status_bar_bg, src->status_bar_bg);
+    theme_store_string(&dest->status_bar_fg, src->status_bar_fg);
 }
 
 int
@@ -235,7 +239,8 @@ theme_apply(void)
         "  color: %s;"
         "}"
         ".terminal-status { font-size: 20px; font-family: monospace;"
-        "  color: %s; padding: 1px 4px; }"
+        "  background-color: %s; color: %s; padding: 1px 4px; }"
+        ".terminal-status label { color: %s; }"
         ".tab-blink {"
         "  border-left: 3px solid %s;"
         "  border-radius: 2px;"
@@ -260,7 +265,7 @@ theme_apply(void)
         t->green,
         t->overlay, t->fg, t->muted,
         t->toast_bg, t->fg, t->muted, t->fg,
-        t->subtext,
+        t->status_bar_bg, t->status_bar_fg, t->status_bar_fg,
         tab_accent
     );
 

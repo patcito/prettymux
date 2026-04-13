@@ -5,6 +5,7 @@ typedef struct {
     const char *bg, *fg, *surface, *overlay, *subtext, *accent;
     const char *toast_bg;
     const char *green, *red, *yellow, *blue, *peach, *muted, *highlight;
+    const char *status_bar_bg, *status_bar_fg;
 } Theme;
 
 #define THEME_COUNT 4

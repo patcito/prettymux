@@ -41,6 +41,8 @@ static AppSettingsState app_settings = {
         .peach = "#ffb38a",
         .muted = "#566179",
         .highlight = "#8b74ff",
+        .status_bar_bg = "#181825",
+        .status_bar_fg = "#cdd6f4",
     },
 };
 
@@ -68,6 +70,8 @@ app_settings_init_default_custom_theme(void)
     app_settings.custom_theme.peach = g_strdup(app_settings.custom_theme.peach);
     app_settings.custom_theme.muted = g_strdup(app_settings.custom_theme.muted);
     app_settings.custom_theme.highlight = g_strdup(app_settings.custom_theme.highlight);
+    app_settings.custom_theme.status_bar_bg = g_strdup(app_settings.custom_theme.status_bar_bg);
+    app_settings.custom_theme.status_bar_fg = g_strdup(app_settings.custom_theme.status_bar_fg);
 }
 
 static char *
@@ -113,6 +117,8 @@ app_settings_copy_theme(Theme *dest, const Theme *src)
     app_settings_store_theme_string(&dest->peach, src->peach);
     app_settings_store_theme_string(&dest->muted, src->muted);
     app_settings_store_theme_string(&dest->highlight, src->highlight);
+    app_settings_store_theme_string(&dest->status_bar_bg, src->status_bar_bg);
+    app_settings_store_theme_string(&dest->status_bar_fg, src->status_bar_fg);
 }
 
 static void
@@ -136,6 +142,8 @@ app_settings_load_theme_colors(GKeyFile *kf, const char *group, Theme *theme)
         {"peach", &theme->peach},
         {"muted", &theme->muted},
         {"highlight", &theme->highlight},
+        {"status_bar_bg", &theme->status_bar_bg},
+        {"status_bar_fg", &theme->status_bar_fg},
     };
 
     for (guint i = 0; i < G_N_ELEMENTS(fields); i++) {
@@ -285,6 +293,8 @@ app_settings_save(void)
     g_key_file_set_string(kf, "custom_theme", "peach", app_settings.custom_theme.peach);
     g_key_file_set_string(kf, "custom_theme", "muted", app_settings.custom_theme.muted);
     g_key_file_set_string(kf, "custom_theme", "highlight", app_settings.custom_theme.highlight);
+    g_key_file_set_string(kf, "custom_theme", "status_bar_bg", app_settings.custom_theme.status_bar_bg);
+    g_key_file_set_string(kf, "custom_theme", "status_bar_fg", app_settings.custom_theme.status_bar_fg);
 
     path = app_settings_path();
     dir = g_path_get_dirname(path);

@@ -24,7 +24,7 @@ typedef struct {
     GtkWidget *confirm_workspace;
     GtkWidget *confirm_app;
     GtkWidget *custom_group;
-    GtkWidget *color_buttons[14];
+    GtkWidget *color_buttons[16];
 } SettingsDialogState;
 
 static GtkWindow *g_settings_dialog = NULL;
@@ -44,6 +44,8 @@ enum {
     COLOR_PEACH,
     COLOR_MUTED,
     COLOR_HIGHLIGHT,
+    COLOR_STATUS_BAR_BG,
+    COLOR_STATUS_BAR_FG,
     COLOR_COUNT
 };
 
@@ -65,6 +67,8 @@ static const struct {
     {"Peach", "peach"},
     {"Muted", "muted"},
     {"Selection highlight", "highlight"},
+    {"Status bar background", "status_bar_bg"},
+    {"Status bar text", "status_bar_fg"},
 };
 
 enum {
@@ -393,6 +397,8 @@ settings_collect_custom_theme(SettingsDialogState *state)
         case COLOR_PEACH:     theme.peach = hex; break;
         case COLOR_MUTED:     theme.muted = hex; break;
         case COLOR_HIGHLIGHT: theme.highlight = hex; break;
+        case COLOR_STATUS_BAR_BG: theme.status_bar_bg = hex; break;
+        case COLOR_STATUS_BAR_FG: theme.status_bar_fg = hex; break;
         }
     }
 
@@ -701,6 +707,8 @@ settings_dialog_present(GtkWindow *parent,
         case COLOR_PEACH:     hex = custom_theme->peach; break;
         case COLOR_MUTED:     hex = custom_theme->muted; break;
         case COLOR_HIGHLIGHT: hex = custom_theme->highlight; break;
+        case COLOR_STATUS_BAR_BG: hex = custom_theme->status_bar_bg; break;
+        case COLOR_STATUS_BAR_FG: hex = custom_theme->status_bar_fg; break;
         }
 
         rgba_from_hex(hex, &rgba);
