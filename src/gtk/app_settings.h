@@ -21,6 +21,11 @@ void app_settings_set_focus_on_hover(gboolean enabled);
 gboolean app_settings_get_open_links_in_browser(void);
 void app_settings_set_open_links_in_browser(gboolean enabled);
 
+const char *app_settings_get_gtk_renderer_mode(void);
+void app_settings_set_gtk_renderer_mode(const char *mode);
+const char *app_settings_get_gtk_renderer_probe_result(void);
+void app_settings_set_gtk_renderer_probe_result(const char *renderer);
+
 const Theme *app_settings_get_custom_theme(void);
 void app_settings_set_custom_theme(const Theme *theme);
 

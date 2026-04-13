@@ -11,6 +11,8 @@ typedef struct {
     char *toast_position;
     gboolean focus_on_hover;
     gboolean open_links_in_browser;
+    char *gtk_renderer_mode;
+    char *gtk_renderer_probe_result;
     Theme custom_theme;
 } AppSettingsState;
 
@@ -21,6 +23,8 @@ static AppSettingsState app_settings = {
     .toast_position = NULL,
     .focus_on_hover = TRUE,
     .open_links_in_browser = TRUE,
+    .gtk_renderer_mode = NULL,
+    .gtk_renderer_probe_result = NULL,
     .custom_theme = {
         .name = "Custom",
         .bg = "#16181d",
@@ -204,6 +208,12 @@ app_settings_load(void)
         if (g_key_file_has_key(kf, "ui", "open_links_in_browser", NULL))
             app_settings.open_links_in_browser =
                 g_key_file_get_boolean(kf, "ui", "open_links_in_browser", NULL);
+        if (g_key_file_has_key(kf, "ui", "gtk_renderer_mode", NULL))
+            app_settings.gtk_renderer_mode =
+                g_key_file_get_string(kf, "ui", "gtk_renderer_mode", NULL);
+        if (g_key_file_has_key(kf, "ui", "gtk_renderer_probe_result", NULL))
+            app_settings.gtk_renderer_probe_result =
+                g_key_file_get_string(kf, "ui", "gtk_renderer_probe_result", NULL);
         app_settings_load_theme_colors(kf, "custom_theme",
                                        &app_settings.custom_theme);
     }
@@ -214,6 +224,12 @@ app_settings_load(void)
         g_free(app_settings.toast_position);
         app_settings.toast_position = g_strdup("top");
     }
+    if (!app_settings.gtk_renderer_mode || !app_settings.gtk_renderer_mode[0]) {
+        g_free(app_settings.gtk_renderer_mode);
+        app_settings.gtk_renderer_mode = g_strdup("auto");
+    }
+    if (!app_settings.gtk_renderer_probe_result)
+        app_settings.gtk_renderer_probe_result = g_strdup("");
 
     g_free(path);
     g_key_file_unref(kf);
@@ -245,6 +261,15 @@ app_settings_save(void)
                            app_settings.focus_on_hover);
     g_key_file_set_boolean(kf, "ui", "open_links_in_browser",
                            app_settings.open_links_in_browser);
+    g_key_file_set_string(kf, "ui", "gtk_renderer_mode",
+                          app_settings.gtk_renderer_mode &&
+                          app_settings.gtk_renderer_mode[0]
+                              ? app_settings.gtk_renderer_mode
+                              : "auto");
+    g_key_file_set_string(kf, "ui", "gtk_renderer_probe_result",
+                          app_settings.gtk_renderer_probe_result
+                              ? app_settings.gtk_renderer_probe_result
+                              : "");
 
     g_key_file_set_string(kf, "custom_theme", "bg", app_settings.custom_theme.bg);
     g_key_file_set_string(kf, "custom_theme", "fg", app_settings.custom_theme.fg);
@@ -348,6 +373,50 @@ app_settings_set_open_links_in_browser(gboolean enabled)
 {
     app_settings_load();
     app_settings.open_links_in_browser = enabled != FALSE;
+}
+
+const char *
+app_settings_get_gtk_renderer_mode(void)
+{
+    app_settings_load();
+    return app_settings.gtk_renderer_mode && app_settings.gtk_renderer_mode[0]
+        ? app_settings.gtk_renderer_mode
+        : "auto";
+}
+
+void
+app_settings_set_gtk_renderer_mode(const char *mode)
+{
+    app_settings_load();
+    g_free(app_settings.gtk_renderer_mode);
+    if (g_strcmp0(mode, "vulkan") == 0 ||
+        g_strcmp0(mode, "opengl") == 0 ||
+        g_strcmp0(mode, "ngl") == 0)
+        app_settings.gtk_renderer_mode = g_strdup(mode);
+    else
+        app_settings.gtk_renderer_mode = g_strdup("auto");
+}
+
+const char *
+app_settings_get_gtk_renderer_probe_result(void)
+{
+    app_settings_load();
+    return app_settings.gtk_renderer_probe_result
+        ? app_settings.gtk_renderer_probe_result
+        : "";
+}
+
+void
+app_settings_set_gtk_renderer_probe_result(const char *renderer)
+{
+    app_settings_load();
+    g_free(app_settings.gtk_renderer_probe_result);
+    if (g_strcmp0(renderer, "vulkan") == 0 ||
+        g_strcmp0(renderer, "opengl") == 0 ||
+        g_strcmp0(renderer, "ngl") == 0)
+        app_settings.gtk_renderer_probe_result = g_strdup(renderer);
+    else
+        app_settings.gtk_renderer_probe_result = g_strdup("");
 }
 
 const char *

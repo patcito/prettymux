@@ -1,6 +1,6 @@
-prettymux (0.2.18-1) noble; urgency=medium
+prettymux (0.2.19-1) noble; urgency=medium
 
-  * Prefer a compatible GPU renderer startup path on Linux/GTK/Wayland setups
+  * Add GTK renderer setting with cached auto-probe and manual override modes
 
  -- patcito <patcito@users.noreply.github.com>  Fri, 10 Apr 2026 00:00:00 +0000
 

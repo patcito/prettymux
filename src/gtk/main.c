@@ -7,6 +7,7 @@
 #include <gtk/gtk.h>
 #include <limits.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdarg.h>
 #include <string.h>
 #ifdef G_OS_WIN32
@@ -48,22 +49,148 @@
 // ── Global state ──
 
 #ifndef PRETTYMUX_VERSION
-#define PRETTYMUX_VERSION "0.2.18"
+#define PRETTYMUX_VERSION "0.2.19"
 #endif
 
 static void terminal_search_send_action(GhosttyTerminal *term, const char *action);
 static void terminal_search_hide(void);
 
+static const char *g_renderer_probe_target = NULL;
+
+static gboolean
+renderer_probe_quit_cb(gpointer data)
+{
+    GApplication *app = G_APPLICATION(data);
+    g_application_quit(app);
+    g_object_unref(app);
+    return G_SOURCE_REMOVE;
+}
+
+static void
+on_renderer_probe_activate(GtkApplication *app, gpointer user_data)
+{
+    (void)user_data;
+    GtkWidget *window = adw_application_window_new(ADW_APPLICATION(app));
+    GtkWidget *gl_area = gtk_gl_area_new();
+
+    gtk_window_set_default_size(GTK_WINDOW(window), 160, 120);
+    gtk_gl_area_set_use_es(GTK_GL_AREA(gl_area), FALSE);
+    gtk_window_set_child(GTK_WINDOW(window), gl_area);
+    gtk_window_present(GTK_WINDOW(window));
+    g_timeout_add(300, renderer_probe_quit_cb, g_object_ref(app));
+}
+
+static char *
+current_executable_path(void)
+{
+#ifdef G_OS_WIN32
+    wchar_t exe_path_w[PATH_MAX];
+    DWORD exe_len = GetModuleFileNameW(NULL, exe_path_w, G_N_ELEMENTS(exe_path_w));
+    if (exe_len <= 0)
+        return NULL;
+    return g_utf16_to_utf8((const gunichar2 *)exe_path_w, exe_len, NULL, NULL, NULL);
+#else
+    char exe_path[PATH_MAX];
+    ssize_t exe_len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (exe_len <= 0)
+        return NULL;
+    exe_path[exe_len] = '\0';
+    return g_strdup(exe_path);
+#endif
+}
+
+static void
+apply_graphics_renderer_choice(const char *renderer, gboolean force)
+{
+#ifndef G_OS_WIN32
+    if (!renderer || !renderer[0])
+        return;
+
+    if (g_strcmp0(renderer, "opengl") == 0) {
+        g_setenv("GSK_RENDERER", "opengl", force);
+        g_setenv("GDK_DISABLE", "gles-api,vulkan", force);
+    } else if (g_strcmp0(renderer, "vulkan") == 0) {
+        g_setenv("GSK_RENDERER", "vulkan", force);
+        if (force)
+            g_unsetenv("GDK_DISABLE");
+    } else if (g_strcmp0(renderer, "ngl") == 0) {
+        g_setenv("GSK_RENDERER", "ngl", force);
+        if (force)
+            g_unsetenv("GDK_DISABLE");
+    }
+#endif
+}
+
+static gboolean
+run_graphics_renderer_probe(const char *renderer)
+{
+#ifndef G_OS_WIN32
+    gboolean ok = FALSE;
+    gchar *exe_path = current_executable_path();
+    gchar *argvv[2] = { NULL, NULL };
+    gchar **envp = NULL;
+    gint status = 1;
+    GError *error = NULL;
+
+    if (!exe_path)
+        return FALSE;
+
+    argvv[0] = exe_path;
+    envp = g_get_environ();
+    envp = g_environ_setenv(envp, "PRETTYMUX_RENDERER_PROBE", renderer, TRUE);
+    envp = g_environ_unsetenv(envp, "GSK_RENDERER");
+    envp = g_environ_unsetenv(envp, "GDK_DISABLE");
+    envp = g_environ_unsetenv(envp, "PRETTYMUX_SOCKET");
+
+    if (g_spawn_sync(NULL, argvv, envp, G_SPAWN_DEFAULT, NULL, NULL,
+                     NULL, NULL, &status, &error))
+        ok = g_spawn_check_wait_status(status, NULL);
+
+    if (error)
+        g_error_free(error);
+    g_strfreev(envp);
+    g_free(exe_path);
+    return ok;
+#else
+    (void)renderer;
+    return FALSE;
+#endif
+}
+
 static void
 apply_graphics_startup_workarounds(void)
 {
 #ifndef G_OS_WIN32
-    /* Prefer the stable accelerated OpenGL GTK path by default unless the user
-     * has already chosen their own renderer environment. */
-    if (!g_getenv("GSK_RENDERER"))
-        g_setenv("GSK_RENDERER", "opengl", FALSE);
-    if (!g_getenv("GDK_DISABLE"))
-        g_setenv("GDK_DISABLE", "gles-api,vulkan", FALSE);
+    const char *renderer_mode;
+    const char *cached_result;
+
+    if (g_renderer_probe_target && g_renderer_probe_target[0]) {
+        apply_graphics_renderer_choice(g_renderer_probe_target, FALSE);
+        return;
+    }
+
+    if (g_getenv("GSK_RENDERER") || g_getenv("GDK_DISABLE"))
+        return;
+
+    app_settings_load();
+    renderer_mode = app_settings_get_gtk_renderer_mode();
+
+    if (g_strcmp0(renderer_mode, "auto") == 0) {
+        cached_result = app_settings_get_gtk_renderer_probe_result();
+        if (g_strcmp0(cached_result, "vulkan") != 0 &&
+            g_strcmp0(cached_result, "opengl") != 0 &&
+            g_strcmp0(cached_result, "ngl") != 0) {
+            cached_result = run_graphics_renderer_probe("vulkan")
+                ? "vulkan"
+                : "opengl";
+            app_settings_set_gtk_renderer_probe_result(cached_result);
+            app_settings_save();
+        }
+        apply_graphics_renderer_choice(cached_result, FALSE);
+        return;
+    }
+
+    apply_graphics_renderer_choice(renderer_mode, FALSE);
 #endif
 }
 
@@ -737,7 +864,10 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
 int main(int argc, char *argv[]) {
     int cli_exit = 0;
 
-    if (prettymux_agent_cli_maybe_run(argc, argv, &cli_exit))
+    g_renderer_probe_target = g_getenv("PRETTYMUX_RENDERER_PROBE");
+
+    if (!g_renderer_probe_target &&
+        prettymux_agent_cli_maybe_run(argc, argv, &cli_exit))
         return cli_exit;
 
     // WebKitGTK's bubblewrap sandbox requires dbus-proxy which may not
@@ -747,7 +877,18 @@ int main(int argc, char *argv[]) {
 #endif
     apply_graphics_startup_workarounds();
     g_set_prgname("prettymux");
-    ensure_local_desktop_entry();
+    if (!g_renderer_probe_target)
+        ensure_local_desktop_entry();
+
+    if (g_renderer_probe_target && g_renderer_probe_target[0]) {
+        apply_graphics_renderer_choice(g_renderer_probe_target, TRUE);
+        AdwApplication *probe_app = adw_application_new("dev.prettymux.probe",
+                                                        G_APPLICATION_DEFAULT_FLAGS);
+        g_signal_connect(probe_app, "activate", G_CALLBACK(on_renderer_probe_activate), NULL);
+        int probe_status = g_application_run(G_APPLICATION(probe_app), argc, argv);
+        g_object_unref(probe_app);
+        return probe_status;
+    }
 
     AdwApplication *app = adw_application_new("dev.prettymux.app",
                                               G_APPLICATION_DEFAULT_FLAGS);
