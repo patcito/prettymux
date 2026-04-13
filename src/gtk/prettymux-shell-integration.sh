@@ -20,16 +20,9 @@ case "$-" in
     *) _prettymux_shell_is_interactive=0 ;;
 esac
 
-if [ -n "$BASH_VERSION" ] &&
-   [ "$_prettymux_shell_is_interactive" = "1" ] &&
-   [ -z "$PRETTYMUX_GHOSTTY_SHELL_LOADED" ]; then
-    export PRETTYMUX_GHOSTTY_SHELL_LOADED=1
-
-    if [ -n "$PRETTYMUX_GHOSTTY_BASH_INTEGRATION" ] &&
-       [ -r "$PRETTYMUX_GHOSTTY_BASH_INTEGRATION" ]; then
-        . "$PRETTYMUX_GHOSTTY_BASH_INTEGRATION"
-    fi
-fi
+# Ghostty shell integration is injected automatically when the embedded
+# terminal has a valid resources directory. This script only layers PrettyMux
+# behavior on top of that shell session.
 
 if [ -n "$BASH_VERSION" ] &&
    [ "$_prettymux_shell_is_interactive" = "1" ] &&

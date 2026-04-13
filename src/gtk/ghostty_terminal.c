@@ -182,6 +182,35 @@ ghostty_terminal_shorten_branch(const char *branch, char *buf, size_t bufsz)
     return buf;
 }
 
+
+static char *
+ghostty_terminal_shell_basename(const char *shell_path)
+{
+    if (!shell_path || !shell_path[0])
+        return NULL;
+
+    return g_path_get_basename(shell_path);
+}
+
+static char *
+ghostty_terminal_prepend_data_dir(const char *existing,
+                                  const char *prefix)
+{
+    if (!prefix || !prefix[0])
+        return NULL;
+
+    if (!existing || !existing[0])
+        return g_strdup(prefix);
+
+    if (g_str_has_prefix(existing, prefix)) {
+        size_t len = strlen(prefix);
+        if (existing[len] == '\0' || existing[len] == ':')
+            return g_strdup(existing);
+    }
+
+    return g_strdup_printf("%s:%s", prefix, existing);
+}
+
 static void
 ghostty_terminal_refresh_status(GhosttyTerminal *self)
 {
@@ -368,8 +397,26 @@ on_gl_realize(GtkGLArea *area, gpointer user_data)
                                    : home;
 
     /* Shell integration env vars */
-    ghostty_env_var_s env_vars[9];
+    ghostty_env_var_s env_vars[18];
     size_t env_count = 0;
+    char *command_override = NULL;
+    char *xdg_data_dirs = NULL;
+    char *shell_hook_dir = NULL;
+    char *zsh_dotdir = NULL;
+    const char *bash_env = g_getenv("BASH_ENV");
+    const char *open_bin = g_getenv("PRETTYMUX_OPEN_BIN");
+    const char *shell_integ = g_getenv("PRETTYMUX_SHELL_INTEGRATION");
+    const char *bash_rcfile = g_getenv("GHOSTTY_BASH_RCFILE");
+    const char *ghostty_bash_integration =
+        g_getenv("PRETTYMUX_GHOSTTY_BASH_INTEGRATION");
+    const char *resource_dir = g_getenv("PRETTYMUX_GHOSTTY_RESOURCE_DIR");
+    const char *path = g_getenv("PATH");
+    const char *shell_path = g_getenv("SHELL");
+    const char *old_zdotdir = g_getenv("ZDOTDIR");
+    const char *old_xdg_data_dirs = g_getenv("XDG_DATA_DIRS");
+    const char *hostname = g_getenv("HOSTNAME");
+    const char *host = g_getenv("HOST");
+    g_autofree char *shell_name = ghostty_terminal_shell_basename(shell_path);
 
     env_vars[env_count].key = "PRETTYMUX";
     env_vars[env_count].value = "1";
@@ -388,53 +435,108 @@ on_gl_realize(GtkGLArea *area, gpointer user_data)
         env_count++;
     }
 
-    const char *bash_env = g_getenv("BASH_ENV");
+    if (!hostname || !hostname[0])
+        hostname = g_get_host_name();
+    if (!host || !host[0])
+        host = hostname;
+
+    if (hostname && hostname[0]) {
+        env_vars[env_count].key = "HOSTNAME";
+        env_vars[env_count].value = hostname;
+        env_count++;
+    }
+
+    if (host && host[0]) {
+        env_vars[env_count].key = "HOST";
+        env_vars[env_count].value = host;
+        env_count++;
+    }
+
     if (bash_env) {
         env_vars[env_count].key = "BASH_ENV";
         env_vars[env_count].value = bash_env;
         env_count++;
     }
 
-    const char *open_bin = g_getenv("PRETTYMUX_OPEN_BIN");
     if (open_bin) {
         env_vars[env_count].key = "PRETTYMUX_OPEN_BIN";
         env_vars[env_count].value = open_bin;
         env_count++;
     }
 
-    const char *shell_integ = g_getenv("PRETTYMUX_SHELL_INTEGRATION");
     if (shell_integ) {
         env_vars[env_count].key = "PRETTYMUX_SHELL_INTEGRATION";
         env_vars[env_count].value = shell_integ;
         env_count++;
     }
 
-    const char *bash_rcfile = g_getenv("GHOSTTY_BASH_RCFILE");
     if (bash_rcfile) {
         env_vars[env_count].key = "GHOSTTY_BASH_RCFILE";
         env_vars[env_count].value = bash_rcfile;
         env_count++;
     }
 
-    const char *ghostty_bash_integration =
-        g_getenv("PRETTYMUX_GHOSTTY_BASH_INTEGRATION");
     if (ghostty_bash_integration) {
         env_vars[env_count].key = "PRETTYMUX_GHOSTTY_BASH_INTEGRATION";
         env_vars[env_count].value = ghostty_bash_integration;
         env_count++;
     }
 
-    const char *path = g_getenv("PATH");
+    if (resource_dir && resource_dir[0]) {
+        env_vars[env_count].key = "GHOSTTY_RESOURCES_DIR";
+        env_vars[env_count].value = resource_dir;
+        env_count++;
+
+        shell_hook_dir = g_build_filename(resource_dir, "shell-integration", NULL);
+
+        if (shell_name && g_strcmp0(shell_name, "zsh") == 0) {
+            zsh_dotdir = g_build_filename(shell_hook_dir, "zsh", NULL);
+            if (old_zdotdir && old_zdotdir[0]) {
+                env_vars[env_count].key = "GHOSTTY_ZSH_ZDOTDIR";
+                env_vars[env_count].value = old_zdotdir;
+                env_count++;
+            }
+            if (g_file_test(zsh_dotdir, G_FILE_TEST_IS_DIR)) {
+                env_vars[env_count].key = "ZDOTDIR";
+                env_vars[env_count].value = zsh_dotdir;
+                env_count++;
+            }
+        } else if (shell_name &&
+                   (g_strcmp0(shell_name, "fish") == 0 ||
+                    g_strcmp0(shell_name, "elvish") == 0)) {
+            xdg_data_dirs = ghostty_terminal_prepend_data_dir(old_xdg_data_dirs,
+                                                              shell_hook_dir);
+            if (xdg_data_dirs) {
+                env_vars[env_count].key = "XDG_DATA_DIRS";
+                env_vars[env_count].value = xdg_data_dirs;
+                env_count++;
+            }
+        }
+    }
+
     if (path) {
         env_vars[env_count].key = "PATH";
         env_vars[env_count].value = path;
         env_count++;
     }
 
+    if (shell_name && g_strcmp0(shell_name, "bash") == 0 &&
+        bash_rcfile && bash_rcfile[0]) {
+        command_override = g_strdup_printf("%s --rcfile %s -i",
+                                           (shell_path && shell_path[0])
+                                               ? shell_path : "bash",
+                                           bash_rcfile);
+    }
+
+    config.command = command_override;
     config.env_vars = env_vars;
     config.env_var_count = env_count;
 
     self->surface = ghostty_surface_new(g_ghostty_app, &config);
+    g_free(zsh_dotdir);
+    g_free(shell_hook_dir);
+    g_free(xdg_data_dirs);
+    g_free(command_override);
     if (self->surface) {
         ghostty_surface_init_opengl(self->surface);
 
@@ -1122,9 +1224,12 @@ GtkWidget *
 ghostty_terminal_new(const char *start_cwd)
 {
     GhosttyTerminal *self = g_object_new(GHOSTTY_TYPE_TERMINAL, NULL);
-    if (start_cwd && *start_cwd) {
-        self->start_cwd = g_strdup(start_cwd);
-        self->cwd = g_strdup(start_cwd);
+    const char *initial_cwd = (start_cwd && *start_cwd) ? start_cwd : g_get_home_dir();
+
+    if (initial_cwd && *initial_cwd) {
+        self->start_cwd = g_strdup(initial_cwd);
+        self->cwd = g_strdup(initial_cwd);
+        ghostty_terminal_set_status(self, self->cwd, NULL);
     }
     return GTK_WIDGET(self);
 }

@@ -49,7 +49,7 @@
 // ── Global state ──
 
 #ifndef PRETTYMUX_VERSION
-#define PRETTYMUX_VERSION "0.2.23"
+#define PRETTYMUX_VERSION "0.2.24"
 #endif
 
 static void terminal_search_send_action(GhosttyTerminal *term, const char *action);
@@ -589,8 +589,11 @@ setup_shell_integration_env(void)
     char *open_cli = g_build_filename(exe_dir, "prettymux-open", NULL);
     char *shell_integ = g_build_filename(exe_dir, "prettymux-shell-integration.sh", NULL);
     char *bashrc_wrapper = g_build_filename(exe_dir, "prettymux-bashrc.sh", NULL);
-    char *ghostty_bash = g_build_filename(exe_dir, "ghostty.bash", NULL);
+    char *ghostty_resource_dir = g_strdup(exe_dir);
+    char *ghostty_bash = g_build_filename(exe_dir, "shell-integration", "bash",
+                                          "ghostty.bash", NULL);
     char *wrapper_dir = g_build_filename(exe_dir, "bin", NULL);
+    char *shell_tree = NULL;
 
     if (!g_file_test(shell_integ, G_FILE_TEST_EXISTS)) {
         g_free(shell_integ);
@@ -613,6 +616,17 @@ setup_shell_integration_env(void)
         open_cli = g_find_program_in_path("prettymux-open");
     }
 
+    shell_tree = g_build_filename(ghostty_resource_dir, "shell-integration", NULL);
+    if (!g_file_test(ghostty_resource_dir, G_FILE_TEST_IS_DIR) ||
+        !g_file_test(shell_tree, G_FILE_TEST_IS_DIR)) {
+        g_free(shell_tree);
+        g_free(ghostty_resource_dir);
+        ghostty_resource_dir = g_build_filename(PRETTYMUX_SOURCE_DIR,
+                                                "..", "..", "..",
+                                                "ghostty", "src", NULL);
+        shell_tree = g_build_filename(ghostty_resource_dir, "shell-integration", NULL);
+    }
+
     if (!g_file_test(ghostty_bash, G_FILE_TEST_EXISTS)) {
         g_free(ghostty_bash);
         ghostty_bash = g_build_filename(PRETTYMUX_SOURCE_DIR,
@@ -621,14 +635,30 @@ setup_shell_integration_env(void)
                                         "bash", "ghostty.bash", NULL);
     }
 
-    if (!g_file_test(ghostty_bash, G_FILE_TEST_EXISTS)) {
-        g_free(ghostty_bash);
-        ghostty_bash = g_strdup("/app/share/prettymux/ghostty.bash");
+    if (!g_file_test(ghostty_resource_dir, G_FILE_TEST_IS_DIR) ||
+        !g_file_test(shell_tree, G_FILE_TEST_IS_DIR)) {
+        g_free(shell_tree);
+        g_free(ghostty_resource_dir);
+        ghostty_resource_dir = g_strdup("/app/share/prettymux");
+        shell_tree = g_build_filename(ghostty_resource_dir, "shell-integration", NULL);
     }
 
     if (!g_file_test(ghostty_bash, G_FILE_TEST_EXISTS)) {
         g_free(ghostty_bash);
-        ghostty_bash = g_strdup("/usr/share/prettymux/ghostty.bash");
+        ghostty_bash = g_strdup("/app/share/prettymux/shell-integration/bash/ghostty.bash");
+    }
+
+    if (!g_file_test(ghostty_resource_dir, G_FILE_TEST_IS_DIR) ||
+        !g_file_test(shell_tree, G_FILE_TEST_IS_DIR)) {
+        g_free(shell_tree);
+        g_free(ghostty_resource_dir);
+        ghostty_resource_dir = g_strdup("/usr/share/prettymux");
+        shell_tree = g_build_filename(ghostty_resource_dir, "shell-integration", NULL);
+    }
+
+    if (!g_file_test(ghostty_bash, G_FILE_TEST_EXISTS)) {
+        g_free(ghostty_bash);
+        ghostty_bash = g_strdup("/usr/share/prettymux/shell-integration/bash/ghostty.bash");
     }
 
     if (!g_file_test(ghostty_bash, G_FILE_TEST_EXISTS)) {
@@ -687,6 +717,13 @@ setup_shell_integration_env(void)
     if (ghostty_bash && g_file_test(ghostty_bash, G_FILE_TEST_EXISTS))
         g_setenv("PRETTYMUX_GHOSTTY_BASH_INTEGRATION", ghostty_bash, TRUE);
 
+    if (ghostty_resource_dir &&
+        g_file_test(ghostty_resource_dir, G_FILE_TEST_IS_DIR) &&
+        shell_tree &&
+        g_file_test(shell_tree, G_FILE_TEST_IS_DIR)) {
+        g_setenv("PRETTYMUX_GHOSTTY_RESOURCE_DIR", ghostty_resource_dir, TRUE);
+    }
+
     if (wrapper_dir && g_file_test(wrapper_dir, G_FILE_TEST_IS_DIR)) {
         const char *old_path = g_getenv("PATH");
         if (!old_path || !old_path[0]) {
@@ -704,8 +741,10 @@ setup_shell_integration_env(void)
         }
     }
 
+    g_free(shell_tree);
     g_free(open_cli);
     g_free(ghostty_bash);
+    g_free(ghostty_resource_dir);
     g_free(shell_integ);
     g_free(bashrc_wrapper);
     g_free(wrapper_dir);
