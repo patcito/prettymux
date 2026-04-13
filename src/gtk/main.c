@@ -48,11 +48,24 @@
 // ── Global state ──
 
 #ifndef PRETTYMUX_VERSION
-#define PRETTYMUX_VERSION "0.2.17"
+#define PRETTYMUX_VERSION "0.2.18"
 #endif
 
 static void terminal_search_send_action(GhosttyTerminal *term, const char *action);
 static void terminal_search_hide(void);
+
+static void
+apply_graphics_startup_workarounds(void)
+{
+#ifndef G_OS_WIN32
+    /* Prefer the stable accelerated OpenGL GTK path by default unless the user
+     * has already chosen their own renderer environment. */
+    if (!g_getenv("GSK_RENDERER"))
+        g_setenv("GSK_RENDERER", "opengl", FALSE);
+    if (!g_getenv("GDK_DISABLE"))
+        g_setenv("GDK_DISABLE", "gles-api,vulkan", FALSE);
+#endif
+}
 
 static void
 on_main_window_active_changed(GObject *object, GParamSpec *pspec, gpointer user_data)
@@ -732,6 +745,7 @@ int main(int argc, char *argv[]) {
 #ifndef G_OS_WIN32
     g_setenv("WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS", "1", FALSE);
 #endif
+    apply_graphics_startup_workarounds();
     g_set_prgname("prettymux");
     ensure_local_desktop_entry();
 

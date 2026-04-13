@@ -1,6 +1,6 @@
-prettymux (0.2.17-1) noble; urgency=medium
+prettymux (0.2.18-1) noble; urgency=medium
 
-  * Fix settings dialog dismissal and reuse
+  * Prefer a compatible GPU renderer startup path on Linux/GTK/Wayland setups
 
  -- patcito <patcito@users.noreply.github.com>  Fri, 10 Apr 2026 00:00:00 +0000
 
