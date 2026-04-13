@@ -1,3 +1,9 @@
+prettymux (0.2.23-1) noble; urgency=medium
+
+  * Pass bundled Ghostty shell integration into embedded terminals.
+
+ -- patcito <release@prettymux.com>  Mon, 13 Apr 2026 19:35:00 +0200
+
 prettymux (0.2.22-1) noble; urgency=medium
 
   * Bundle Ghostty shell integration in packaged builds.

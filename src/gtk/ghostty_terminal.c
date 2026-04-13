@@ -368,7 +368,7 @@ on_gl_realize(GtkGLArea *area, gpointer user_data)
                                    : home;
 
     /* Shell integration env vars */
-    ghostty_env_var_s env_vars[8];
+    ghostty_env_var_s env_vars[9];
     size_t env_count = 0;
 
     env_vars[env_count].key = "PRETTYMUX";
@@ -413,6 +413,14 @@ on_gl_realize(GtkGLArea *area, gpointer user_data)
     if (bash_rcfile) {
         env_vars[env_count].key = "GHOSTTY_BASH_RCFILE";
         env_vars[env_count].value = bash_rcfile;
+        env_count++;
+    }
+
+    const char *ghostty_bash_integration =
+        g_getenv("PRETTYMUX_GHOSTTY_BASH_INTEGRATION");
+    if (ghostty_bash_integration) {
+        env_vars[env_count].key = "PRETTYMUX_GHOSTTY_BASH_INTEGRATION";
+        env_vars[env_count].value = ghostty_bash_integration;
         env_count++;
     }
 
