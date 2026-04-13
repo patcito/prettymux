@@ -1,0 +1,114 @@
+name: Flatpak Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to build and upload, for example v0.2.25'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  GHOSTTY_REPO: patcito/ghostty
+  GHOSTTY_BRANCH: linux-embedded-platform
+  ZIG_VERSION: '0.15.2'
+
+jobs:
+  fetch-libghostty:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/patcito/prettymux-build-debian:bookworm
+    steps:
+      - name: Checkout ghostty fork
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ env.GHOSTTY_REPO }}
+          ref: ${{ env.GHOSTTY_BRANCH }}
+          path: ghostty
+
+      - name: Resolve ghostty revision
+        id: ghostty_rev
+        run: |
+          echo "sha=$(git -C ghostty rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Ghostty Zig cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ghostty/.zig-cache
+            .zig-global-cache
+          key: ghostty-linux-${{ env.ZIG_VERSION }}-${{ steps.ghostty_rev.outputs.sha }}
+          restore-keys: |
+            ghostty-linux-${{ env.ZIG_VERSION }}-
+
+      - name: Build generic libghostty
+        run: |
+          cd ghostty
+          export ZIG_GLOBAL_CACHE_DIR="${GITHUB_WORKSPACE}/.zig-global-cache"
+          zig build \
+            -Dapp-runtime=none \
+            -Doptimize=ReleaseFast \
+            -Dtarget=x86_64-linux-gnu
+
+      - name: Upload ghostty tree
+        uses: actions/upload-artifact@v6
+        with:
+          name: ghostty-prebuilt
+          path: ghostty/
+
+  build-flatpak:
+    needs: fetch-libghostty
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48
+      options: --privileged
+    steps:
+      - name: Resolve target ref
+        id: target_ref
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            echo "ref=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=${GITHUB_REF}" >> "$GITHUB_OUTPUT"
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout prettymux
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.target_ref.outputs.ref }}
+
+      - name: Download prebuilt ghostty
+        uses: actions/download-artifact@v5
+        with:
+          name: ghostty-prebuilt
+          path: ghostty
+
+      - name: Build Flatpak bundle
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          manifest-path: packaging/dev.prettymux.app.yml
+          bundle: prettymux.flatpak
+          cache-key: flatpak-builder-${{ steps.target_ref.outputs.tag }}
+          upload-artifact: true
+          verbose: true
+
+      - name: Smoke test package
+        run: |
+          flatpak install -y --user ./prettymux.flatpak
+          bash packaging/ci-smoke-test.sh flatpak flatpak run dev.prettymux.app
+
+      - name: Upload release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.target_ref.outputs.tag }}"
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --notes ""
+          gh release upload "$TAG" prettymux.flatpak --clobber
