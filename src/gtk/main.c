@@ -49,7 +49,7 @@
 // ── Global state ──
 
 #ifndef PRETTYMUX_VERSION
-#define PRETTYMUX_VERSION "0.2.19"
+#define PRETTYMUX_VERSION "0.2.20"
 #endif
 
 static void terminal_search_send_action(GhosttyTerminal *term, const char *action);
@@ -70,7 +70,8 @@ static void
 on_renderer_probe_activate(GtkApplication *app, gpointer user_data)
 {
     (void)user_data;
-    GtkWidget *window = adw_application_window_new(ADW_APPLICATION(app));
+    GtkWidget *window =
+        gtk_application_window_new(GTK_APPLICATION(app));
     GtkWidget *gl_area = gtk_gl_area_new();
 
     gtk_window_set_default_size(GTK_WINDOW(window), 160, 120);

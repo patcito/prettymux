@@ -1,7 +1,7 @@
 name: prettymux
 arch: amd64
 platform: linux
-version: 0.2.19
+version: 0.2.20
 maintainer: patcito
 description: GPU-accelerated terminal multiplexer
 homepage: https://github.com/patcito/prettymux
