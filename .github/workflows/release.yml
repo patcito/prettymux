@@ -688,7 +688,6 @@ jobs:
       - build-linux-ubuntu-lts
       - build-linux-fedora
       - build-linux-deb
-      - build-snap
       - build-flatpak
       - build-archlinux
       - build-appimage

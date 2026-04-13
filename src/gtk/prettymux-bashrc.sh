@@ -1,5 +1,11 @@
 #!/bin/sh
 
+if [ -n "$PRETTYMUX_GHOSTTY_BASH_INTEGRATION" ] &&
+   [ -r "$PRETTYMUX_GHOSTTY_BASH_INTEGRATION" ] &&
+   ! command -V __ghostty_precmd >/dev/null 2>&1; then
+    . "$PRETTYMUX_GHOSTTY_BASH_INTEGRATION"
+fi
+
 if [ -r "$HOME/.bashrc" ]; then
     . "$HOME/.bashrc"
 fi

@@ -1,4 +1,4 @@
-prettymux (0.2.24-1) noble; urgency=medium
+prettymux (0.2.25-1) noble; urgency=medium
 
   * Pass bundled Ghostty shell integration into embedded terminals.
 
