@@ -340,6 +340,8 @@ jobs:
     if: github.event_name == 'push' || inputs.jobs == 'all' || contains(inputs.jobs, 'flatpak') || contains(inputs.jobs, 'linux')
     needs: fetch-libghostty
     runs-on: ubuntu-latest
+    container:
+      image: ubuntu:24.04
     steps:
       - name: Checkout prettymux
         uses: actions/checkout@v5
@@ -352,17 +354,17 @@ jobs:
 
       - name: Install Flatpak Builder
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y flatpak flatpak-builder
-          sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-          sudo flatpak install -y flathub org.gnome.Platform//46 org.gnome.Sdk//46
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y flatpak flatpak-builder ca-certificates
+          flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install -y flathub org.gnome.Platform//46 org.gnome.Sdk//46
 
       - name: Build Flatpak
-        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
-        with:
-          manifest-path: packaging/dev.prettymux.app.yml
-          bundle: prettymux.flatpak
-          cache-key: flatpak-builder-${{ github.sha }}
+        run: |
+          rm -rf flatpak-build flatpak-repo prettymux.flatpak
+          flatpak-builder --force-clean --repo=flatpak-repo flatpak-build packaging/dev.prettymux.app.yml
+          flatpak build-bundle flatpak-repo prettymux.flatpak dev.prettymux.app master
 
       - name: Smoke test package
         run: |
