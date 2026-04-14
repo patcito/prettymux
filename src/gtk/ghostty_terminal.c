@@ -399,7 +399,6 @@ on_gl_realize(GtkGLArea *area, gpointer user_data)
     /* Shell integration env vars */
     ghostty_env_var_s env_vars[18];
     size_t env_count = 0;
-    char *command_override = NULL;
     char *xdg_data_dirs = NULL;
     char *shell_hook_dir = NULL;
     char *zsh_dotdir = NULL;
@@ -520,15 +519,6 @@ on_gl_realize(GtkGLArea *area, gpointer user_data)
         env_count++;
     }
 
-    if (shell_name && g_strcmp0(shell_name, "bash") == 0 &&
-        bash_rcfile && bash_rcfile[0]) {
-        command_override = g_strdup_printf("%s --rcfile %s -i",
-                                           (shell_path && shell_path[0])
-                                               ? shell_path : "bash",
-                                           bash_rcfile);
-    }
-
-    config.command = command_override;
     config.env_vars = env_vars;
     config.env_var_count = env_count;
 
@@ -536,7 +526,6 @@ on_gl_realize(GtkGLArea *area, gpointer user_data)
     g_free(zsh_dotdir);
     g_free(shell_hook_dir);
     g_free(xdg_data_dirs);
-    g_free(command_override);
     if (self->surface) {
         ghostty_surface_init_opengl(self->surface);
 
