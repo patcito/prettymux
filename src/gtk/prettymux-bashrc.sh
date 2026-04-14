@@ -1,5 +1,9 @@
 #!/bin/sh
 
+if [ -z "${BASH_VERSION-}" ]; then
+    return 0 2>/dev/null || exit 0
+fi
+
 if [ -n "$PRETTYMUX_GHOSTTY_BASH_INTEGRATION" ] &&
    [ -r "$PRETTYMUX_GHOSTTY_BASH_INTEGRATION" ] &&
    ! command -V __ghostty_precmd >/dev/null 2>&1; then

@@ -49,7 +49,7 @@
 // ── Global state ──
 
 #ifndef PRETTYMUX_VERSION
-#define PRETTYMUX_VERSION "0.2.26"
+#define PRETTYMUX_VERSION "0.2.27"
 #endif
 
 static void terminal_search_send_action(GhosttyTerminal *term, const char *action);
