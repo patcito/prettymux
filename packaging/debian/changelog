@@ -1,3 +1,9 @@
+prettymux (0.2.26-1) noble; urgency=medium
+
+  * Release 0.2.26
+
+ -- Patrick Aljord <patcito@gmail.com>  Tue, 14 Apr 2026 00:52:37 +0000
+
 prettymux (0.2.25-1) noble; urgency=medium
 
   * Pass bundled Ghostty shell integration into embedded terminals.

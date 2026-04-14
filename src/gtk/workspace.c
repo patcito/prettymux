@@ -99,6 +99,11 @@ static void workspace_request_terminal_icon(GtkWidget *terminal,
 static void refresh_terminal_tab_icon(GtkWidget *terminal);
 static void refresh_all_workspace_sidebar_labels(void);
 static void workspace_focus_first_terminal(Workspace *ws);
+static void workspace_update_summary_from_terminal(Workspace *ws,
+                                                   GtkWidget *terminal);
+static void workspace_sync_summary_from_first_terminal(Workspace *ws);
+static void workspace_show_all_pane_branches(GtkWidget *widget);
+static GtkWidget *workspace_first_terminal(Workspace *ws);
 
 /* Context menu data for sidebar rows (defined later) */
 typedef struct {
@@ -141,11 +146,49 @@ page_linked_terminal(GtkWidget *page)
 }
 
 static void
+workspace_update_summary_from_terminal(Workspace *ws, GtkWidget *terminal)
+{
+    const char *cwd;
+
+    if (!ws || !terminal || !GHOSTTY_IS_TERMINAL(terminal))
+        return;
+
+    cwd = ghostty_terminal_get_cwd(GHOSTTY_TERMINAL(terminal));
+    if (!cwd || !cwd[0]) {
+        ws->cwd[0] = '\0';
+        ws->git_branch[0] = '\0';
+        workspace_refresh_sidebar_label(ws);
+        return;
+    }
+
+    snprintf(ws->cwd, sizeof(ws->cwd), "%s", cwd);
+    workspace_detect_git(ws);
+}
+
+static void
+workspace_sync_summary_from_first_terminal(Workspace *ws)
+{
+    GtkWidget *terminal;
+
+    if (!ws)
+        return;
+
+    terminal = workspace_first_terminal(ws);
+    if (terminal) {
+        workspace_update_summary_from_terminal(ws, terminal);
+        return;
+    }
+
+    ws->cwd[0] = '\0';
+    ws->git_branch[0] = '\0';
+    workspace_refresh_sidebar_label(ws);
+}
+
+static void
 workspace_focus_first_terminal(Workspace *ws)
 {
     GtkNotebook *pane;
     GtkWidget *terminal;
-    const char *cwd;
 
     if (!ws)
         return;
@@ -161,11 +204,7 @@ workspace_focus_first_terminal(Workspace *ws)
     if (!terminal || !GHOSTTY_IS_TERMINAL(terminal))
         return;
 
-    cwd = ghostty_terminal_get_cwd(GHOSTTY_TERMINAL(terminal));
-    if (cwd && cwd[0]) {
-        snprintf(ws->cwd, sizeof(ws->cwd), "%s", cwd);
-        workspace_detect_git(ws);
-    }
+    workspace_update_summary_from_terminal(ws, terminal);
 
     focus_terminal_page(terminal);
     focus_terminal_page_later(terminal);
@@ -1092,8 +1131,7 @@ on_terminal_pwd_changed(GhosttyTerminal *term, const char *cwd, gpointer user_da
     if (visible_terminal != GTK_WIDGET(term))
         return;
 
-    snprintf(ws->cwd, sizeof(ws->cwd), "%s", cwd);
-    workspace_detect_git(ws);
+    workspace_update_summary_from_terminal(ws, GTK_WIDGET(term));
 }
 
 static void
@@ -1349,10 +1387,12 @@ static void
 on_label_double_click(GtkGestureClick *gesture, int n_press,
                       double x, double y, gpointer user_data)
 {
-    (void)gesture; (void)x; (void)y;
+    (void)x; (void)y;
     if (n_press != 2) return;
 
     RenameData *rd = user_data;
+    if (rd && rd->is_workspace_row)
+        gtk_gesture_set_state(GTK_GESTURE(gesture), GTK_EVENT_SEQUENCE_CLAIMED);
     start_rename(rd);
 }
 
@@ -2332,6 +2372,9 @@ workspace_split_pane_target(Workspace *ws, GtkNotebook *source_nb,
     if (!ws || !source_nb)
         return NULL;
 
+    if (ws->zoomed)
+        workspace_toggle_zoom(ws);
+
     {
         int page = gtk_notebook_get_current_page(source_nb);
         GtkWidget *terminal = notebook_terminal_at(source_nb, page);
@@ -2569,44 +2612,72 @@ workspace_resize_pane_percent(Workspace *ws, GtkNotebook *pane,
 
 /* ── Pane zoom ───────────────────────────────────────────────── */
 
+static void
+workspace_show_all_pane_branches(GtkWidget *widget)
+{
+    if (!widget)
+        return;
+
+    gtk_widget_set_visible(widget, TRUE);
+
+    if (GTK_IS_PANED(widget)) {
+        workspace_show_all_pane_branches(gtk_paned_get_start_child(GTK_PANED(widget)));
+        workspace_show_all_pane_branches(gtk_paned_get_end_child(GTK_PANED(widget)));
+    }
+}
+
 void
 workspace_toggle_zoom(Workspace *ws)
 {
-    if (!ws) return;
+    GtkWidget *root;
+
+    if (!ws || !GTK_IS_OVERLAY(ws->overlay))
+        return;
+
+    root = gtk_overlay_get_child(GTK_OVERLAY(ws->overlay));
+    if (!root)
+        return;
 
     if (ws->zoomed) {
-        /* Un-zoom: show all pane notebooks */
-        if (ws->pane_notebooks) {
-            guint i;
-            for (i = 0; i < ws->pane_notebooks->len; i++) {
-                GtkWidget *nb = g_ptr_array_index(ws->pane_notebooks, i);
-                gtk_widget_set_visible(nb, TRUE);
-            }
-        }
+        workspace_show_all_pane_branches(root);
+        gtk_widget_queue_allocate(root);
+        gtk_widget_queue_draw(root);
         ws->zoomed = FALSE;
         ws->zoomed_pane = NULL;
         return;
     }
 
-    /* Only zoom if there are multiple panes */
     if (!ws->pane_notebooks || ws->pane_notebooks->len <= 1)
         return;
 
-    /* Find the focused pane */
     GtkNotebook *focused = workspace_get_focused_pane(ws);
     if (!focused)
         return;
 
-    /* Hide all other pane notebooks */
-    {
-        guint i;
-        for (i = 0; i < ws->pane_notebooks->len; i++) {
-            GtkNotebook *nb = g_ptr_array_index(ws->pane_notebooks, i);
-            if (nb != focused)
-                gtk_widget_set_visible(GTK_WIDGET(nb), FALSE);
+    GtkWidget *current = GTK_WIDGET(focused);
+    while (current && current != root) {
+        GtkWidget *parent = gtk_widget_get_parent(current);
+        GtkWidget *sibling = NULL;
+
+        if (!GTK_IS_PANED(parent)) {
+            current = parent;
+            continue;
         }
+
+        sibling = gtk_paned_get_start_child(GTK_PANED(parent)) == current
+            ? gtk_paned_get_end_child(GTK_PANED(parent))
+            : gtk_paned_get_start_child(GTK_PANED(parent));
+        if (sibling)
+            gtk_widget_set_visible(sibling, FALSE);
+
+        gtk_widget_set_visible(current, TRUE);
+        gtk_widget_set_visible(parent, TRUE);
+        current = parent;
     }
 
+    gtk_widget_set_visible(root, TRUE);
+    gtk_widget_queue_allocate(root);
+    gtk_widget_queue_draw(root);
     ws->zoomed = TRUE;
     ws->zoomed_pane = focused;
 }
@@ -2786,6 +2857,9 @@ workspace_close_pane(Workspace *ws, GtkNotebook *pane)
     if (!GTK_IS_NOTEBOOK(pane)) return;
     if (!ws->pane_notebooks || ws->pane_notebooks->len <= 1) return;
 
+    if (ws->zoomed)
+        workspace_toggle_zoom(ws);
+
     GtkWidget *pane_widget = GTK_WIDGET(pane);
     GtkWidget *parent = gtk_widget_get_parent(pane_widget);
 
@@ -2878,6 +2952,9 @@ workspace_close_pane(Workspace *ws, GtkNotebook *pane)
                 focus_terminal_page_later(terminal);
         }
     }
+
+    workspace_sync_summary_from_first_terminal(ws);
+    workspace_refresh_tab_labels(ws);
 }
 
 /* (activity helpers are defined earlier in this file) */
@@ -2894,12 +2971,8 @@ on_notebook_switch_page(GtkNotebook *nb, GtkWidget *page,
     workspace_set_active_pane(ws, nb);
     GtkWidget *terminal = page_linked_terminal(page);
     if (terminal && GHOSTTY_IS_TERMINAL(terminal)) {
-        const char *cwd = ghostty_terminal_get_cwd(GHOSTTY_TERMINAL(terminal));
-
-        if (ws && cwd && cwd[0]) {
-            snprintf(ws->cwd, sizeof(ws->cwd), "%s", cwd);
-            workspace_detect_git(ws);
-        }
+        if (ws)
+            workspace_update_summary_from_terminal(ws, terminal);
 
         focus_terminal_page(terminal);
         focus_terminal_page_later(terminal);

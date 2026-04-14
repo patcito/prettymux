@@ -11,8 +11,18 @@
 static void
 on_workspace_row_activated(GtkListBox *list, GtkListBoxRow *row, gpointer user_data)
 {
+    GtkWidget *child;
+    GtkWidget *rename_entry;
+
     (void)list;
     (void)user_data;
+
+    child = gtk_list_box_row_get_child(row);
+    rename_entry = child ? g_object_get_data(G_OBJECT(child), "rename-entry") : NULL;
+    if (GTK_IS_WIDGET(rename_entry)) {
+        gtk_widget_grab_focus(rename_entry);
+        return;
+    }
 
     workspace_switch(gtk_list_box_row_get_index(row),
                      ui.terminal_stack, ui.workspace_list);
