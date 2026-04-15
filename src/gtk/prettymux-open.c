@@ -16,7 +16,7 @@
  *   prettymux-open --move-tab ...                 Move a terminal tab to another pane
  *   prettymux-open --move-workspace ...           Move a workspace to another instance
  *   prettymux-open --select-tab -w 0 -p 1 -t 0    Select a specific terminal tab
- *   prettymux-open --set-layout <mode> [-w N]     Set workspace layout (classic/strip)
+ *   prettymux-open --set-layout <mode> [-w N]     Set layout (all workspaces or one target)
  *   prettymux-open --get-layout [-w N]            Get workspace layout mode
  *   prettymux-open --get-strip-state [-w N]       Get strip column state
  *   prettymux-open --set-workspace-status ...      Set structured status entry
@@ -78,7 +78,7 @@ usage(void)
         "       prettymux-open --move-tab --from-w <n> --from-p <n> --from-t <n> --to-w <n> --to-p <n>\n"
         "       prettymux-open --move-workspace --to-instance <id> [-w <workspace-index>]\n"
         "       prettymux-open --select-tab -w <n> -p <n> -t <n>\n"
-        "       prettymux-open --set-layout <mode> [-w N]  Set layout (classic/strip)\n"
+        "       prettymux-open --set-layout <mode> [-w N]  Set layout (classic/strip; omit -w to update all workspaces)\n"
         "       prettymux-open --get-layout [-w N]         Get layout mode\n"
         "       prettymux-open --get-strip-state [-w N]    Get strip columns/focus/maximize state\n"
         "       prettymux-open --set-workspace-status --id <id> --summary <text> [--provider <name>] [--kind <name>] [--state <state>] [--detail <text>] [--attention] [--notify] [-w N]\n"
@@ -106,6 +106,8 @@ usage(void)
         "  close           pane.close\n"
         "  zoom            pane.zoom\n"
         "  newtab          pane.tab.new\n"
+        "  tabnext         tab.next\n"
+        "  tabprev         tab.prev\n"
         "  browser         browser.toggle\n"
         "  palette         search.show\n"
         "  shortcuts       shortcuts.show\n"
@@ -591,6 +593,8 @@ resolve_alias(const char *name)
         {"close",      "pane.close"},
         {"zoom",       "pane.zoom"},
         {"newtab",     "pane.tab.new"},
+        {"tabnext",    "tab.next"},
+        {"tabprev",    "tab.prev"},
         {"browser",    "browser.toggle"},
         {"palette",    "search.show"},
         {"shortcuts",  "shortcuts.show"},

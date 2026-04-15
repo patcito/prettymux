@@ -3,6 +3,7 @@
 #include "app_settings.h"
 #include "close_confirm.h"
 #include "theme.h"
+#include "workspace.h"
 
 #include <string.h>
 
@@ -444,6 +445,7 @@ on_apply_clicked(GtkButton *button, gpointer user_data)
     guint layout_mode_selected;
     guint renderer_selected;
     const char *renderer_mode;
+    WorkspaceLayoutMode previous_default_layout_mode;
     WorkspaceLayoutMode default_layout_mode;
     const Theme *selected_theme;
     Theme custom_theme;
@@ -473,12 +475,15 @@ on_apply_clicked(GtkButton *button, gpointer user_data)
         gtk_switch_get_active(GTK_SWITCH(state->focus_on_hover_switch)));
     app_settings_set_open_links_in_browser(
         gtk_switch_get_active(GTK_SWITCH(state->open_links_in_browser_switch)));
+    previous_default_layout_mode = app_settings_get_default_layout_mode();
     layout_mode_selected =
         gtk_drop_down_get_selected(GTK_DROP_DOWN(state->layout_mode_dropdown));
     default_layout_mode = layout_mode_selected == 1
         ? WORKSPACE_LAYOUT_STRIP
         : WORKSPACE_LAYOUT_CLASSIC;
     app_settings_set_default_layout_mode(default_layout_mode);
+    if (default_layout_mode != previous_default_layout_mode)
+        workspace_apply_layout_mode_to_all(default_layout_mode);
     renderer_selected =
         gtk_drop_down_get_selected(GTK_DROP_DOWN(state->gtk_renderer_dropdown));
     renderer_mode = renderer_selected == 1 ? "vulkan"
@@ -686,7 +691,7 @@ settings_dialog_present(GtkWindow *parent,
 
     gtk_box_append(GTK_BOX(content),
                    settings_section_title("Workspace defaults",
-                                          "Choose how new workspaces start. Classic keeps the existing split-pane layout. Strip uses horizontal columns."));
+                                          "Choose how workspaces use split panes or strip columns. Applying this updates current workspaces and the default for new ones."));
 
     state->layout_mode_dropdown =
         gtk_drop_down_new_from_strings(layout_mode_options);

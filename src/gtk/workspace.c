@@ -175,6 +175,27 @@ workspace_get_index(Workspace *ws)
     return -1;
 }
 
+int
+workspace_apply_layout_mode_to_all(WorkspaceLayoutMode mode)
+{
+    int updated = 0;
+
+    if (!workspaces)
+        return 0;
+
+    for (guint i = 0; i < workspaces->len; i++) {
+        Workspace *ws = g_ptr_array_index(workspaces, i);
+
+        if (!ws || workspace_get_layout_mode(ws) == mode)
+            continue;
+
+        if (workspace_rebuild_for_layout_mode(ws, mode))
+            updated++;
+    }
+
+    return updated;
+}
+
 static Workspace *
 workspace_get_by_serial(guint64 serial)
 {
@@ -2097,6 +2118,14 @@ start_rename(RenameData *rd)
     g_signal_connect(key_ctrl, "key-pressed",
                      G_CALLBACK(on_rename_key_pressed), rd);
     gtk_widget_add_controller(entry, key_ctrl);
+    g_object_set_data(G_OBJECT(entry), "rename-key-controller", key_ctrl);
+
+    /* Clicking away should commit the inline rename like Enter does. */
+    GtkEventController *focus_ctrl = gtk_event_controller_focus_new();
+    g_signal_connect(focus_ctrl, "leave",
+                     G_CALLBACK(on_rename_entry_focus_leave), rd);
+    gtk_widget_add_controller(entry, focus_ctrl);
+    g_object_set_data(G_OBJECT(entry), "rename-focus-controller", focus_ctrl);
 
     g_object_set_data(G_OBJECT(parent), "rename-entry", entry);
     gtk_box_append(GTK_BOX(parent), entry);
@@ -2397,6 +2426,7 @@ create_editable_tab_label(const char *text, GtkWidget *terminal,
     g_signal_connect(click, "pressed",
                      G_CALLBACK(on_label_double_click), rd);
     gtk_widget_add_controller(box, GTK_EVENT_CONTROLLER(click));
+    g_object_set_data(G_OBJECT(box), "rename-click-controller", click);
 
     /* Add close button (X) for terminal tabs, not sidebar rows */
     if (!is_workspace_row && terminal) {
@@ -4005,7 +4035,6 @@ static GtkWidget *create_workspace_row(Workspace *ws) {
         header_box, &meta_label, &notification_label,
         &status_entries_box, &ports_label, &progress_label,
         &structure_label, &badge);
-
     gtk_widget_add_css_class(card, "sidebar-row");
     g_object_set_data(G_OBJECT(card), "workspace", ws);
     ws->sidebar_label = inner_label;
@@ -4292,6 +4321,10 @@ void workspace_remove(int index, GtkWidget *terminal_stack, GtkWidget *workspace
     }
 
     ws->active_pane = NULL;
+
+    workspace_strip_state_free(ws->strip_state);
+    ws->strip_state = NULL;
+
     gtk_stack_remove(GTK_STACK(terminal_stack), ws->container);
 
     GtkListBoxRow *row = gtk_list_box_get_row_at_index(GTK_LIST_BOX(workspace_list), index);
@@ -4315,7 +4348,6 @@ void workspace_remove(int index, GtkWidget *terminal_stack, GtkWidget *workspace
         ws->git_branch_cancel = NULL;
     }
 
-    workspace_strip_state_free(ws->strip_state);
     g_ptr_array_unref(ws->terminals);
     g_ptr_array_unref(ws->pane_notebooks);
     g_clear_pointer(&ws->status_entries, g_hash_table_unref);
@@ -4430,7 +4462,7 @@ workspace_split_pane_target(Workspace *ws, GtkNotebook *source_nb,
     if (!ws || !source_nb)
         return NULL;
 
-    if (ws->zoomed)
+    if (workspace_layout_is_zoomed(ws))
         workspace_layout_toggle_zoom_current(ws);
 
     {
@@ -4551,6 +4583,12 @@ workspace_strip_column_index_for_pane(Workspace *ws, GtkNotebook *pane)
     state = ws->strip_state;
     for (guint i = 0; i < state->columns->len; i++) {
         WorkspaceColumn *col = g_ptr_array_index(state->columns, i);
+        if (col->panes) {
+            for (guint j = 0; j < col->panes->len; j++) {
+                if (g_ptr_array_index(col->panes, j) == GTK_WIDGET(pane))
+                    return (int)i;
+            }
+        }
         if (col->notebook == GTK_WIDGET(pane))
             return (int)i;
     }
@@ -4576,9 +4614,6 @@ workspace_split_current_for_layout(Workspace *ws, GtkOrientation orientation,
     }
 
     if (workspace_get_layout_mode(ws) != WORKSPACE_LAYOUT_STRIP)
-        return FALSE;
-
-    if (orientation != GTK_ORIENTATION_HORIZONTAL)
         return FALSE;
 
     focused = workspace_get_focused_pane(ws);
@@ -4608,10 +4643,18 @@ workspace_split_current_for_layout(Workspace *ws, GtkOrientation orientation,
         insert_idx = (int)ws->pane_notebooks->len;
     g_ptr_array_insert(ws->pane_notebooks, insert_idx, new_nb);
 
-    if (!workspace_strip_insert_column_after_active(ws, new_nb)) {
-        g_ptr_array_remove(ws->pane_notebooks, new_nb);
-        g_object_unref(new_nb);
-        return FALSE;
+    if (orientation == GTK_ORIENTATION_HORIZONTAL) {
+        if (!workspace_strip_insert_column_after_active(ws, new_nb)) {
+            g_ptr_array_remove(ws->pane_notebooks, new_nb);
+            g_object_unref(new_nb);
+            return FALSE;
+        }
+    } else {
+        if (!workspace_strip_split_vertical_in_column(ws, new_nb)) {
+            g_ptr_array_remove(ws->pane_notebooks, new_nb);
+            g_object_unref(new_nb);
+            return FALSE;
+        }
     }
 
     workspace_set_active_pane(ws, GTK_NOTEBOOK(new_nb));
@@ -4632,6 +4675,8 @@ workspace_close_current_for_layout(Workspace *ws)
     GtkWidget *focused_widget;
     int focused_pane_idx;
     int next_pane_idx;
+    int focused_col = -1;
+    int focused_col_pane_count = 0;
 
     if (!ws || !ws->pane_notebooks || ws->pane_notebooks->len <= 1)
         return FALSE;
@@ -4654,9 +4699,12 @@ workspace_close_current_for_layout(Workspace *ws)
         return FALSE;
 
     if (ws->strip_state) {
-        int focused_col = workspace_strip_column_index_for_pane(ws, focused);
-        if (focused_col >= 0)
+        focused_col = workspace_strip_column_index_for_pane(ws, focused);
+        if (focused_col >= 0) {
             ws->strip_state->focused_col = focused_col;
+            focused_col_pane_count = workspace_strip_column_pane_count(ws,
+                                                                        focused_col);
+        }
     }
 
     g_signal_handlers_disconnect_by_data(focused, ws);
@@ -4672,8 +4720,13 @@ workspace_close_current_for_layout(Workspace *ws)
         }
     }
 
-    if (!workspace_strip_remove_active_column(ws))
-        return FALSE;
+    if (focused_col >= 0 && focused_col_pane_count > 1) {
+        if (!workspace_strip_remove_pane_from_column(ws, focused))
+            return FALSE;
+    } else {
+        if (!workspace_strip_remove_active_column(ws))
+            return FALSE;
+    }
 
     g_ptr_array_remove_index(ws->pane_notebooks, focused_pane_idx);
 
@@ -4683,13 +4736,16 @@ workspace_close_current_for_layout(Workspace *ws)
     if (ws->notebook == focused_widget)
         ws->notebook = g_ptr_array_index(ws->pane_notebooks, 0);
 
-    next_pane_idx = focused_pane_idx;
-    if (next_pane_idx >= (int)ws->pane_notebooks->len)
-        next_pane_idx = (int)ws->pane_notebooks->len - 1;
-    if (next_pane_idx < 0)
-        next_pane_idx = 0;
+    if (!ws->active_pane ||
+        workspace_get_pane_index(ws, ws->active_pane) < 0) {
+        next_pane_idx = focused_pane_idx;
+        if (next_pane_idx >= (int)ws->pane_notebooks->len)
+            next_pane_idx = (int)ws->pane_notebooks->len - 1;
+        if (next_pane_idx < 0)
+            next_pane_idx = 0;
+        ws->active_pane = g_ptr_array_index(ws->pane_notebooks, next_pane_idx);
+    }
 
-    ws->active_pane = g_ptr_array_index(ws->pane_notebooks, next_pane_idx);
     workspace_focus_pane(ws, ws->active_pane);
     workspace_refresh_tab_labels(ws);
     workspace_sync_summary_from_first_terminal(ws);
@@ -4761,10 +4817,14 @@ workspace_focus_adjacent_strip_column(Workspace *ws, gboolean next)
 
     workspace_strip_focus_column(ws, target_col);
     col = g_ptr_array_index(state->columns, target_col);
-    if (!col || !GTK_IS_NOTEBOOK(col->notebook))
+    if (!col)
         return FALSE;
 
-    return workspace_focus_pane(ws, GTK_NOTEBOOK(col->notebook));
+    GtkNotebook *focused_nb = workspace_strip_column_focused_notebook(col);
+    if (!focused_nb)
+        return FALSE;
+
+    return workspace_focus_pane(ws, focused_nb);
 }
 
 gboolean
@@ -4788,6 +4848,22 @@ workspace_focus_prev_for_layout(Workspace *ws)
     if (workspace_get_layout_mode(ws) == WORKSPACE_LAYOUT_STRIP)
         return workspace_focus_adjacent_strip_column(ws, FALSE);
 
+    return workspace_focus_adjacent_tab(ws, FALSE);
+}
+
+gboolean
+workspace_tab_next_for_layout(Workspace *ws)
+{
+    if (!ws)
+        return FALSE;
+    return workspace_focus_adjacent_tab(ws, TRUE);
+}
+
+gboolean
+workspace_tab_prev_for_layout(Workspace *ws)
+{
+    if (!ws)
+        return FALSE;
     return workspace_focus_adjacent_tab(ws, FALSE);
 }
 
@@ -5166,7 +5242,7 @@ workspace_close_pane(Workspace *ws, GtkNotebook *pane)
     if (!GTK_IS_NOTEBOOK(pane)) return;
     if (!ws->pane_notebooks || ws->pane_notebooks->len <= 1) return;
 
-    if (ws->zoomed)
+    if (workspace_layout_is_zoomed(ws))
         workspace_layout_toggle_zoom_current(ws);
 
     GtkWidget *pane_widget = GTK_WIDGET(pane);

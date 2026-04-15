@@ -359,14 +359,20 @@ socket_commands_on_socket_command(const char  *command,
                 move_error ? move_error : "workspace move failed");
         }
     } else if (strcmp(command, "workspace.set_layout") == 0) {
-        int idx = (int)json_object_get_int_member_with_default(msg, "workspace", current_workspace);
+        gboolean has_workspace_target = json_object_has_member(msg, "workspace");
+        int idx = (int)json_object_get_int_member_with_default(
+            msg, "workspace", current_workspace);
         const char *layout =
             json_object_get_string_member_with_default(msg, "layout", "");
         Workspace *ws = NULL;
         WorkspaceLayoutMode mode = WORKSPACE_LAYOUT_CLASSIC;
+        int updated_count = 0;
 
-        if (idx >= 0 && workspaces && idx < (int)workspaces->len)
+        if (has_workspace_target &&
+            idx >= 0 && workspaces &&
+            idx < (int)workspaces->len) {
             ws = g_ptr_array_index(workspaces, idx);
+        }
 
         if (g_strcmp0(layout, "strip") == 0)
             mode = WORKSPACE_LAYOUT_STRIP;
@@ -377,6 +383,30 @@ socket_commands_on_socket_command(const char  *command,
             json_builder_add_string_value(response, "error");
             json_builder_set_member_name(response, "message");
             json_builder_add_string_value(response, "invalid layout (use 'classic' or 'strip')");
+            goto set_layout_done;
+        }
+
+        if (!has_workspace_target) {
+            if (!workspaces || workspaces->len == 0) {
+                json_builder_set_member_name(response, "status");
+                json_builder_add_string_value(response, "error");
+                json_builder_set_member_name(response, "message");
+                json_builder_add_string_value(response,
+                                              "no workspaces available");
+                goto set_layout_done;
+            }
+
+            updated_count = workspace_apply_layout_mode_to_all(mode);
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "ok");
+            json_builder_set_member_name(response, "layout");
+            json_builder_add_string_value(response, layout);
+            json_builder_set_member_name(response, "scope");
+            json_builder_add_string_value(response, "all");
+            json_builder_set_member_name(response, "workspaceCount");
+            json_builder_add_int_value(response, (int)workspaces->len);
+            json_builder_set_member_name(response, "updatedCount");
+            json_builder_add_int_value(response, updated_count);
             goto set_layout_done;
         }
 
@@ -393,6 +423,10 @@ socket_commands_on_socket_command(const char  *command,
             json_builder_add_string_value(response, "ok");
             json_builder_set_member_name(response, "layout");
             json_builder_add_string_value(response, layout);
+            json_builder_set_member_name(response, "scope");
+            json_builder_add_string_value(response, "workspace");
+            json_builder_set_member_name(response, "workspace");
+            json_builder_add_int_value(response, idx);
         } else {
             json_builder_set_member_name(response, "status");
             json_builder_add_string_value(response, "error");
@@ -466,8 +500,13 @@ socket_commands_on_socket_command(const char  *command,
                         continue;
                     if (col->target_width > 0)
                         width = col->target_width;
-                    if (GTK_IS_NOTEBOOK(col->notebook))
-                        pane_id = workspace_get_pane_id(GTK_NOTEBOOK(col->notebook));
+                    {
+                        GtkNotebook *fnb = workspace_strip_column_focused_notebook(col);
+                        if (fnb)
+                            pane_id = workspace_get_pane_id(fnb);
+                        else if (GTK_IS_NOTEBOOK(col->notebook))
+                            pane_id = workspace_get_pane_id(GTK_NOTEBOOK(col->notebook));
+                    }
 
                     json_builder_begin_object(response);
                     json_builder_set_member_name(response, "index");
@@ -480,6 +519,11 @@ socket_commands_on_socket_command(const char  *command,
                     json_builder_add_boolean_value(response, col->maximized);
                     json_builder_set_member_name(response, "focused");
                     json_builder_add_boolean_value(response, (int)i == focused_col);
+                    json_builder_set_member_name(response, "paneCount");
+                    json_builder_add_int_value(response,
+                        col->panes ? (int)col->panes->len : 1);
+                    json_builder_set_member_name(response, "focusedPane");
+                    json_builder_add_int_value(response, col->focused_pane);
                     json_builder_end_object(response);
                 }
             }

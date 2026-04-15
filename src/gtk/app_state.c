@@ -69,6 +69,64 @@ assign_default_instance_id(AppState *state)
     assign_instance_id(state, PRETTYMUX_DEFAULT_INSTANCE_ID);
 }
 
+static gboolean
+derive_nested_instance_lane_id(char *out, gsize out_len)
+{
+    const char *env_lane_id = g_getenv("PRETTYMUX_CHILD_INSTANCE_ID");
+    const char *terminal_id = g_getenv("PRETTYMUX_TERMINAL_ID");
+
+    if (!out || out_len == 0)
+        return FALSE;
+
+    out[0] = '\0';
+
+    /*
+     * Explicit child ids let callers allocate stable same-lane child slots
+     * without relying on live socket occupancy.
+     */
+    sanitize_instance_id(env_lane_id, out, out_len);
+    if (out[0])
+        return TRUE;
+
+    sanitize_instance_id(terminal_id, out, out_len);
+    if (out[0])
+        return FALSE;
+
+#ifndef G_OS_WIN32
+    {
+        const char *tty_path = ttyname(STDIN_FILENO);
+        sanitize_instance_id(tty_path, out, out_len);
+        if (out[0])
+            return FALSE;
+    }
+#endif
+
+    g_strlcpy(out, "shell", out_len);
+    return FALSE;
+}
+
+static void
+build_nested_child_instance_id(char *out,
+                               gsize out_len,
+                               const char *base_instance_id,
+                               guint slot_index)
+{
+    if (!out || out_len == 0)
+        return;
+
+    if (!base_instance_id || !base_instance_id[0]) {
+        out[0] = '\0';
+        return;
+    }
+
+    if (slot_index <= 1) {
+        g_strlcpy(out, base_instance_id, out_len);
+        return;
+    }
+
+    g_snprintf(out, out_len, "%s-%u", base_instance_id, slot_index);
+}
+
 AppState *
 app_state(void)
 {
@@ -119,6 +177,40 @@ socket_path_is_connectable(const char *path)
     ok = connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0;
     close(fd);
     return ok;
+}
+
+static gboolean
+instance_id_has_live_socket(const char *instance_id)
+{
+    char socket_path[256];
+
+    if (!instance_id || !instance_id[0])
+        return FALSE;
+
+    g_snprintf(socket_path, sizeof(socket_path), "/tmp/prettymux-%s.sock",
+               instance_id);
+    return socket_path_is_connectable(socket_path);
+}
+
+static gboolean
+instance_id_has_saved_session(const char *instance_id)
+{
+    g_autofree char *sessions_dir = NULL;
+    g_autofree char *file_name = NULL;
+    g_autofree char *session_path = NULL;
+
+    if (!instance_id || !instance_id[0])
+        return FALSE;
+
+    sessions_dir =
+        g_build_filename(g_get_home_dir(), ".prettymux", "sessions", NULL);
+    if (g_strcmp0(instance_id, PRETTYMUX_DEFAULT_INSTANCE_ID) == 0)
+        file_name = g_strdup("last-default.json");
+    else
+        file_name = g_strdup_printf("last-%s.json", instance_id);
+
+    session_path = g_build_filename(sessions_dir, file_name, NULL);
+    return g_file_test(session_path, G_FILE_TEST_EXISTS);
 }
 
 static gboolean
@@ -200,6 +292,80 @@ compare_instance_id_ptr(gconstpointer a, gconstpointer b)
 }
 #endif
 
+static void
+assign_nested_child_instance_id(AppState *state, const char *parent_instance_id)
+{
+    char parent_id[sizeof(state->instance_id)] = {0};
+    char lane_id[sizeof(state->instance_id)] = {0};
+    char base_candidate[sizeof(state->instance_id)] = {0};
+    gboolean explicit_child_slot = FALSE;
+
+    sanitize_instance_id(parent_instance_id, parent_id, sizeof(parent_id));
+    if (!parent_id[0])
+        g_strlcpy(parent_id, PRETTYMUX_DEFAULT_INSTANCE_ID,
+                  sizeof(parent_id));
+
+    explicit_child_slot = derive_nested_instance_lane_id(lane_id,
+                                                         sizeof(lane_id));
+    g_snprintf(base_candidate, sizeof(base_candidate), "%s-child-%s",
+               parent_id, lane_id);
+
+#ifdef G_OS_WIN32
+    assign_instance_id(state, base_candidate);
+#else
+    if (explicit_child_slot) {
+        assign_instance_id(state, base_candidate);
+        return;
+    }
+
+    /*
+     * Default nested launch policy:
+     * - preserve an existing saved lane id when available and currently offline
+     * - otherwise allocate the first currently unused child slot
+     * This keeps same-lane child ids collision-free without random suffixes and
+     * allows restart of previously saved child lanes while a sibling is live.
+     */
+    {
+        gboolean base_live = instance_id_has_live_socket(base_candidate);
+        gboolean base_saved = instance_id_has_saved_session(base_candidate);
+        char first_free[sizeof(state->instance_id)] = {0};
+
+        if (!base_live && base_saved) {
+            assign_instance_id(state, base_candidate);
+            return;
+        }
+
+        for (guint slot = 2; slot < 1000; slot++) {
+            char candidate[sizeof(state->instance_id)] = {0};
+
+            build_nested_child_instance_id(candidate, sizeof(candidate),
+                                           base_candidate, slot);
+            if (!candidate[0])
+                continue;
+            if (instance_id_has_live_socket(candidate))
+                continue;
+            if (instance_id_has_saved_session(candidate)) {
+                assign_instance_id(state, candidate);
+                return;
+            }
+            if (!first_free[0])
+                g_strlcpy(first_free, candidate, sizeof(first_free));
+        }
+
+        if (!base_live && !base_saved) {
+            assign_instance_id(state, base_candidate);
+            return;
+        }
+        if (first_free[0]) {
+            assign_instance_id(state, first_free);
+            return;
+        }
+    }
+
+    assign_instance_id(state, base_candidate);
+#endif
+}
+
 void
 app_state_init_instance_id_from_env(void)
 {
@@ -212,16 +378,7 @@ app_state_init_instance_id_from_env(void)
 
     if (inside_prettymux && inside_prettymux[0] &&
         parent_socket && parent_socket[0]) {
-        char parent_id[sizeof(app_state()->instance_id)] = {0};
-        char nested_id[sizeof(app_state()->instance_id)] = {0};
-
-        sanitize_instance_id(env_instance_id, parent_id, sizeof(parent_id));
-        if (!parent_id[0])
-            g_strlcpy(parent_id, PRETTYMUX_DEFAULT_INSTANCE_ID,
-                      sizeof(parent_id));
-
-        g_snprintf(nested_id, sizeof(nested_id), "%s-child", parent_id);
-        app_state_set_instance_id(nested_id);
+        assign_nested_child_instance_id(app_state(), env_instance_id);
         return;
     }
 

@@ -222,6 +222,13 @@ test_sidebar_ui_sections = executable('test_sidebar_ui_sections',
 )
 test('sidebar-ui-sections', test_sidebar_ui_sections)
 
+test_ghostty_actions_progress = executable('test_ghostty_actions_progress',
+  files('test_ghostty_actions_progress.c', 'ghostty_actions.c'),
+  dependencies: [gtk4, glib],
+  include_directories: extra_include_dirs,
+)
+test('ghostty-actions-progress', test_ghostty_actions_progress)
+
 test_workspace_layout = executable('test_workspace_layout',
   files('test_workspace_layout.c', 'workspace_layout.c'),
   dependencies: [gtk4],
@@ -262,6 +269,7 @@ if is_linux
   test_workspace_phase4_actions = executable('test_workspace_phase4_actions',
     files('test_workspace_phase4_actions.c',
           'workspace.c',
+          'shortcuts.c',
           'workspace_layout.c',
           'workspace_strip.c'),
     dependencies: [gtk4, adw, json_glib],

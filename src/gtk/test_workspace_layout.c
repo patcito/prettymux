@@ -240,6 +240,76 @@ test_toggle_zoom_strip(void)
     g_free(ws);
 }
 
+/* ── Tests: is_zoomed dispatch ─────────────────────────────────────── */
+
+static void
+test_is_zoomed_null(void)
+{
+    g_assert_false(workspace_layout_is_zoomed(NULL));
+}
+
+static void
+test_is_zoomed_classic_not_zoomed(void)
+{
+    Workspace *ws = make_workspace(WORKSPACE_LAYOUT_CLASSIC);
+    ws->zoomed = FALSE;
+    g_assert_false(workspace_layout_is_zoomed(ws));
+    g_free(ws);
+}
+
+static void
+test_is_zoomed_classic_zoomed(void)
+{
+    Workspace *ws = make_workspace(WORKSPACE_LAYOUT_CLASSIC);
+    ws->zoomed = TRUE;
+    g_assert_true(workspace_layout_is_zoomed(ws));
+    g_free(ws);
+}
+
+static void
+test_is_zoomed_strip_no_state(void)
+{
+    Workspace *ws = make_workspace(WORKSPACE_LAYOUT_STRIP);
+    g_assert_false(workspace_layout_is_zoomed(ws));
+    g_free(ws);
+}
+
+static void
+test_is_zoomed_strip_not_maximized(void)
+{
+    Workspace *ws = make_workspace(WORKSPACE_LAYOUT_STRIP);
+    WorkspaceStripState state = {0};
+    WorkspaceColumn col = { .notebook = NULL, .target_width = 400,
+                            .current_width = 400.0, .maximized = FALSE };
+    WorkspaceColumn *colp = &col;
+    state.columns = g_ptr_array_new();
+    g_ptr_array_add(state.columns, colp);
+    state.focused_col = 0;
+    ws->strip_state = &state;
+    g_assert_false(workspace_layout_is_zoomed(ws));
+    g_ptr_array_free(state.columns, TRUE);
+    ws->strip_state = NULL;
+    g_free(ws);
+}
+
+static void
+test_is_zoomed_strip_maximized(void)
+{
+    Workspace *ws = make_workspace(WORKSPACE_LAYOUT_STRIP);
+    WorkspaceStripState state = {0};
+    WorkspaceColumn col = { .notebook = NULL, .target_width = 800,
+                            .current_width = 800.0, .maximized = TRUE };
+    WorkspaceColumn *colp = &col;
+    state.columns = g_ptr_array_new();
+    g_ptr_array_add(state.columns, colp);
+    state.focused_col = 0;
+    ws->strip_state = &state;
+    g_assert_true(workspace_layout_is_zoomed(ws));
+    g_ptr_array_free(state.columns, TRUE);
+    ws->strip_state = NULL;
+    g_free(ws);
+}
+
 /* ── Tests: rebuild guardrails ────────────────────────────────────── */
 
 static void
@@ -314,6 +384,18 @@ main(int argc, char **argv)
                     test_toggle_zoom_classic);
     g_test_add_func("/workspace-layout/toggle-zoom/strip",
                     test_toggle_zoom_strip);
+    g_test_add_func("/workspace-layout/is-zoomed/null",
+                    test_is_zoomed_null);
+    g_test_add_func("/workspace-layout/is-zoomed/classic-not-zoomed",
+                    test_is_zoomed_classic_not_zoomed);
+    g_test_add_func("/workspace-layout/is-zoomed/classic-zoomed",
+                    test_is_zoomed_classic_zoomed);
+    g_test_add_func("/workspace-layout/is-zoomed/strip-no-state",
+                    test_is_zoomed_strip_no_state);
+    g_test_add_func("/workspace-layout/is-zoomed/strip-not-maximized",
+                    test_is_zoomed_strip_not_maximized);
+    g_test_add_func("/workspace-layout/is-zoomed/strip-maximized",
+                    test_is_zoomed_strip_maximized);
     g_test_add_func("/workspace-layout/rebuild/null",
                     test_rebuild_null);
     g_test_add_func("/workspace-layout/rebuild/same-mode",

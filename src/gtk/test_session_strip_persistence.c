@@ -36,10 +36,25 @@ test_session_path_for_instance(const char *instance_id)
     return session_get_instance_session_path(instance_id);
 }
 
+static char *
+test_legacy_session_path(void)
+{
+    return g_build_filename(g_get_home_dir(), ".prettymux", "sessions",
+                            "last.json", NULL);
+}
+
 static void
 test_clear_session_file_for_instance(const char *instance_id)
 {
     char *path = test_session_path_for_instance(instance_id);
+    g_remove(path);
+    g_free(path);
+}
+
+static void
+test_clear_legacy_session_file(void)
+{
+    char *path = test_legacy_session_path();
     g_remove(path);
     g_free(path);
 }
@@ -548,6 +563,22 @@ workspace_strip_apply_layout(Workspace *ws)
     strip_apply_layout_calls++;
 }
 
+GtkNotebook *
+workspace_strip_column_focused_notebook(WorkspaceColumn *col)
+{
+    if (!col)
+        return NULL;
+    if (col->panes && col->panes->len > 0) {
+        int pane_idx = CLAMP(col->focused_pane, 0, (int)col->panes->len - 1);
+        GtkWidget *pane_widget = g_ptr_array_index(col->panes, pane_idx);
+        if (GTK_IS_NOTEBOOK(pane_widget))
+            return GTK_NOTEBOOK(pane_widget);
+    }
+    if (GTK_IS_NOTEBOOK(col->notebook))
+        return GTK_NOTEBOOK(col->notebook);
+    return NULL;
+}
+
 void
 workspace_strip_focus_column(Workspace *ws, int col_idx)
 {
@@ -701,6 +732,117 @@ test_save_and_restore_classic_keeps_schema_safe(void)
 }
 
 static void
+test_save_and_restore_strip_with_stacked_column_round_trip(void)
+{
+    SessionTestUi ui;
+    Workspace *saved_ws;
+    WorkspaceStripState *saved_state;
+    WorkspaceColumn *col0;
+    WorkspaceColumn *col1;
+    WorkspaceColumn *col2;
+    JsonObject *saved_root;
+    JsonArray *saved_workspaces;
+    JsonObject *saved_ws_obj;
+    JsonObject *saved_strip_obj;
+    JsonArray *saved_columns;
+    JsonArray *saved_col0_pane_ids;
+    Workspace *restored_ws;
+    WorkspaceStripState *restored_state;
+
+    test_reset_workspaces();
+    test_clear_session_file_for_instance(NULL);
+    ui = test_ui_new();
+
+    saved_ws = test_workspace_new(WORKSPACE_LAYOUT_STRIP, 4, "Stacked Strip WS");
+    saved_state = saved_ws->strip_state;
+    g_ptr_array_add(workspaces, saved_ws);
+
+    g_ptr_array_set_size(saved_state->columns, 0);
+
+    col0 = g_new0(WorkspaceColumn, 1);
+    col0->panes = g_ptr_array_new();
+    g_ptr_array_add(col0->panes, g_ptr_array_index(saved_ws->pane_notebooks, 0));
+    g_ptr_array_add(col0->panes, g_ptr_array_index(saved_ws->pane_notebooks, 1));
+    col0->focused_pane = 1;
+    col0->target_width = 640;
+    col0->current_width = 640.0;
+    col0->maximized = FALSE;
+    col0->notebook = g_ptr_array_index(col0->panes, 0);
+    g_ptr_array_add(saved_state->columns, col0);
+
+    col1 = g_new0(WorkspaceColumn, 1);
+    col1->panes = g_ptr_array_new();
+    g_ptr_array_add(col1->panes, g_ptr_array_index(saved_ws->pane_notebooks, 2));
+    col1->focused_pane = 0;
+    col1->target_width = 700;
+    col1->current_width = 700.0;
+    col1->maximized = TRUE;
+    col1->notebook = g_ptr_array_index(col1->panes, 0);
+    g_ptr_array_add(saved_state->columns, col1);
+
+    col2 = g_new0(WorkspaceColumn, 1);
+    col2->panes = g_ptr_array_new();
+    g_ptr_array_add(col2->panes, g_ptr_array_index(saved_ws->pane_notebooks, 3));
+    col2->focused_pane = 0;
+    col2->target_width = 820;
+    col2->current_width = 820.0;
+    col2->maximized = FALSE;
+    col2->notebook = g_ptr_array_index(col2->panes, 0);
+    g_ptr_array_add(saved_state->columns, col2);
+
+    saved_state->focused_col = 1;
+
+    session_save(ui.window, ui.browser_notebook, ui.terminal_stack, ui.workspace_list);
+
+    saved_root = test_load_saved_session_for_instance(NULL);
+    saved_workspaces = json_object_get_array_member(saved_root, "workspaces");
+    saved_ws_obj = json_array_get_object_element(saved_workspaces, 0);
+    saved_strip_obj = json_object_get_object_member(saved_ws_obj, "stripState");
+    saved_columns = json_object_get_array_member(saved_strip_obj, "columns");
+    saved_col0_pane_ids = json_object_get_array_member(
+        json_array_get_object_element(saved_columns, 0), "paneIds");
+
+    g_assert_cmpuint(json_array_get_length(saved_columns), ==, 3);
+    g_assert_cmpuint(json_array_get_length(saved_col0_pane_ids), ==, 2);
+    g_assert_cmpint((int)json_object_get_int_member(
+                        json_array_get_object_element(saved_columns, 0), "focusedPane"),
+                    ==, 1);
+    g_assert_cmpint((int)json_object_get_int_member(saved_strip_obj, "focusedColumn"), ==, 1);
+
+    json_object_unref(saved_root);
+
+    test_reset_workspaces();
+    g_ptr_array_add(workspaces,
+                    test_workspace_new(WORKSPACE_LAYOUT_CLASSIC, 1, "Bootstrap"));
+
+    session_restore(ui.window,
+                    ui.browser_notebook,
+                    ui.terminal_stack,
+                    ui.workspace_list,
+                    NULL,
+                    NULL);
+
+    restored_ws = g_ptr_array_index(workspaces, 0);
+    restored_state = restored_ws->strip_state;
+
+    g_assert_nonnull(restored_state);
+    g_assert_cmpint(restored_ws->layout_mode, ==, WORKSPACE_LAYOUT_STRIP);
+    g_assert_cmpuint(restored_ws->pane_notebooks->len, ==, 4);
+    g_assert_cmpuint(restored_state->columns->len, ==, 3);
+    g_assert_cmpuint(((WorkspaceColumn *)g_ptr_array_index(restored_state->columns, 0))->panes->len, ==, 2);
+    g_assert_cmpuint(((WorkspaceColumn *)g_ptr_array_index(restored_state->columns, 1))->panes->len, ==, 1);
+    g_assert_cmpuint(((WorkspaceColumn *)g_ptr_array_index(restored_state->columns, 2))->panes->len, ==, 1);
+
+    g_assert_cmpint(((WorkspaceColumn *)g_ptr_array_index(restored_state->columns, 0))->focused_pane, ==, 1);
+    g_assert_cmpint(((WorkspaceColumn *)g_ptr_array_index(restored_state->columns, 0))->target_width, ==, 640);
+    g_assert_cmpint(((WorkspaceColumn *)g_ptr_array_index(restored_state->columns, 1))->target_width, ==, 700);
+    g_assert_true(((WorkspaceColumn *)g_ptr_array_index(restored_state->columns, 1))->maximized);
+    g_assert_cmpint(restored_state->focused_col, ==, 1);
+
+    test_ui_free(&ui);
+}
+
+static void
 test_instance_session_path_is_sanitized_and_distinct(void)
 {
     char *default_path = session_get_instance_session_path(NULL);
@@ -711,7 +853,8 @@ test_instance_session_path_is_sanitized_and_distinct(void)
     g_assert_nonnull(alpha_path);
     g_assert_nonnull(alpha_sanitized);
 
-    g_assert_true(g_str_has_suffix(default_path, "/.prettymux/sessions/last.json"));
+    g_assert_true(g_str_has_suffix(default_path,
+                                   "/.prettymux/sessions/last-default.json"));
     g_assert_true(g_str_has_suffix(alpha_path, "/.prettymux/sessions/last-alpha.json"));
     g_assert_true(g_str_has_suffix(alpha_sanitized, "/.prettymux/sessions/last-alpha.json"));
     g_assert_cmpstr(default_path, !=, alpha_path);
@@ -847,9 +990,14 @@ test_non_default_restore_does_not_fallback_to_default_session(void)
     const char *instance_id = "phase6-nondefault";
     SessionTestUi ui;
     Workspace *restored_ws;
+    char *default_path;
+    char *legacy_path;
+    char *saved_json = NULL;
+    gsize saved_len = 0;
 
     test_clear_session_file_for_instance(NULL);
     test_clear_session_file_for_instance(instance_id);
+    test_clear_legacy_session_file();
     ui = test_ui_new();
 
     test_reset_workspaces();
@@ -857,6 +1005,14 @@ test_non_default_restore_does_not_fallback_to_default_session(void)
                     test_workspace_new(WORKSPACE_LAYOUT_CLASSIC, 1, "Default Session"));
     session_save_for_instance(NULL, ui.window, ui.browser_notebook,
                               ui.terminal_stack, ui.workspace_list);
+
+    default_path = session_get_instance_session_path(NULL);
+    legacy_path = test_legacy_session_path();
+    g_assert_true(g_file_get_contents(default_path, &saved_json, &saved_len, NULL));
+    g_assert_true(g_file_set_contents(legacy_path, saved_json, saved_len, NULL));
+    g_assert_cmpint(g_remove(default_path), ==, 0);
+    g_free(saved_json);
+    saved_json = NULL;
 
     g_assert_true(session_exists_for_instance(NULL));
     g_assert_false(session_exists_for_instance(instance_id));
@@ -870,6 +1026,50 @@ test_non_default_restore_does_not_fallback_to_default_session(void)
     g_assert_nonnull(restored_ws);
     g_assert_cmpstr(restored_ws->name, ==, "Bootstrap");
 
+    g_free(default_path);
+    g_free(legacy_path);
+    test_ui_free(&ui);
+}
+
+static void
+test_default_restore_falls_back_to_legacy_session(void)
+{
+    SessionTestUi ui;
+    Workspace *restored_ws;
+    char *default_path;
+    char *legacy_path;
+    char *saved_json = NULL;
+    gsize saved_len = 0;
+
+    test_clear_session_file_for_instance(NULL);
+    test_clear_legacy_session_file();
+    ui = test_ui_new();
+
+    test_reset_workspaces();
+    g_ptr_array_add(workspaces,
+                    test_workspace_new(WORKSPACE_LAYOUT_CLASSIC, 1,
+                                       "Legacy Default Session"));
+    session_save_for_instance(NULL, ui.window, ui.browser_notebook,
+                              ui.terminal_stack, ui.workspace_list);
+
+    default_path = session_get_instance_session_path(NULL);
+    legacy_path = test_legacy_session_path();
+    g_assert_true(g_file_get_contents(default_path, &saved_json, &saved_len, NULL));
+    g_assert_true(g_file_set_contents(legacy_path, saved_json, saved_len, NULL));
+    g_assert_cmpint(g_remove(default_path), ==, 0);
+    g_free(saved_json);
+
+    test_reset_workspaces();
+    g_ptr_array_add(workspaces,
+                    test_workspace_new(WORKSPACE_LAYOUT_CLASSIC, 1, "Bootstrap"));
+    session_restore_for_instance(NULL, ui.window, ui.browser_notebook,
+                                 ui.terminal_stack, ui.workspace_list, NULL, NULL);
+    restored_ws = test_first_workspace();
+    g_assert_nonnull(restored_ws);
+    g_assert_cmpstr(restored_ws->name, ==, "Legacy Default Session");
+
+    g_free(default_path);
+    g_free(legacy_path);
     test_ui_free(&ui);
 }
 
@@ -889,6 +1089,8 @@ main(int argc, char **argv)
 
     g_test_add_func("/session-strip/integration/save-restore-strip-round-trip",
                     test_save_and_restore_strip_round_trip);
+    g_test_add_func("/session-strip/integration/save-restore-strip-stacked-round-trip",
+                    test_save_and_restore_strip_with_stacked_column_round_trip);
     g_test_add_func("/session-strip/integration/save-restore-classic-safe",
                     test_save_and_restore_classic_keeps_schema_safe);
     g_test_add_func("/session-strip/instance/path-sanitized-distinct",
@@ -899,6 +1101,8 @@ main(int argc, char **argv)
                     test_session_same_instance_path_survives_restart);
     g_test_add_func("/session-strip/instance/nondefault-no-default-fallback",
                     test_non_default_restore_does_not_fallback_to_default_session);
+    g_test_add_func("/session-strip/instance/default-legacy-fallback",
+                    test_default_restore_falls_back_to_legacy_session);
 
     return g_test_run();
 }

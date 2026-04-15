@@ -20,6 +20,8 @@ typedef struct {
     Workspace *workspace;
 } SidebarCtxDataMirror;
 
+static int session_queue_save_call_count = 0;
+
 /* ---- External stubs required by workspace.c ---- */
 
 ghostty_app_t g_ghostty_app = NULL;
@@ -112,6 +114,7 @@ resize_overlay_connect_paned(GtkPaned *paned)
 void
 session_queue_save(void)
 {
+    session_queue_save_call_count++;
 }
 
 void
@@ -496,6 +499,7 @@ reset_workspace_globals(void)
     current_workspace = 0;
     g_terminal_stack = NULL;
     g_workspace_list = NULL;
+    session_queue_save_call_count = 0;
 }
 
 static GtkEventController *
@@ -649,6 +653,16 @@ init_two_workspace_runtime(GtkWidget **terminal_stack_out,
         *workspace_list_out = workspace_list;
 }
 
+static const ShortcutDef *
+default_shortcut_for_action(const char *action)
+{
+    for (int i = 0; default_shortcuts[i].action != NULL; i++) {
+        if (g_strcmp0(default_shortcuts[i].action, action) == 0)
+            return &default_shortcuts[i];
+    }
+    return NULL;
+}
+
 /* ---- Phase 4 API tests ---- */
 
 static void
@@ -672,17 +686,25 @@ test_split_current_for_layout_strip_horizontal_inserts_column(void)
 }
 
 static void
-test_split_current_for_layout_strip_vertical_is_rejected(void)
+test_split_current_for_layout_strip_vertical_stacks_in_column(void)
 {
     require_display_or_skip();
 
     Workspace *ws = make_strip_workspace(1);
 
-    g_assert_false(workspace_split_current_for_layout(ws,
-                                                      GTK_ORIENTATION_VERTICAL,
-                                                      NULL));
     g_assert_cmpuint(ws->pane_notebooks->len, ==, 1);
     g_assert_cmpuint(ws->strip_state->columns->len, ==, 1);
+
+    g_assert_true(workspace_split_current_for_layout(ws,
+                                                     GTK_ORIENTATION_VERTICAL,
+                                                     NULL));
+    g_assert_cmpuint(ws->pane_notebooks->len, ==, 2);
+    g_assert_cmpuint(ws->strip_state->columns->len, ==, 1);
+
+    WorkspaceColumn *col = g_ptr_array_index(ws->strip_state->columns, 0);
+    g_assert_nonnull(col->panes);
+    g_assert_cmpuint(col->panes->len, ==, 2);
+    g_assert_cmpint(col->focused_pane, ==, 1);
 
     free_workspace_fixture(ws);
 }
@@ -706,6 +728,45 @@ test_close_current_for_layout_strip_removes_active_column(void)
 }
 
 static void
+test_close_current_for_layout_strip_stacked_pane_keeps_column(void)
+{
+    require_display_or_skip();
+
+    Workspace *ws = make_strip_workspace(2);
+    WorkspaceColumn *col0;
+    WorkspaceColumn *col1;
+    GtkNotebook *remaining_col0;
+    GtkNotebook *other_col;
+
+    workspace_strip_focus_column(ws, 0);
+    g_assert_true(workspace_split_current_for_layout(ws,
+                                                     GTK_ORIENTATION_VERTICAL,
+                                                     NULL));
+    g_assert_cmpuint(ws->pane_notebooks->len, ==, 3);
+    g_assert_cmpuint(ws->strip_state->columns->len, ==, 2);
+    g_assert_cmpint(workspace_strip_column_pane_count(ws, 0), ==, 2);
+    g_assert_cmpint(workspace_strip_column_pane_count(ws, 1), ==, 1);
+
+    col1 = g_ptr_array_index(ws->strip_state->columns, 1);
+    other_col = workspace_strip_column_focused_notebook(col1);
+
+    g_assert_true(workspace_close_current_for_layout(ws));
+    g_assert_cmpuint(ws->pane_notebooks->len, ==, 2);
+    g_assert_cmpuint(ws->strip_state->columns->len, ==, 2);
+    g_assert_cmpint(ws->strip_state->focused_col, ==, 0);
+    g_assert_cmpint(workspace_strip_column_pane_count(ws, 0), ==, 1);
+    g_assert_cmpint(workspace_strip_column_pane_count(ws, 1), ==, 1);
+
+    col0 = g_ptr_array_index(ws->strip_state->columns, 0);
+    remaining_col0 = workspace_strip_column_focused_notebook(col0);
+    g_assert_nonnull(remaining_col0);
+    g_assert_true(ws->active_pane == remaining_col0);
+    g_assert_true(ws->active_pane != other_col);
+
+    free_workspace_fixture(ws);
+}
+
+static void
 test_close_current_for_layout_strip_single_column_fails(void)
 {
     require_display_or_skip();
@@ -717,6 +778,43 @@ test_close_current_for_layout_strip_single_column_fails(void)
     g_assert_cmpuint(ws->strip_state->columns->len, ==, 1);
 
     free_workspace_fixture(ws);
+}
+
+static void
+test_strip_shortcuts_match_phase4_contract(void)
+{
+    const ShortcutDef *split_horizontal;
+    const ShortcutDef *focus_left;
+    const ShortcutDef *focus_right;
+    const ShortcutDef *focus_up;
+    const ShortcutDef *focus_down;
+
+    split_horizontal = default_shortcut_for_action("split.horizontal");
+    focus_left = default_shortcut_for_action("pane.focus.left");
+    focus_right = default_shortcut_for_action("pane.focus.right");
+    focus_up = default_shortcut_for_action("pane.focus.up");
+    focus_down = default_shortcut_for_action("pane.focus.down");
+
+    g_assert_nonnull(split_horizontal);
+    g_assert_cmpint(split_horizontal->keyval, ==, GDK_KEY_Return);
+    g_assert_cmpuint(split_horizontal->mods,
+                     ==, GDK_CONTROL_MASK | GDK_SHIFT_MASK);
+
+    g_assert_nonnull(focus_left);
+    g_assert_cmpint(focus_left->keyval, ==, GDK_KEY_Left);
+    g_assert_cmpuint(focus_left->mods, ==, GDK_CONTROL_MASK | GDK_SHIFT_MASK);
+
+    g_assert_nonnull(focus_right);
+    g_assert_cmpint(focus_right->keyval, ==, GDK_KEY_Right);
+    g_assert_cmpuint(focus_right->mods, ==, GDK_CONTROL_MASK | GDK_SHIFT_MASK);
+
+    g_assert_nonnull(focus_up);
+    g_assert_cmpint(focus_up->keyval, ==, GDK_KEY_Up);
+    g_assert_cmpuint(focus_up->mods, ==, GDK_CONTROL_MASK | GDK_SHIFT_MASK);
+
+    g_assert_nonnull(focus_down);
+    g_assert_cmpint(focus_down->keyval, ==, GDK_KEY_Down);
+    g_assert_cmpuint(focus_down->mods, ==, GDK_CONTROL_MASK | GDK_SHIFT_MASK);
 }
 
 static void
@@ -1148,6 +1246,157 @@ test_workspace_sidebar_card_reorder_keeps_drop_controller_available(void)
 }
 
 static void
+test_workspace_sidebar_card_double_click_starts_inline_rename(void)
+{
+    GtkWidget *terminal_stack;
+    GtkWidget *workspace_list;
+    Workspace *target_ws;
+    GtkListBoxRow *row;
+    GtkWidget *card;
+    GtkWidget *header_box;
+    GtkGestureClick *click;
+    GtkWidget *rename_entry;
+
+    require_display_or_skip();
+    reset_workspace_globals();
+
+    init_two_workspace_runtime(&terminal_stack, &workspace_list);
+    workspace_switch(0, terminal_stack, workspace_list);
+    g_assert_cmpint(current_workspace, ==, 0);
+
+    target_ws = g_ptr_array_index(workspaces, 1);
+    row = gtk_list_box_get_row_at_index(GTK_LIST_BOX(workspace_list), 1);
+    g_assert_nonnull(row);
+    card = gtk_list_box_row_get_child(row);
+    g_assert_nonnull(card);
+    header_box = g_object_get_data(G_OBJECT(card), "header-box");
+    g_assert_nonnull(header_box);
+
+    click = GTK_GESTURE_CLICK(g_object_get_data(G_OBJECT(header_box),
+                                                "rename-click-controller"));
+    g_assert_true(GTK_IS_GESTURE_CLICK(click));
+    g_signal_emit_by_name(click, "pressed", 2, 0.0, 0.0);
+
+    rename_entry = g_object_get_data(G_OBJECT(header_box), "rename-entry");
+    g_assert_true(GTK_IS_ENTRY(rename_entry));
+    g_assert_cmpint(current_workspace, ==, 0);
+    g_assert_cmpstr(target_ws->name, ==, "Workspace 2");
+    g_assert_cmpint(session_queue_save_call_count, ==, 0);
+
+    reset_workspace_globals();
+}
+
+static void
+test_workspace_sidebar_card_rename_focus_leave_commits_and_saves(void)
+{
+    GtkWidget *terminal_stack;
+    GtkWidget *workspace_list;
+    Workspace *target_ws;
+    GtkListBoxRow *row;
+    GtkWidget *card;
+    GtkWidget *header_box;
+    GtkWidget *rename_entry;
+    GtkWidget *rename_label;
+    GtkGestureClick *click;
+    GtkEventController *focus_ctrl;
+
+    require_display_or_skip();
+    reset_workspace_globals();
+
+    init_two_workspace_runtime(&terminal_stack, &workspace_list);
+    workspace_switch(0, terminal_stack, workspace_list);
+
+    target_ws = g_ptr_array_index(workspaces, 1);
+    row = gtk_list_box_get_row_at_index(GTK_LIST_BOX(workspace_list), 1);
+    g_assert_nonnull(row);
+    card = gtk_list_box_row_get_child(row);
+    g_assert_nonnull(card);
+    header_box = g_object_get_data(G_OBJECT(card), "header-box");
+    g_assert_nonnull(header_box);
+    rename_label = target_ws->sidebar_label;
+    g_assert_true(GTK_IS_LABEL(rename_label));
+
+    click = GTK_GESTURE_CLICK(g_object_get_data(G_OBJECT(header_box),
+                                                "rename-click-controller"));
+    g_assert_true(GTK_IS_GESTURE_CLICK(click));
+    g_signal_emit_by_name(click, "pressed", 2, 0.0, 0.0);
+
+    rename_entry = g_object_get_data(G_OBJECT(header_box), "rename-entry");
+    g_assert_true(GTK_IS_ENTRY(rename_entry));
+    gtk_editable_set_text(GTK_EDITABLE(rename_entry), "renamed sidebar");
+
+    focus_ctrl = g_object_get_data(G_OBJECT(rename_entry),
+                                   "rename-focus-controller");
+    g_assert_true(GTK_IS_EVENT_CONTROLLER_FOCUS(focus_ctrl));
+    g_signal_emit_by_name(focus_ctrl, "leave");
+
+    g_assert_null(g_object_get_data(G_OBJECT(header_box), "rename-entry"));
+    g_assert_cmpstr(target_ws->name, ==, "renamed sidebar");
+    g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(rename_label)), ==,
+                    "renamed sidebar");
+    g_assert_cmpint(session_queue_save_call_count, ==, 1);
+    g_assert_cmpint(current_workspace, ==, 0);
+
+    reset_workspace_globals();
+}
+
+static void
+test_workspace_sidebar_card_rename_escape_cancels_without_save(void)
+{
+    GtkWidget *terminal_stack;
+    GtkWidget *workspace_list;
+    Workspace *target_ws;
+    GtkListBoxRow *row;
+    GtkWidget *card;
+    GtkWidget *header_box;
+    GtkWidget *rename_entry;
+    GtkWidget *rename_label;
+    GtkGestureClick *click;
+    GtkEventController *key_ctrl;
+    gboolean handled = FALSE;
+
+    require_display_or_skip();
+    reset_workspace_globals();
+
+    init_two_workspace_runtime(&terminal_stack, &workspace_list);
+    workspace_switch(0, terminal_stack, workspace_list);
+
+    target_ws = g_ptr_array_index(workspaces, 1);
+    row = gtk_list_box_get_row_at_index(GTK_LIST_BOX(workspace_list), 1);
+    g_assert_nonnull(row);
+    card = gtk_list_box_row_get_child(row);
+    g_assert_nonnull(card);
+    header_box = g_object_get_data(G_OBJECT(card), "header-box");
+    g_assert_nonnull(header_box);
+    rename_label = target_ws->sidebar_label;
+    g_assert_true(GTK_IS_LABEL(rename_label));
+
+    click = GTK_GESTURE_CLICK(g_object_get_data(G_OBJECT(header_box),
+                                                "rename-click-controller"));
+    g_assert_true(GTK_IS_GESTURE_CLICK(click));
+    g_signal_emit_by_name(click, "pressed", 2, 0.0, 0.0);
+
+    rename_entry = g_object_get_data(G_OBJECT(header_box), "rename-entry");
+    g_assert_true(GTK_IS_ENTRY(rename_entry));
+    gtk_editable_set_text(GTK_EDITABLE(rename_entry), "discard me");
+
+    key_ctrl = g_object_get_data(G_OBJECT(rename_entry), "rename-key-controller");
+    g_assert_true(GTK_IS_EVENT_CONTROLLER_KEY(key_ctrl));
+    g_signal_emit_by_name(key_ctrl, "key-pressed",
+                          GDK_KEY_Escape, 0u, (GdkModifierType)0, &handled);
+
+    g_assert_true(handled);
+    g_assert_null(g_object_get_data(G_OBJECT(header_box), "rename-entry"));
+    g_assert_cmpstr(target_ws->name, ==, "Workspace 2");
+    g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(rename_label)), ==,
+                    "Workspace 2");
+    g_assert_cmpint(session_queue_save_call_count, ==, 0);
+    g_assert_cmpint(current_workspace, ==, 0);
+
+    reset_workspace_globals();
+}
+
+static void
 test_workspace_detect_git_callback_ignores_freed_workspace(void)
 {
     Workspace *ws;
@@ -1294,6 +1543,167 @@ test_workspace_import_preserves_serial_on_collision(void)
     reset_workspace_globals();
 }
 
+/* ---- Phase 4 new behavior tests ---- */
+
+static Workspace *
+make_strip_workspace_with_vertical_split(int column_count)
+{
+    Workspace *ws = make_strip_workspace(column_count);
+
+    GtkNotebook *new_nb = make_notebook_with_terminal("vsplit");
+    g_ptr_array_add(ws->pane_notebooks, new_nb);
+    g_ptr_array_add(ws->terminals, gtk_notebook_get_nth_page(new_nb, 0));
+
+    workspace_strip_split_vertical_in_column(ws, GTK_WIDGET(new_nb));
+    return ws;
+}
+
+static void
+test_strip_vertical_split_pane_focus_up_down(void)
+{
+    require_display_or_skip();
+
+    Workspace *ws = make_strip_workspace_with_vertical_split(1);
+    WorkspaceColumn *col = g_ptr_array_index(ws->strip_state->columns, 0);
+    GtkNotebook *top_pane;
+    GtkNotebook *bottom_pane;
+
+    g_assert_nonnull(col->panes);
+    g_assert_cmpuint(col->panes->len, ==, 2);
+    g_assert_cmpint(col->focused_pane, ==, 1);
+    top_pane = g_ptr_array_index(col->panes, 0);
+    bottom_pane = g_ptr_array_index(col->panes, 1);
+
+    g_assert_true(workspace_strip_focus_pane_up(ws));
+    g_assert_cmpint(col->focused_pane, ==, 0);
+    g_assert_true(ws->active_pane == top_pane);
+
+    g_assert_false(workspace_strip_focus_pane_up(ws));
+    g_assert_cmpint(col->focused_pane, ==, 0);
+    g_assert_true(ws->active_pane == top_pane);
+
+    g_assert_true(workspace_strip_focus_pane_down(ws));
+    g_assert_cmpint(col->focused_pane, ==, 1);
+    g_assert_true(ws->active_pane == bottom_pane);
+
+    g_assert_false(workspace_strip_focus_pane_down(ws));
+    g_assert_cmpint(col->focused_pane, ==, 1);
+    g_assert_true(ws->active_pane == bottom_pane);
+
+    free_workspace_fixture(ws);
+}
+
+static void
+test_strip_tab_switch_within_pane(void)
+{
+    require_display_or_skip();
+
+    Workspace *ws = make_strip_workspace(1);
+    GtkNotebook *nb = ws->active_pane;
+
+    GtkWidget *term2 = ghostty_terminal_new(NULL);
+    GtkWidget *tab2 = gtk_label_new("t1");
+    gtk_notebook_append_page(nb, term2, tab2);
+    g_ptr_array_add(ws->terminals, term2);
+    g_assert_cmpint(gtk_notebook_get_n_pages(nb), ==, 2);
+
+    gtk_notebook_set_current_page(nb, 0);
+    g_assert_true(workspace_tab_next_for_layout(ws));
+    g_assert_cmpint(gtk_notebook_get_current_page(nb), ==, 1);
+
+    g_assert_true(workspace_tab_prev_for_layout(ws));
+    g_assert_cmpint(gtk_notebook_get_current_page(nb), ==, 0);
+
+    free_workspace_fixture(ws);
+}
+
+static void
+test_strip_focus_left_right_navigates_columns(void)
+{
+    require_display_or_skip();
+
+    Workspace *ws = make_strip_workspace(3);
+
+    workspace_strip_focus_column(ws, 0);
+    g_assert_cmpint(ws->strip_state->focused_col, ==, 0);
+
+    g_assert_true(workspace_focus_next_for_layout(ws));
+    g_assert_cmpint(ws->strip_state->focused_col, ==, 1);
+
+    g_assert_true(workspace_focus_next_for_layout(ws));
+    g_assert_cmpint(ws->strip_state->focused_col, ==, 2);
+
+    g_assert_true(workspace_focus_prev_for_layout(ws));
+    g_assert_cmpint(ws->strip_state->focused_col, ==, 1);
+
+    g_assert_true(workspace_focus_prev_for_layout(ws));
+    g_assert_cmpint(ws->strip_state->focused_col, ==, 0);
+
+    free_workspace_fixture(ws);
+}
+
+static void
+test_strip_focus_does_not_skip_columns(void)
+{
+    require_display_or_skip();
+
+    Workspace *ws = make_strip_workspace(5);
+    workspace_strip_focus_column(ws, 0);
+
+    for (int i = 0; i < 5; i++) {
+        g_assert_cmpint(ws->strip_state->focused_col, ==, i);
+        if (i < 4)
+            g_assert_true(workspace_focus_next_for_layout(ws));
+    }
+
+    for (int i = 4; i >= 0; i--) {
+        g_assert_cmpint(ws->strip_state->focused_col, ==, i);
+        if (i > 0)
+            g_assert_true(workspace_focus_prev_for_layout(ws));
+    }
+
+    free_workspace_fixture(ws);
+}
+
+static void
+test_strip_vertical_split_keeps_column_count(void)
+{
+    require_display_or_skip();
+
+    Workspace *ws = make_strip_workspace(2);
+    g_assert_cmpuint(ws->strip_state->columns->len, ==, 2);
+    g_assert_cmpuint(ws->pane_notebooks->len, ==, 2);
+
+    workspace_strip_focus_column(ws, 0);
+    g_assert_true(workspace_split_current_for_layout(ws,
+                                                     GTK_ORIENTATION_VERTICAL,
+                                                     NULL));
+
+    g_assert_cmpuint(ws->strip_state->columns->len, ==, 2);
+    g_assert_cmpuint(ws->pane_notebooks->len, ==, 3);
+
+    WorkspaceColumn *col0 = g_ptr_array_index(ws->strip_state->columns, 0);
+    g_assert_cmpuint(col0->panes->len, ==, 2);
+
+    WorkspaceColumn *col1 = g_ptr_array_index(ws->strip_state->columns, 1);
+    g_assert_cmpuint(col1->panes->len, ==, 1);
+
+    free_workspace_fixture(ws);
+}
+
+static void
+test_strip_column_pane_count_api(void)
+{
+    require_display_or_skip();
+
+    Workspace *ws = make_strip_workspace_with_vertical_split(2);
+
+    g_assert_cmpint(workspace_strip_column_pane_count(ws, 0), ==, 2);
+    g_assert_cmpint(workspace_strip_column_pane_count(ws, 1), ==, 1);
+
+    free_workspace_fixture(ws);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1302,13 +1712,17 @@ main(int argc, char **argv)
 
     g_test_add_func("/workspace-phase4/split/strip-horizontal",
                     test_split_current_for_layout_strip_horizontal_inserts_column);
-    g_test_add_func("/workspace-phase4/split/strip-vertical-rejected",
-                    test_split_current_for_layout_strip_vertical_is_rejected);
+    g_test_add_func("/workspace-phase4/split/strip-vertical-stacks-in-column",
+                    test_split_current_for_layout_strip_vertical_stacks_in_column);
 
     g_test_add_func("/workspace-phase4/close/strip-removes-active-column",
                     test_close_current_for_layout_strip_removes_active_column);
+    g_test_add_func("/workspace-phase4/close/strip-stacked-pane-keeps-column",
+                    test_close_current_for_layout_strip_stacked_pane_keeps_column);
     g_test_add_func("/workspace-phase4/close/strip-single-column-fails",
                     test_close_current_for_layout_strip_single_column_fails);
+    g_test_add_func("/workspace-phase4/shortcuts/strip-contract",
+                    test_strip_shortcuts_match_phase4_contract);
     g_test_add_func("/workspace-phase4/close/classic-collapses-tree",
                     test_close_current_for_layout_classic_collapses_tree);
 
@@ -1318,6 +1732,19 @@ main(int argc, char **argv)
                     test_focus_next_prev_for_layout_strip_single_column_noop_success);
     g_test_add_func("/workspace-phase4/focus/classic-next-prev",
                     test_focus_next_prev_for_layout_classic_navigates_tabs);
+
+    g_test_add_func("/workspace-phase4/split/strip-vertical-stacks-panes",
+                    test_strip_vertical_split_keeps_column_count);
+    g_test_add_func("/workspace-phase4/focus/strip-pane-up-down",
+                    test_strip_vertical_split_pane_focus_up_down);
+    g_test_add_func("/workspace-phase4/tab/strip-tab-switch-within-pane",
+                    test_strip_tab_switch_within_pane);
+    g_test_add_func("/workspace-phase4/focus/strip-left-right-navigates-columns",
+                    test_strip_focus_left_right_navigates_columns);
+    g_test_add_func("/workspace-phase4/focus/strip-does-not-skip-columns",
+                    test_strip_focus_does_not_skip_columns);
+    g_test_add_func("/workspace-phase4/strip/column-pane-count-api",
+                    test_strip_column_pane_count_api);
     g_test_add_func("/workspace-phase7/status/sorted-order",
                     test_workspace_status_entries_sorted_attention_then_recency);
     g_test_add_func("/workspace-phase7/status/clear-entry",
@@ -1338,6 +1765,12 @@ main(int argc, char **argv)
                     test_workspace_sidebar_card_delete_action_removes_workspace);
     g_test_add_func("/workspace-interactions/card/reorder-keeps-drop-controller",
                     test_workspace_sidebar_card_reorder_keeps_drop_controller_available);
+    g_test_add_func("/workspace-interactions/card/rename-double-click-starts-inline",
+                    test_workspace_sidebar_card_double_click_starts_inline_rename);
+    g_test_add_func("/workspace-interactions/card/rename-focus-leave-commits",
+                    test_workspace_sidebar_card_rename_focus_leave_commits_and_saves);
+    g_test_add_func("/workspace-interactions/card/rename-escape-cancels",
+                    test_workspace_sidebar_card_rename_escape_cancels_without_save);
     g_test_add_func("/workspace-regressions/git-detect/freed-workspace-callback",
                     test_workspace_detect_git_callback_ignores_freed_workspace);
     g_test_add_func("/workspace-phase10/attach/inserts-at-target-index",

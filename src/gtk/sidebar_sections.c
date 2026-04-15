@@ -232,9 +232,13 @@ sidebar_ui_build_progress_section(GtkWidget *section_label,
         } else if (progress_state == 4) {
             gtk_label_set_text(GTK_LABEL(section_label), "p|| [....]");
             gtk_widget_set_tooltip_text(section_label, "Progress paused");
+        } else if (progress_state == 3) {
+            gtk_label_set_text(GTK_LABEL(section_label), "p~ [....]");
+            gtk_widget_set_tooltip_text(section_label,
+                                        "Progress indeterminate");
         } else {
             gtk_label_set_text(GTK_LABEL(section_label), "p [....]");
-            gtk_widget_set_tooltip_text(section_label, "Progress in progress");
+            gtk_widget_set_tooltip_text(section_label, "Progress");
         }
         gtk_widget_set_visible(section_label, TRUE);
         return;
@@ -254,6 +258,10 @@ sidebar_ui_build_progress_section(GtkWidget *section_label,
         g_snprintf(line_buf, sizeof(line_buf), "p! [%s] %d%%",
                    bar, progress_percent);
         gtk_widget_set_tooltip_text(section_label, "Progress error");
+    } else if (progress_state == 3) {
+        g_snprintf(line_buf, sizeof(line_buf), "p~ [%s] %d%%",
+                   bar, progress_percent);
+        gtk_widget_set_tooltip_text(section_label, "Progress indeterminate");
     } else {
         g_snprintf(line_buf, sizeof(line_buf), "p [%s] %d%%",
                    bar, progress_percent);

@@ -30,7 +30,52 @@
 static void
 workspace_column_free(gpointer data)
 {
-    g_free(data);
+    WorkspaceColumn *col = data;
+    if (col && col->panes)
+        g_ptr_array_unref(col->panes);
+    g_free(col);
+}
+
+GtkNotebook *
+workspace_strip_column_focused_notebook(WorkspaceColumn *col)
+{
+    if (!col)
+        return NULL;
+    if (col->panes && col->panes->len > 0) {
+        int idx = CLAMP(col->focused_pane, 0, (int)col->panes->len - 1);
+        GtkWidget *nb = g_ptr_array_index(col->panes, idx);
+        if (nb && GTK_IS_NOTEBOOK(nb))
+            return GTK_NOTEBOOK(nb);
+    }
+    if (col->notebook && GTK_IS_NOTEBOOK(col->notebook))
+        return GTK_NOTEBOOK(col->notebook);
+    return NULL;
+}
+
+static gboolean
+workspace_column_contains_notebook(WorkspaceColumn *col, GtkWidget *notebook)
+{
+    if (!col || !notebook)
+        return FALSE;
+    if (col->panes) {
+        for (guint i = 0; i < col->panes->len; i++) {
+            if (g_ptr_array_index(col->panes, i) == notebook)
+                return TRUE;
+        }
+    }
+    return col->notebook == notebook;
+}
+
+static int
+workspace_column_pane_index(WorkspaceColumn *col, GtkWidget *notebook)
+{
+    if (!col || !notebook || !col->panes)
+        return -1;
+    for (guint i = 0; i < col->panes->len; i++) {
+        if (g_ptr_array_index(col->panes, i) == notebook)
+            return (int)i;
+    }
+    return -1;
 }
 
 static void
@@ -191,7 +236,7 @@ workspace_strip_find_column_for_notebook(Workspace *ws, GtkWidget *notebook)
     state = ws->strip_state;
     for (guint i = 0; i < state->columns->len; i++) {
         WorkspaceColumn *col = g_ptr_array_index(state->columns, i);
-        if (col->notebook == notebook)
+        if (workspace_column_contains_notebook(col, notebook))
             return (int)i;
     }
 
@@ -386,8 +431,9 @@ workspace_strip_focus_column(Workspace *ws, int col_idx)
     state->focused_col = col_idx;
 
     WorkspaceColumn *col = g_ptr_array_index(state->columns, col_idx);
-    if (col->notebook && GTK_IS_NOTEBOOK(col->notebook))
-        ws->active_pane = GTK_NOTEBOOK(col->notebook);
+    GtkNotebook *focused_nb = workspace_strip_column_focused_notebook(col);
+    if (focused_nb)
+        ws->active_pane = focused_nb;
 
     workspace_strip_pan_to_focused_column(ws);
 }
@@ -406,6 +452,12 @@ on_column_notebook_focus_enter(GtkEventControllerFocus *ctrl,
     WorkspaceStripState *state = ws->strip_state;
     for (guint i = 0; i < state->columns->len; i++) {
         WorkspaceColumn *col = g_ptr_array_index(state->columns, i);
+        int pane_idx = workspace_column_pane_index(col, notebook);
+        if (pane_idx >= 0) {
+            col->focused_pane = pane_idx;
+            workspace_strip_focus_column(ws, (int)i);
+            break;
+        }
         if (col->notebook == notebook) {
             workspace_strip_focus_column(ws, (int)i);
             break;
@@ -509,6 +561,9 @@ workspace_strip_create_root(Workspace *ws, GtkWidget *first_notebook)
 
     WorkspaceColumn *col = g_new0(WorkspaceColumn, 1);
     col->notebook = first_notebook;
+    col->panes = g_ptr_array_new();
+    g_ptr_array_add(col->panes, first_notebook);
+    col->focused_pane = 0;
     col->target_width = STRIP_DEFAULT_COL_WIDTH;
     col->current_width = STRIP_DEFAULT_COL_WIDTH;
     g_ptr_array_add(state->columns, col);
@@ -536,6 +591,9 @@ workspace_strip_add_notebook_column(Workspace *ws, GtkWidget *notebook)
 
     WorkspaceColumn *col = g_new0(WorkspaceColumn, 1);
     col->notebook = notebook;
+    col->panes = g_ptr_array_new();
+    g_ptr_array_add(col->panes, notebook);
+    col->focused_pane = 0;
     col->target_width = STRIP_DEFAULT_COL_WIDTH;
     col->current_width = STRIP_DEFAULT_COL_WIDTH;
     g_ptr_array_add(state->columns, col);
@@ -577,6 +635,9 @@ workspace_strip_insert_column_after_active(Workspace *ws, GtkWidget *notebook)
 
     new_col = g_new0(WorkspaceColumn, 1);
     new_col->notebook = notebook;
+    new_col->panes = g_ptr_array_new();
+    g_ptr_array_add(new_col->panes, notebook);
+    new_col->focused_pane = 0;
     new_col->target_width = STRIP_DEFAULT_COL_WIDTH;
     new_col->current_width = STRIP_INSERT_START_WIDTH;
 
@@ -638,8 +699,9 @@ workspace_strip_remove_active_column(Workspace *ws)
         state->focused_col < (int)state->columns->len) {
         WorkspaceColumn *focused = g_ptr_array_index(state->columns,
                                                       state->focused_col);
-        if (focused && focused->notebook && GTK_IS_NOTEBOOK(focused->notebook))
-            ws->active_pane = GTK_NOTEBOOK(focused->notebook);
+        GtkNotebook *focused_nb = workspace_strip_column_focused_notebook(focused);
+        if (focused_nb)
+            ws->active_pane = focused_nb;
     }
 
     workspace_strip_settle_after_remove(state, state->focused_col,
@@ -664,8 +726,8 @@ workspace_strip_focus_primary(Workspace *ws)
         state->focused_col < (int)state->columns->len) {
         WorkspaceColumn *col = g_ptr_array_index(state->columns,
                                                   state->focused_col);
-        if (col->notebook && GTK_IS_NOTEBOOK(col->notebook) &&
-            workspace_focus_pane(ws, GTK_NOTEBOOK(col->notebook)))
+        GtkNotebook *focused_nb = workspace_strip_column_focused_notebook(col);
+        if (focused_nb && workspace_focus_pane(ws, focused_nb))
             return;
     }
 
@@ -709,4 +771,282 @@ void
 workspace_strip_toggle_zoom(Workspace *ws)
 {
     workspace_strip_toggle_maximize_column(ws);
+}
+
+/* ── Column pane count ─────────────────────────────────────────── */
+
+int
+workspace_strip_column_pane_count(Workspace *ws, int col_idx)
+{
+    WorkspaceStripState *state;
+    WorkspaceColumn *col;
+
+    if (!ws || !ws->strip_state)
+        return 0;
+    state = ws->strip_state;
+    if (col_idx < 0 || col_idx >= (int)state->columns->len)
+        return 0;
+    col = g_ptr_array_index(state->columns, col_idx);
+    if (!col || !col->panes)
+        return 1;
+    return (int)col->panes->len;
+}
+
+/* ── Vertical split inside active column ───────────────────────── */
+
+static GtkWidget *
+rebuild_column_paned_chain(GPtrArray *panes)
+{
+    if (!panes || panes->len == 0)
+        return NULL;
+    if (panes->len == 1)
+        return g_ptr_array_index(panes, 0);
+
+    GtkWidget *result = g_ptr_array_index(panes, 0);
+    for (guint i = 1; i < panes->len; i++) {
+        GtkWidget *paned = gtk_paned_new(GTK_ORIENTATION_VERTICAL);
+        gtk_widget_set_hexpand(paned, TRUE);
+        gtk_widget_set_vexpand(paned, TRUE);
+        gtk_paned_set_start_child(GTK_PANED(paned), result);
+        gtk_paned_set_end_child(GTK_PANED(paned),
+                                g_ptr_array_index(panes, i));
+        gtk_paned_set_resize_start_child(GTK_PANED(paned), TRUE);
+        gtk_paned_set_resize_end_child(GTK_PANED(paned), TRUE);
+        gtk_paned_set_shrink_start_child(GTK_PANED(paned), FALSE);
+        gtk_paned_set_shrink_end_child(GTK_PANED(paned), FALSE);
+        result = paned;
+    }
+    return result;
+}
+
+gboolean
+workspace_strip_split_vertical_in_column(Workspace *ws, GtkWidget *new_notebook)
+{
+    WorkspaceStripState *state;
+    WorkspaceColumn *col;
+    GtkWidget *old_root;
+    GtkWidget *new_root;
+    GPtrArray *held_panes;
+    int active_col = 0;
+
+    if (!ws || !ws->strip_state || !new_notebook)
+        return FALSE;
+
+    state = ws->strip_state;
+    if (!workspace_strip_resolve_focused_col(ws, &active_col))
+        return FALSE;
+
+    col = g_ptr_array_index(state->columns, active_col);
+    if (!col || !col->panes)
+        return FALSE;
+
+    old_root = col->notebook;
+
+    g_object_set_data(G_OBJECT(new_notebook), "workspace-ptr", ws);
+    gtk_widget_set_vexpand(new_notebook, TRUE);
+    wire_column_focus_tracking(new_notebook);
+
+    g_ptr_array_add(col->panes, new_notebook);
+    col->focused_pane = (int)col->panes->len - 1;
+
+    if (old_root && state->column_box &&
+        gtk_widget_get_parent(old_root) == state->column_box) {
+        g_object_ref(old_root);
+        gtk_box_remove(GTK_BOX(state->column_box), old_root);
+    } else {
+        old_root = NULL;
+    }
+
+    held_panes = g_ptr_array_new();
+    if (col->panes->len > 1) {
+        for (guint i = 0; i < col->panes->len - 1; i++) {
+            GtkWidget *nb = g_ptr_array_index(col->panes, i);
+            GtkWidget *parent = gtk_widget_get_parent(nb);
+            if (parent) {
+                g_object_ref(nb);
+                g_ptr_array_add(held_panes, nb);
+                if (GTK_IS_PANED(parent)) {
+                    if (gtk_paned_get_start_child(GTK_PANED(parent)) == nb)
+                        gtk_paned_set_start_child(GTK_PANED(parent), NULL);
+                    else
+                        gtk_paned_set_end_child(GTK_PANED(parent), NULL);
+                }
+            }
+        }
+    }
+
+    new_root = rebuild_column_paned_chain(col->panes);
+    col->notebook = new_root;
+
+    if (new_root) {
+        gtk_widget_set_size_request(new_root, col->target_width, -1);
+        if (state->column_box)
+            gtk_box_append(GTK_BOX(state->column_box), new_root);
+    }
+
+    for (guint i = 0; i < held_panes->len; i++) {
+        GtkWidget *nb = g_ptr_array_index(held_panes, i);
+        g_object_unref(nb);
+    }
+    g_ptr_array_free(held_panes, TRUE);
+
+    if (old_root)
+        g_object_unref(old_root);
+
+    workspace_strip_apply_layout(ws);
+    return TRUE;
+}
+
+/* ── Focus pane up/down within active column ───────────────────── */
+
+gboolean
+workspace_strip_focus_pane_up(Workspace *ws)
+{
+    WorkspaceStripState *state;
+    WorkspaceColumn *col;
+    int target;
+
+    if (!ws || !ws->strip_state)
+        return FALSE;
+
+    state = ws->strip_state;
+    if (state->focused_col < 0 ||
+        state->focused_col >= (int)state->columns->len)
+        return FALSE;
+
+    col = g_ptr_array_index(state->columns, state->focused_col);
+    if (!col || !col->panes || col->panes->len <= 1)
+        return FALSE;
+
+    target = col->focused_pane - 1;
+    if (target < 0)
+        return FALSE;
+
+    col->focused_pane = target;
+    GtkWidget *nb = g_ptr_array_index(col->panes, target);
+    if (!nb || !GTK_IS_NOTEBOOK(nb))
+        return FALSE;
+
+    ws->active_pane = GTK_NOTEBOOK(nb);
+    return workspace_focus_pane(ws, GTK_NOTEBOOK(nb));
+}
+
+gboolean
+workspace_strip_focus_pane_down(Workspace *ws)
+{
+    WorkspaceStripState *state;
+    WorkspaceColumn *col;
+    int target;
+
+    if (!ws || !ws->strip_state)
+        return FALSE;
+
+    state = ws->strip_state;
+    if (state->focused_col < 0 ||
+        state->focused_col >= (int)state->columns->len)
+        return FALSE;
+
+    col = g_ptr_array_index(state->columns, state->focused_col);
+    if (!col || !col->panes || col->panes->len <= 1)
+        return FALSE;
+
+    target = col->focused_pane + 1;
+    if (target >= (int)col->panes->len)
+        return FALSE;
+
+    col->focused_pane = target;
+    GtkWidget *nb = g_ptr_array_index(col->panes, target);
+    if (!nb || !GTK_IS_NOTEBOOK(nb))
+        return FALSE;
+
+    ws->active_pane = GTK_NOTEBOOK(nb);
+    return workspace_focus_pane(ws, GTK_NOTEBOOK(nb));
+}
+
+/* ── Remove a single pane from within a column ─────────────────── */
+
+gboolean
+workspace_strip_remove_pane_from_column(Workspace *ws, GtkNotebook *pane)
+{
+    WorkspaceStripState *state;
+    WorkspaceColumn *col;
+    GtkWidget *old_root;
+    GtkWidget *new_root;
+    GPtrArray *held_panes;
+    int col_idx;
+    int pane_idx;
+
+    if (!ws || !ws->strip_state || !pane)
+        return FALSE;
+
+    state = ws->strip_state;
+    col_idx = workspace_strip_find_column_for_notebook(ws, GTK_WIDGET(pane));
+    if (col_idx < 0)
+        return FALSE;
+
+    col = g_ptr_array_index(state->columns, col_idx);
+    if (!col || !col->panes || col->panes->len <= 1)
+        return FALSE;
+
+    pane_idx = workspace_column_pane_index(col, GTK_WIDGET(pane));
+    if (pane_idx < 0)
+        return FALSE;
+
+    old_root = col->notebook;
+
+    if (old_root && state->column_box &&
+        gtk_widget_get_parent(old_root) == state->column_box) {
+        g_object_ref(old_root);
+        gtk_box_remove(GTK_BOX(state->column_box), old_root);
+    } else {
+        old_root = NULL;
+    }
+
+    held_panes = g_ptr_array_new();
+    for (guint i = 0; i < col->panes->len; i++) {
+        GtkWidget *nb = g_ptr_array_index(col->panes, i);
+        GtkWidget *parent = gtk_widget_get_parent(nb);
+        if (parent && GTK_IS_PANED(parent)) {
+            if ((int)i != pane_idx) {
+                g_object_ref(nb);
+                g_ptr_array_add(held_panes, nb);
+            }
+            if (gtk_paned_get_start_child(GTK_PANED(parent)) == nb)
+                gtk_paned_set_start_child(GTK_PANED(parent), NULL);
+            else
+                gtk_paned_set_end_child(GTK_PANED(parent), NULL);
+        }
+    }
+
+    g_ptr_array_remove_index(col->panes, pane_idx);
+
+    if (col->focused_pane >= (int)col->panes->len)
+        col->focused_pane = (int)col->panes->len - 1;
+    if (col->focused_pane < 0)
+        col->focused_pane = 0;
+
+    new_root = rebuild_column_paned_chain(col->panes);
+    col->notebook = new_root;
+
+    if (new_root) {
+        gtk_widget_set_size_request(new_root, col->target_width, -1);
+        if (state->column_box)
+            gtk_box_append(GTK_BOX(state->column_box), new_root);
+    }
+
+    for (guint i = 0; i < held_panes->len; i++) {
+        GtkWidget *nb = g_ptr_array_index(held_panes, i);
+        g_object_unref(nb);
+    }
+    g_ptr_array_free(held_panes, TRUE);
+
+    if (old_root)
+        g_object_unref(old_root);
+
+    GtkNotebook *focused_nb = workspace_strip_column_focused_notebook(col);
+    if (focused_nb)
+        ws->active_pane = focused_nb;
+
+    workspace_strip_apply_layout(ws);
+    return TRUE;
 }

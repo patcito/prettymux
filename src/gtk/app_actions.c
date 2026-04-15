@@ -22,6 +22,7 @@
 #include "socket_server.h"
 #include "theme.h"
 #include "workspace.h"
+#include "workspace_strip.h"
 
 static const char *k_default_browser_url =
     "https://prettymux-web.vercel.app/?prettymux=t";
@@ -416,6 +417,10 @@ focus_direction_for_layout_with_error(Workspace *ws,
         return workspace_focus_prev_for_layout(ws);
     if (dx > 0 && dy == 0)
         return workspace_focus_next_for_layout(ws);
+    if (dy < 0 && dx == 0)
+        return workspace_strip_focus_pane_up(ws);
+    if (dy > 0 && dx == 0)
+        return workspace_strip_focus_pane_down(ws);
 
     log_strip_unsupported_action(action);
     return set_action_error(error_out,
@@ -617,6 +622,14 @@ app_actions_handle(const char *action)
             else
                 workspace_add_terminal(ws, g_ghostty_app);
         }
+    } else if (strcmp(action, "tab.next") == 0) {
+        Workspace *ws = workspace_get_current();
+        if (ws)
+            workspace_tab_next_for_layout(ws);
+    } else if (strcmp(action, "tab.prev") == 0) {
+        Workspace *ws = workspace_get_current();
+        if (ws)
+            workspace_tab_prev_for_layout(ws);
     } else if (strcmp(action, "pane.focus.left") == 0) {
         Workspace *ws = workspace_get_current();
         if (ws)
@@ -861,6 +874,23 @@ app_actions_handle_for_socket(const char *action,
         return TRUE;
     }
 
+    if (strcmp(action, "tab.next") == 0) {
+        ws = workspace_get_current();
+        if (!ws)
+            return set_action_error(error_out, "no active workspace");
+        if (!workspace_tab_next_for_layout(ws))
+            return set_action_error(error_out, "no next tab");
+        return TRUE;
+    }
+    if (strcmp(action, "tab.prev") == 0) {
+        ws = workspace_get_current();
+        if (!ws)
+            return set_action_error(error_out, "no active workspace");
+        if (!workspace_tab_prev_for_layout(ws))
+            return set_action_error(error_out, "no previous tab");
+        return TRUE;
+    }
+
     if (strcmp(action, "pane.close") == 0) {
         ws = workspace_get_current();
         if (!ws)
@@ -870,7 +900,7 @@ app_actions_handle_for_socket(const char *action,
             workspace_get_layout_mode(ws) == WORKSPACE_LAYOUT_STRIP) {
             if (!workspace_close_current_for_layout(ws)) {
                 return set_action_error(error_out,
-                                        "failed to close active strip column");
+                                        "failed to close active strip pane");
             }
             session_queue_save();
             return TRUE;
@@ -915,9 +945,9 @@ app_actions_on_key_pressed(GtkEventControllerKey *ctrl, guint keyval,
          mods == (GDK_CONTROL_MASK | GDK_SHIFT_MASK))) {
         Workspace *ws = workspace_get_current();
         if (ws && (mods & GDK_SHIFT_MASK))
-            workspace_focus_prev_for_layout(ws);
+            workspace_tab_prev_for_layout(ws);
         else if (ws)
-            workspace_focus_next_for_layout(ws);
+            workspace_tab_next_for_layout(ws);
         return TRUE;
     }
 

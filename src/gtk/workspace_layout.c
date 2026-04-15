@@ -191,3 +191,26 @@ workspace_layout_toggle_zoom_current(Workspace *ws)
         break;
     }
 }
+
+gboolean
+workspace_layout_is_zoomed(Workspace *ws)
+{
+    if (!ws)
+        return FALSE;
+
+    switch (ws->layout_mode) {
+    case WORKSPACE_LAYOUT_STRIP:
+        if (ws->strip_state && ws->strip_state->columns) {
+            int fc = ws->strip_state->focused_col;
+            if (fc >= 0 && fc < (int)ws->strip_state->columns->len) {
+                WorkspaceColumn *col =
+                    g_ptr_array_index(ws->strip_state->columns, fc);
+                return col->maximized;
+            }
+        }
+        return FALSE;
+    case WORKSPACE_LAYOUT_CLASSIC:
+    default:
+        return ws->zoomed;
+    }
+}

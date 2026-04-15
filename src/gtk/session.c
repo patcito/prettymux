@@ -9,6 +9,9 @@
 #include <string.h>
 
 #define SESSION_STRIP_DEFAULT_COL_WIDTH 600
+#define SESSION_DEFAULT_INSTANCE_ID "default"
+#define SESSION_DEFAULT_FILE_NAME "last-default.json"
+#define SESSION_LEGACY_FILE_NAME "last.json"
 
 const char *app_state_get_instance_id(void);
 
@@ -66,7 +69,7 @@ session_sanitize_instance_id(const char *instance_id)
     GString *sanitized = g_string_new(NULL);
 
     if (!instance_id || !instance_id[0])
-        instance_id = "default";
+        instance_id = SESSION_DEFAULT_INSTANCE_ID;
 
     for (const char *p = instance_id; *p; p++) {
         if (session_instance_id_char_allowed(*p))
@@ -74,7 +77,7 @@ session_sanitize_instance_id(const char *instance_id)
     }
 
     if (sanitized->len == 0)
-        g_string_assign(sanitized, "default");
+        g_string_assign(sanitized, SESSION_DEFAULT_INSTANCE_ID);
 
     return g_string_free(sanitized, FALSE);
 }
@@ -89,8 +92,8 @@ session_get_instance_session_path(const char *instance_id)
     g_autofree char *file_name = NULL;
     char *path;
 
-    if (g_strcmp0(safe_instance_id, "default") == 0)
-        file_name = g_strdup("last.json");
+    if (g_strcmp0(safe_instance_id, SESSION_DEFAULT_INSTANCE_ID) == 0)
+        file_name = g_strdup(SESSION_DEFAULT_FILE_NAME);
     else
         file_name = g_strdup_printf("last-%s.json", safe_instance_id);
 
@@ -108,7 +111,7 @@ session_get_legacy_session_path(void)
     char *path;
 
     g_mkdir_with_parents(dir, 0755);
-    path = g_build_filename(dir, "last.json", NULL);
+    path = g_build_filename(dir, SESSION_LEGACY_FILE_NAME, NULL);
     g_free(dir);
     return path;
 }
@@ -123,7 +126,7 @@ session_get_restore_path_for_instance(const char *instance_id)
     if (g_file_test(instance_path, G_FILE_TEST_EXISTS))
         return instance_path;
 
-    if (g_strcmp0(safe_instance_id, "default") != 0)
+    if (g_strcmp0(safe_instance_id, SESSION_DEFAULT_INSTANCE_ID) != 0)
         return instance_path;
 
     g_autofree char *legacy_path = session_get_legacy_session_path();
@@ -289,6 +292,27 @@ session_parse_workspace_layout_mode(JsonObject *ws_obj)
 }
 
 static int
+session_strip_column_pane_index_by_pane_id(WorkspaceColumn *col,
+                                           const char *pane_id)
+{
+    if (!col || !pane_id || !pane_id[0] || !col->panes)
+        return -1;
+
+    for (guint i = 0; i < col->panes->len; i++) {
+        GtkWidget *pane_widget = g_ptr_array_index(col->panes, i);
+        const char *col_pane_id;
+
+        if (!GTK_IS_NOTEBOOK(pane_widget))
+            continue;
+        col_pane_id = workspace_get_pane_id(GTK_NOTEBOOK(pane_widget));
+        if (g_strcmp0(col_pane_id, pane_id) == 0)
+            return (int)i;
+    }
+
+    return -1;
+}
+
+static int
 session_strip_column_index_by_pane_id(Workspace *ws, const char *pane_id)
 {
     WorkspaceStripState *state;
@@ -299,17 +323,280 @@ session_strip_column_index_by_pane_id(Workspace *ws, const char *pane_id)
     state = ws->strip_state;
     for (guint i = 0; i < state->columns->len; i++) {
         WorkspaceColumn *col = g_ptr_array_index(state->columns, i);
-        const char *col_pane_id;
+        int pane_idx;
 
-        if (!col || !GTK_IS_NOTEBOOK(col->notebook))
+        if (!col)
             continue;
 
-        col_pane_id = workspace_get_pane_id(GTK_NOTEBOOK(col->notebook));
-        if (g_strcmp0(col_pane_id, pane_id) == 0)
+        pane_idx = session_strip_column_pane_index_by_pane_id(col, pane_id);
+        if (pane_idx >= 0)
             return (int)i;
+
+        if (GTK_IS_NOTEBOOK(col->notebook)) {
+            const char *col_pane_id =
+                workspace_get_pane_id(GTK_NOTEBOOK(col->notebook));
+            if (g_strcmp0(col_pane_id, pane_id) == 0)
+                return (int)i;
+        }
     }
 
     return -1;
+}
+
+static GtkWidget *
+session_strip_build_column_root(GPtrArray *panes)
+{
+    GtkWidget *root;
+
+    if (!panes || panes->len == 0)
+        return NULL;
+
+    root = g_ptr_array_index(panes, 0);
+    for (guint i = 1; i < panes->len; i++) {
+        GtkWidget *paned = gtk_paned_new(GTK_ORIENTATION_VERTICAL);
+
+        gtk_widget_set_hexpand(paned, TRUE);
+        gtk_widget_set_vexpand(paned, TRUE);
+        gtk_paned_set_start_child(GTK_PANED(paned), root);
+        gtk_paned_set_end_child(GTK_PANED(paned), g_ptr_array_index(panes, i));
+        gtk_paned_set_resize_start_child(GTK_PANED(paned), TRUE);
+        gtk_paned_set_resize_end_child(GTK_PANED(paned), TRUE);
+        gtk_paned_set_shrink_start_child(GTK_PANED(paned), FALSE);
+        gtk_paned_set_shrink_end_child(GTK_PANED(paned), FALSE);
+        root = paned;
+    }
+
+    return root;
+}
+
+static void
+session_strip_detach_widget_from_parent(GtkWidget *widget)
+{
+    GtkWidget *parent;
+
+    if (!widget)
+        return;
+
+    parent = gtk_widget_get_parent(widget);
+    if (!parent)
+        return;
+
+    if (GTK_IS_PANED(parent)) {
+        if (gtk_paned_get_start_child(GTK_PANED(parent)) == widget)
+            gtk_paned_set_start_child(GTK_PANED(parent), NULL);
+        else if (gtk_paned_get_end_child(GTK_PANED(parent)) == widget)
+            gtk_paned_set_end_child(GTK_PANED(parent), NULL);
+        return;
+    }
+
+    if (GTK_IS_BOX(parent)) {
+        gtk_box_remove(GTK_BOX(parent), widget);
+        return;
+    }
+
+    if (GTK_IS_OVERLAY(parent)) {
+        if (gtk_overlay_get_child(GTK_OVERLAY(parent)) == widget)
+            gtk_overlay_set_child(GTK_OVERLAY(parent), NULL);
+        else
+            gtk_overlay_remove_overlay(GTK_OVERLAY(parent), widget);
+        return;
+    }
+
+    if (GTK_IS_STACK(parent)) {
+        gtk_stack_remove(GTK_STACK(parent), widget);
+    }
+}
+
+static void
+session_strip_rebuild_columns_from_saved_state(Workspace *ws,
+                                               JsonObject *strip_obj)
+{
+    WorkspaceStripState *state;
+    JsonArray *columns_arr;
+    guint columns_len;
+    g_autoptr(GHashTable) seen_panes = NULL;
+    g_autoptr(GPtrArray) rebuilt_columns = NULL;
+
+    if (!ws || !strip_obj || !json_object_has_member(strip_obj, "columns"))
+        return;
+
+    state = ws->strip_state;
+    if (!state || !state->columns)
+        return;
+
+    columns_arr = json_object_get_array_member(strip_obj, "columns");
+    if (!columns_arr)
+        return;
+    columns_len = json_array_get_length(columns_arr);
+    if (columns_len == 0)
+        return;
+
+    seen_panes = g_hash_table_new(g_direct_hash, g_direct_equal);
+    rebuilt_columns = g_ptr_array_new();
+
+    for (guint i = 0; i < columns_len; i++) {
+        JsonNode *column_node = json_array_get_element(columns_arr, i);
+        JsonObject *column_obj;
+        g_autoptr(GPtrArray) col_panes = NULL;
+        WorkspaceColumn *col;
+        int focused_pane = 0;
+        int width = SESSION_STRIP_DEFAULT_COL_WIDTH;
+        gboolean maximized = FALSE;
+
+        if (!column_node || !JSON_NODE_HOLDS_OBJECT(column_node))
+            continue;
+        column_obj = json_node_get_object(column_node);
+        col_panes = g_ptr_array_new();
+
+        if (json_object_has_member(column_obj, "paneIds")) {
+            JsonArray *pane_ids_arr =
+                json_object_get_array_member(column_obj, "paneIds");
+            guint pane_ids_len = pane_ids_arr ? json_array_get_length(pane_ids_arr)
+                                              : 0;
+
+            for (guint pi = 0; pi < pane_ids_len; pi++) {
+                const char *pane_id =
+                    json_array_get_string_element(pane_ids_arr, pi);
+                GtkNotebook *pane;
+
+                if (!pane_id || !pane_id[0])
+                    continue;
+                pane = workspace_get_pane_by_id(ws, pane_id);
+                if (!pane || g_hash_table_contains(seen_panes, pane))
+                    continue;
+
+                g_ptr_array_add(col_panes, pane);
+                g_hash_table_add(seen_panes, pane);
+            }
+        } else {
+            const char *pane_id =
+                json_object_get_string_member_with_default(column_obj,
+                                                           "paneId", "");
+            GtkNotebook *pane = workspace_get_pane_by_id(ws, pane_id);
+
+            if (pane && !g_hash_table_contains(seen_panes, pane)) {
+                g_ptr_array_add(col_panes, pane);
+                g_hash_table_add(seen_panes, pane);
+            }
+        }
+
+        if (col_panes->len == 0)
+            continue;
+
+        if (state->column_box) {
+            for (guint pi = 0; pi < col_panes->len; pi++) {
+                GtkWidget *pane_widget = g_ptr_array_index(col_panes, pi);
+                session_strip_detach_widget_from_parent(pane_widget);
+            }
+        }
+
+        if (json_object_has_member(column_obj, "focusedPaneId")) {
+            const char *focused_pane_id =
+                json_object_get_string_member_with_default(column_obj,
+                                                           "focusedPaneId", "");
+            for (guint pi = 0; pi < col_panes->len; pi++) {
+                GtkNotebook *pane = g_ptr_array_index(col_panes, pi);
+                const char *pane_id = workspace_get_pane_id(pane);
+
+                if (g_strcmp0(pane_id, focused_pane_id) == 0) {
+                    focused_pane = (int)pi;
+                    break;
+                }
+            }
+        } else if (json_object_has_member(column_obj, "focusedPane")) {
+            focused_pane = (int)json_object_get_int_member_with_default(
+                column_obj, "focusedPane", 0);
+        }
+        if (focused_pane < 0 || focused_pane >= (int)col_panes->len)
+            focused_pane = 0;
+
+        width = (int)json_object_get_int_member_with_default(column_obj,
+                                                             "width", width);
+        if (width <= 0)
+            width = SESSION_STRIP_DEFAULT_COL_WIDTH;
+        maximized = json_object_get_boolean_member_with_default(column_obj,
+                                                                "maximized",
+                                                                FALSE);
+
+        col = g_new0(WorkspaceColumn, 1);
+        col->panes = g_ptr_array_ref(col_panes);
+        col->focused_pane = focused_pane;
+        col->target_width = width;
+        col->current_width = (double)width;
+        col->maximized = maximized;
+        if (state->column_box)
+            col->notebook = session_strip_build_column_root(col->panes);
+        else
+            col->notebook = g_ptr_array_index(col->panes, 0);
+        if (!col->notebook) {
+            g_ptr_array_unref(col->panes);
+            g_free(col);
+            continue;
+        }
+        g_ptr_array_add(rebuilt_columns, col);
+    }
+
+    if (ws->pane_notebooks) {
+        for (guint i = 0; i < ws->pane_notebooks->len; i++) {
+            GtkNotebook *pane = g_ptr_array_index(ws->pane_notebooks, i);
+            WorkspaceColumn *col;
+
+            if (!pane || g_hash_table_contains(seen_panes, pane))
+                continue;
+
+            col = g_new0(WorkspaceColumn, 1);
+            col->panes = g_ptr_array_new();
+            g_ptr_array_add(col->panes, pane);
+            col->focused_pane = 0;
+            col->target_width = SESSION_STRIP_DEFAULT_COL_WIDTH;
+            col->current_width = (double)SESSION_STRIP_DEFAULT_COL_WIDTH;
+            col->maximized = FALSE;
+            col->notebook = GTK_WIDGET(pane);
+            g_ptr_array_add(rebuilt_columns, col);
+            g_hash_table_add(seen_panes, pane);
+        }
+    }
+
+    if (rebuilt_columns->len == 0)
+        return;
+
+    if (state->column_box) {
+        for (guint i = 0; i < state->columns->len; i++) {
+            WorkspaceColumn *old_col = g_ptr_array_index(state->columns, i);
+            if (!old_col || !old_col->notebook)
+                continue;
+            if (gtk_widget_get_parent(old_col->notebook) == state->column_box) {
+                gtk_box_remove(GTK_BOX(state->column_box), old_col->notebook);
+            }
+        }
+    }
+
+    g_ptr_array_set_size(state->columns, 0);
+    for (guint i = 0; i < rebuilt_columns->len; i++) {
+        WorkspaceColumn *col = g_ptr_array_index(rebuilt_columns, i);
+        g_ptr_array_add(state->columns, col);
+        if (state->column_box && col->notebook &&
+            gtk_widget_get_parent(col->notebook) != state->column_box) {
+            gtk_box_append(GTK_BOX(state->column_box), col->notebook);
+        }
+    }
+
+    if (ws->pane_notebooks) {
+        g_ptr_array_set_size(ws->pane_notebooks, 0);
+        for (guint i = 0; i < state->columns->len; i++) {
+            WorkspaceColumn *col = g_ptr_array_index(state->columns, i);
+            if (!col || !col->panes)
+                continue;
+            for (guint pi = 0; pi < col->panes->len; pi++) {
+                g_ptr_array_add(ws->pane_notebooks,
+                                g_ptr_array_index(col->panes, pi));
+            }
+        }
+        if (ws->pane_notebooks->len > 0)
+            ws->notebook = g_ptr_array_index(ws->pane_notebooks, 0);
+    }
+
+    g_ptr_array_set_size(rebuilt_columns, 0);
 }
 
 static void
@@ -345,46 +632,108 @@ session_save_workspace_strip_state(JsonBuilder *builder, Workspace *ws)
 
     json_builder_set_member_name(builder, "columns");
     json_builder_begin_array(builder);
-    if (ws->pane_notebooks) {
-        for (guint i = 0; i < ws->pane_notebooks->len; i++) {
-            GtkNotebook *pane = g_ptr_array_index(ws->pane_notebooks, i);
-            const char *pane_id = workspace_get_pane_id(pane);
+    if (state && state->columns && state->columns->len > 0) {
+        for (guint i = 0; i < state->columns->len; i++) {
+            WorkspaceColumn *col = g_ptr_array_index(state->columns, i);
+            GtkNotebook *focused_nb;
+            const char *column_pane_id = "";
+            const char *column_focused_pane_id = "";
             int width = SESSION_STRIP_DEFAULT_COL_WIDTH;
             gboolean maximized = FALSE;
+            int focused_pane = 0;
 
-            if (state && state->columns) {
-                for (guint ci = 0; ci < state->columns->len; ci++) {
-                    WorkspaceColumn *col = g_ptr_array_index(state->columns, ci);
-                    if (!col || col->notebook != (GtkWidget *)pane)
-                        continue;
-                    if (col->target_width > 0)
-                        width = col->target_width;
-                    maximized = col->maximized;
-                    break;
-                }
-            }
+            if (!col)
+                continue;
+
+            focused_nb = workspace_strip_column_focused_notebook(col);
+            if (focused_nb)
+                column_focused_pane_id = workspace_get_pane_id(focused_nb);
+            if (!column_focused_pane_id)
+                column_focused_pane_id = "";
+            column_pane_id = column_focused_pane_id;
+
+            if (col->target_width > 0)
+                width = col->target_width;
+            maximized = col->maximized;
 
             if (maximized && maximized_col < 0) {
                 maximized_col = (int)i;
-                maximized_pane_id = pane_id ? pane_id : "";
+                maximized_pane_id = column_pane_id;
             }
             if ((int)i == focused_col)
-                focused_pane_id = pane_id ? pane_id : "";
+                focused_pane_id = column_pane_id;
+
+            if (col->panes && col->panes->len > 0) {
+                focused_pane = CLAMP(col->focused_pane, 0,
+                                     (int)col->panes->len - 1);
+            }
 
             json_builder_begin_object(builder);
             json_builder_set_member_name(builder, "paneId");
-            json_builder_add_string_value(builder, pane_id ? pane_id : "");
+            json_builder_add_string_value(builder, column_pane_id);
+            json_builder_set_member_name(builder, "paneIds");
+            json_builder_begin_array(builder);
+            if (col->panes && col->panes->len > 0) {
+                for (guint pi = 0; pi < col->panes->len; pi++) {
+                    GtkWidget *pane_widget = g_ptr_array_index(col->panes, pi);
+                    const char *pane_id = "";
+
+                    if (GTK_IS_NOTEBOOK(pane_widget))
+                        pane_id = workspace_get_pane_id(
+                            GTK_NOTEBOOK(pane_widget));
+                    json_builder_add_string_value(builder,
+                                                  pane_id ? pane_id : "");
+                }
+            } else {
+                json_builder_add_string_value(builder, column_pane_id);
+            }
+            json_builder_end_array(builder);
+            json_builder_set_member_name(builder, "focusedPane");
+            json_builder_add_int_value(builder, focused_pane);
+            json_builder_set_member_name(builder, "focusedPaneId");
+            if (col->panes && focused_pane >= 0 &&
+                focused_pane < (int)col->panes->len &&
+                GTK_IS_NOTEBOOK(g_ptr_array_index(col->panes, focused_pane))) {
+                const char *pane_id = workspace_get_pane_id(
+                    GTK_NOTEBOOK(g_ptr_array_index(col->panes, focused_pane)));
+                json_builder_add_string_value(builder, pane_id ? pane_id : "");
+            } else {
+                json_builder_add_string_value(builder, column_pane_id);
+            }
             json_builder_set_member_name(builder, "width");
             json_builder_add_int_value(builder, width);
             json_builder_set_member_name(builder, "maximized");
             json_builder_add_boolean_value(builder, maximized);
             json_builder_end_object(builder);
         }
+    } else if (ws->pane_notebooks) {
+        for (guint i = 0; i < ws->pane_notebooks->len; i++) {
+            GtkNotebook *pane = g_ptr_array_index(ws->pane_notebooks, i);
+            const char *pane_id = workspace_get_pane_id(pane);
+            int width = SESSION_STRIP_DEFAULT_COL_WIDTH;
+
+            json_builder_begin_object(builder);
+            json_builder_set_member_name(builder, "paneId");
+            json_builder_add_string_value(builder, pane_id ? pane_id : "");
+            json_builder_set_member_name(builder, "paneIds");
+            json_builder_begin_array(builder);
+            json_builder_add_string_value(builder, pane_id ? pane_id : "");
+            json_builder_end_array(builder);
+            json_builder_set_member_name(builder, "focusedPane");
+            json_builder_add_int_value(builder, 0);
+            json_builder_set_member_name(builder, "focusedPaneId");
+            json_builder_add_string_value(builder, pane_id ? pane_id : "");
+            json_builder_set_member_name(builder, "width");
+            json_builder_add_int_value(builder, width);
+            json_builder_set_member_name(builder, "maximized");
+            json_builder_add_boolean_value(builder, FALSE);
+            json_builder_end_object(builder);
+        }
     }
     json_builder_end_array(builder);
 
-    if (!ws->pane_notebooks || focused_col < 0 ||
-        focused_col >= (int)ws->pane_notebooks->len) {
+    if (!state || !state->columns || focused_col < 0 ||
+        focused_col >= (int)state->columns->len) {
         focused_col = 0;
         focused_pane_id = "";
     }
@@ -424,6 +773,11 @@ session_restore_workspace_strip_state(Workspace *ws, JsonObject *ws_obj)
     if (!strip_obj)
         return;
 
+    session_strip_rebuild_columns_from_saved_state(ws, strip_obj);
+    state = ws->strip_state;
+    if (!state || !state->columns || state->columns->len == 0)
+        return;
+
     for (guint i = 0; i < state->columns->len; i++) {
         WorkspaceColumn *col = g_ptr_array_index(state->columns, i);
         if (!col)
@@ -447,6 +801,7 @@ session_restore_workspace_strip_state(Workspace *ws, JsonObject *ws_obj)
             gboolean maximized;
             gboolean has_maximized_member;
             WorkspaceColumn *col;
+            int focused_pane = 0;
 
             if (!column_node || !JSON_NODE_HOLDS_OBJECT(column_node))
                 continue;
@@ -480,6 +835,30 @@ session_restore_workspace_strip_state(Workspace *ws, JsonObject *ws_obj)
                 if (maximized)
                     any_column_maximized = TRUE;
             }
+
+            if (json_object_has_member(column_obj, "focusedPaneId")) {
+                const char *focused_pane_id =
+                    json_object_get_string_member_with_default(
+                        column_obj, "focusedPaneId", "");
+                int pane_idx =
+                    session_strip_column_pane_index_by_pane_id(col,
+                                                               focused_pane_id);
+                if (pane_idx >= 0)
+                    focused_pane = pane_idx;
+            } else if (json_object_has_member(column_obj, "focusedPane")) {
+                focused_pane = (int)json_object_get_int_member_with_default(
+                    column_obj, "focusedPane", col->focused_pane);
+            } else {
+                focused_pane = col->focused_pane;
+            }
+
+            if (col->panes && col->panes->len > 0) {
+                if (focused_pane < 0 || focused_pane >= (int)col->panes->len)
+                    focused_pane = 0;
+                col->focused_pane = focused_pane;
+            } else {
+                col->focused_pane = 0;
+            }
         }
     }
 
@@ -491,6 +870,12 @@ session_restore_workspace_strip_state(Workspace *ws, JsonObject *ws_obj)
             int focused_by_pane =
                 session_strip_column_index_by_pane_id(ws, focused_pane_id);
             if (focused_by_pane >= 0) {
+                WorkspaceColumn *focused_column =
+                    g_ptr_array_index(state->columns, focused_by_pane);
+                int pane_idx = session_strip_column_pane_index_by_pane_id(
+                    focused_column, focused_pane_id);
+                if (pane_idx >= 0)
+                    focused_column->focused_pane = pane_idx;
                 focused_col = focused_by_pane;
                 focused_from_pane = TRUE;
             }

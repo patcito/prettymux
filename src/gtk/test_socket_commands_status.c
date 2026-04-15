@@ -12,6 +12,7 @@
 #include "socket_server.h"
 #include "terminal_routing.h"
 #include "workspace.h"
+#include "workspace_strip.h"
 
 GPtrArray *workspaces = NULL;
 int current_workspace = 0;
@@ -405,6 +406,13 @@ workspace_get_layout_mode(Workspace *ws)
 }
 
 GtkNotebook *
+workspace_strip_column_focused_notebook(WorkspaceColumn *col)
+{
+    (void)col;
+    return NULL;
+}
+
+GtkNotebook *
 workspace_get_pane_by_id(Workspace *ws, const char *pane_id)
 {
     (void)ws;
@@ -586,6 +594,25 @@ workspace_rebuild_for_layout_mode(Workspace *ws, WorkspaceLayoutMode mode)
 
     ws->layout_mode = mode;
     return TRUE;
+}
+
+int
+workspace_apply_layout_mode_to_all(WorkspaceLayoutMode mode)
+{
+    int updated = 0;
+
+    if (!workspaces)
+        return 0;
+
+    for (guint i = 0; i < workspaces->len; i++) {
+        Workspace *ws = g_ptr_array_index(workspaces, i);
+        if (!ws || ws->layout_mode == mode)
+            continue;
+        ws->layout_mode = mode;
+        updated++;
+    }
+
+    return updated;
 }
 
 void
@@ -865,6 +892,80 @@ test_workspace_status_invalid_workspace_errors(void)
 }
 
 static void
+test_workspace_set_layout_without_target_updates_all_workspaces(void)
+{
+    JsonObject *msg;
+    JsonNode *root;
+    JsonObject *obj;
+    Workspace *ws0;
+    Workspace *ws1;
+    Workspace *ws2;
+
+    workspace_test_reset_state();
+    ws0 = workspace_test_add("one");
+    ws1 = workspace_test_add("two");
+    ws2 = workspace_test_add("three");
+    ws2->layout_mode = WORKSPACE_LAYOUT_STRIP;
+
+    msg = json_object_new();
+    json_object_set_string_member(msg, "layout", "strip");
+    root = invoke_socket_command("workspace.set_layout", msg);
+    obj = json_node_get_object_or_fail(root);
+    assert_status_and_message(obj, "ok", NULL);
+    g_assert_cmpstr(json_object_get_string_member_with_default(obj, "layout", ""),
+                    ==, "strip");
+    g_assert_cmpstr(json_object_get_string_member_with_default(obj, "scope", ""),
+                    ==, "all");
+    g_assert_cmpint(
+        json_object_get_int_member_with_default(obj, "workspaceCount", -1), ==,
+        3);
+    g_assert_cmpint(
+        json_object_get_int_member_with_default(obj, "updatedCount", -1), ==,
+        2);
+    json_node_free(root);
+    json_object_unref(msg);
+
+    g_assert_cmpint(ws0->layout_mode, ==, WORKSPACE_LAYOUT_STRIP);
+    g_assert_cmpint(ws1->layout_mode, ==, WORKSPACE_LAYOUT_STRIP);
+    g_assert_cmpint(ws2->layout_mode, ==, WORKSPACE_LAYOUT_STRIP);
+}
+
+static void
+test_workspace_set_layout_target_keeps_workspace_scope(void)
+{
+    JsonObject *msg;
+    JsonNode *root;
+    JsonObject *obj;
+    Workspace *ws0;
+    Workspace *ws1;
+    Workspace *ws2;
+
+    workspace_test_reset_state();
+    ws0 = workspace_test_add("one");
+    ws1 = workspace_test_add("two");
+    ws2 = workspace_test_add("three");
+
+    msg = json_object_new();
+    json_object_set_string_member(msg, "layout", "strip");
+    json_object_set_int_member(msg, "workspace", 1);
+    root = invoke_socket_command("workspace.set_layout", msg);
+    obj = json_node_get_object_or_fail(root);
+    assert_status_and_message(obj, "ok", NULL);
+    g_assert_cmpstr(json_object_get_string_member_with_default(obj, "layout", ""),
+                    ==, "strip");
+    g_assert_cmpstr(json_object_get_string_member_with_default(obj, "scope", ""),
+                    ==, "workspace");
+    g_assert_cmpint(json_object_get_int_member_with_default(obj, "workspace", -1),
+                    ==, 1);
+    json_node_free(root);
+    json_object_unref(msg);
+
+    g_assert_cmpint(ws0->layout_mode, ==, WORKSPACE_LAYOUT_CLASSIC);
+    g_assert_cmpint(ws1->layout_mode, ==, WORKSPACE_LAYOUT_STRIP);
+    g_assert_cmpint(ws2->layout_mode, ==, WORKSPACE_LAYOUT_CLASSIC);
+}
+
+static void
 test_workspace_import_command_uses_backend(void)
 {
     JsonObject *msg;
@@ -964,6 +1065,10 @@ main(int argc, char **argv)
                     test_workspace_status_notify_and_detail_only);
     g_test_add_func("/socket-commands/status/invalid-workspace-errors",
                     test_workspace_status_invalid_workspace_errors);
+    g_test_add_func("/socket-commands/workspace/set-layout-all",
+                    test_workspace_set_layout_without_target_updates_all_workspaces);
+    g_test_add_func("/socket-commands/workspace/set-layout-targeted",
+                    test_workspace_set_layout_target_keeps_workspace_scope);
     g_test_add_func("/socket-commands/workspace/import",
                     test_workspace_import_command_uses_backend);
     g_test_add_func("/socket-commands/workspace/move-to-instance",

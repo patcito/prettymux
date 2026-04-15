@@ -68,6 +68,7 @@ extern GtkWidget *g_workspace_list;
 
 Workspace *workspace_get_current(void);
 int workspace_get_index(Workspace *ws);
+int workspace_apply_layout_mode_to_all(WorkspaceLayoutMode mode);
 void workspace_add(GtkWidget *terminal_stack, GtkWidget *workspace_list, ghostty_app_t app);
 void workspace_remove(int index, GtkWidget *terminal_stack, GtkWidget *workspace_list);
 void workspace_switch(int index, GtkWidget *terminal_stack, GtkWidget *workspace_list);
@@ -128,6 +129,8 @@ const char *workspace_get_pane_id(GtkNotebook *pane);
 gboolean    workspace_focus_pane(Workspace *ws, GtkNotebook *pane);
 gboolean    workspace_focus_next_for_layout(Workspace *ws);
 gboolean    workspace_focus_prev_for_layout(Workspace *ws);
+gboolean    workspace_tab_next_for_layout(Workspace *ws);
+gboolean    workspace_tab_prev_for_layout(Workspace *ws);
 gboolean    workspace_equalize_splits(Workspace *ws,
                                       const char *orientation_name);
 gboolean    workspace_resize_pane_percent(Workspace *ws,

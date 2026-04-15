@@ -5,7 +5,9 @@
 typedef struct _Workspace Workspace;
 
 typedef struct {
-    GtkWidget *notebook;
+    GtkWidget *notebook;      /* Root widget in column_box (notebook or GtkPaned chain) */
+    GPtrArray *panes;         /* All GtkNotebook* in this column, top-to-bottom */
+    int        focused_pane;  /* Index within panes of the focused pane */
     int        target_width;
     double     current_width;
     gboolean   maximized;
@@ -51,3 +53,11 @@ void       workspace_strip_toggle_maximize_column(Workspace *ws);
 void       workspace_strip_toggle_zoom(Workspace *ws);
 void       workspace_strip_add_notebook_column(Workspace *ws,
                                                GtkWidget *notebook);
+gboolean   workspace_strip_split_vertical_in_column(Workspace *ws,
+                                                     GtkWidget *new_notebook);
+gboolean   workspace_strip_focus_pane_up(Workspace *ws);
+gboolean   workspace_strip_focus_pane_down(Workspace *ws);
+GtkNotebook *workspace_strip_column_focused_notebook(WorkspaceColumn *col);
+gboolean   workspace_strip_remove_pane_from_column(Workspace *ws,
+                                                    GtkNotebook *pane);
+int        workspace_strip_column_pane_count(Workspace *ws, int col_idx);
