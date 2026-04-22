@@ -163,11 +163,31 @@ on_browser_new_tab_requested(BrowserTab *bt, const char *url, gpointer user_data
     session_queue_save();
 }
 
+static void
+on_browser_close_btn_clicked(GtkButton *btn, gpointer user_data)
+{
+    (void)btn;
+    (void)user_data;
+    request_close_current_browser_tab();
+}
+
 void
 app_actions_add_browser_tab(const char *url)
 {
     GtkWidget *tab = browser_tab_new(url);
     GtkWidget *label = gtk_label_new("Loading...");
+    GtkWidget *tab_label = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    gtk_widget_set_hexpand(label, TRUE);
+    gtk_box_append(GTK_BOX(tab_label), label);
+
+    GtkWidget *close_btn = gtk_button_new_from_icon_name("window-close-symbolic");
+    gtk_button_set_has_frame(GTK_BUTTON(close_btn), FALSE);
+    gtk_widget_set_focusable(close_btn, FALSE);
+    gtk_widget_set_valign(close_btn, GTK_ALIGN_CENTER);
+    g_signal_connect(close_btn, "clicked",
+                     G_CALLBACK(on_browser_close_btn_clicked), NULL);
+    gtk_box_append(GTK_BOX(tab_label), close_btn);
+
     int idx;
 
     g_signal_connect_object(tab, "title-changed",
@@ -175,7 +195,7 @@ app_actions_add_browser_tab(const char *url)
     g_signal_connect(tab, "new-tab-requested",
                      G_CALLBACK(on_browser_new_tab_requested), NULL);
 
-    idx = gtk_notebook_append_page(GTK_NOTEBOOK(ui.browser_notebook), tab, label);
+    idx = gtk_notebook_append_page(GTK_NOTEBOOK(ui.browser_notebook), tab, tab_label);
     gtk_notebook_set_tab_reorderable(GTK_NOTEBOOK(ui.browser_notebook), tab, TRUE);
     gtk_notebook_set_current_page(GTK_NOTEBOOK(ui.browser_notebook), idx);
     gtk_widget_set_visible(tab, TRUE);
