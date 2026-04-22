@@ -1,4 +1,5 @@
 #include "theme.h"
+#include "app_settings.h"
 
 #include <gtk/gtk.h>
 #include <string.h>
@@ -172,6 +173,7 @@ theme_apply(void)
 {
     const Theme *t = theme_get_current();
     const char *tab_accent = theme_get_default_tab_accent(t);
+    int tab_height = app_settings_get_tab_height();
     char *css = g_strdup_printf(
         "window { background-color: %s; color: %s; }"
         ".sidebar { background-color: %s; }"
@@ -193,7 +195,7 @@ theme_apply(void)
         "notebook > header { background-color: %s; }"
         "notebook > header tab {"
         "  padding: 8px 12px;"
-        "  min-height: 42px;"
+        "  min-height: %dpx;"
         "  color: %s;"
         "  border-bottom: 2px solid transparent;"
         "  box-shadow: none;"
@@ -260,6 +262,7 @@ theme_apply(void)
         t->highlight,
         t->accent,
         t->surface,
+        tab_height,
         t->subtext,
         t->fg, tab_accent,
         t->bg,
