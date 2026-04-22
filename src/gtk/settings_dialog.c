@@ -18,6 +18,7 @@ typedef struct {
     GtkWidget *open_links_in_browser_switch;
     GtkWidget *gtk_renderer_dropdown;
     GtkWidget *font_spin;
+    GtkWidget *tab_height_spin;
     GtkWidget *ghostty_theme_entry;
     GtkWidget *confirm_tab;
     GtkWidget *confirm_pane;
@@ -457,6 +458,8 @@ on_apply_clicked(GtkButton *button, gpointer user_data)
 
     app_settings_set_ghostty_font_size(
         gtk_spin_button_get_value(GTK_SPIN_BUTTON(state->font_spin)));
+    app_settings_set_tab_height(
+        gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(state->tab_height_spin)));
     app_settings_set_ghostty_theme(
         gtk_editable_get_text(GTK_EDITABLE(state->ghostty_theme_entry)));
     toast_position_selected =
@@ -680,6 +683,14 @@ settings_dialog_present(GtkWindow *parent,
     gtk_box_append(GTK_BOX(content),
                    settings_row("Toast position",
                                 state->toast_position_dropdown));
+
+    state->tab_height_spin = gtk_spin_button_new_with_range(24, 64, 1);
+    gtk_spin_button_set_digits(GTK_SPIN_BUTTON(state->tab_height_spin), 0);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(state->tab_height_spin),
+                              app_settings_get_tab_height());
+    gtk_box_append(GTK_BOX(content),
+                   settings_row("Tab bar height (px)",
+                                state->tab_height_spin));
 
     state->custom_group = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     grid = gtk_grid_new();
