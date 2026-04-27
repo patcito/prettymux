@@ -27,6 +27,9 @@ void app_settings_set_gtk_renderer_mode(const char *mode);
 const char *app_settings_get_gtk_renderer_probe_result(void);
 void app_settings_set_gtk_renderer_probe_result(const char *renderer);
 
+int app_settings_get_tab_height(void);
+void app_settings_set_tab_height(int height);
+
 const Theme *app_settings_get_custom_theme(void);
 void app_settings_set_custom_theme(const Theme *theme);
 

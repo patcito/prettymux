@@ -13,6 +13,7 @@ typedef struct {
     gboolean open_links_in_browser;
     char *gtk_renderer_mode;
     char *gtk_renderer_probe_result;
+    int tab_height;
     Theme custom_theme;
 } AppSettingsState;
 
@@ -25,6 +26,7 @@ static AppSettingsState app_settings = {
     .open_links_in_browser = TRUE,
     .gtk_renderer_mode = NULL,
     .gtk_renderer_probe_result = NULL,
+    .tab_height = 42,
     .custom_theme = {
         .name = "Custom",
         .bg = "#16181d",
@@ -227,6 +229,9 @@ app_settings_load(void)
         if (g_key_file_has_key(kf, "ui", "gtk_renderer_probe_result", NULL))
             app_settings.gtk_renderer_probe_result =
                 g_key_file_get_string(kf, "ui", "gtk_renderer_probe_result", NULL);
+        if (g_key_file_has_key(kf, "ui", "tab_height", NULL))
+            app_settings.tab_height =
+                g_key_file_get_integer(kf, "ui", "tab_height", NULL);
         app_settings_load_theme_colors(kf, "custom_theme",
                                        &app_settings.custom_theme);
     }
@@ -283,6 +288,8 @@ app_settings_save(void)
                           app_settings.gtk_renderer_probe_result
                               ? app_settings.gtk_renderer_probe_result
                               : "");
+    g_key_file_set_integer(kf, "ui", "tab_height",
+                          app_settings.tab_height);
 
     g_key_file_set_string(kf, "custom_theme", "bg", app_settings.custom_theme.bg);
     g_key_file_set_string(kf, "custom_theme", "fg", app_settings.custom_theme.fg);
@@ -467,4 +474,18 @@ app_settings_set_custom_theme(const Theme *theme)
         return;
 
     app_settings_copy_theme(&app_settings.custom_theme, theme);
+}
+
+int
+app_settings_get_tab_height(void)
+{
+    app_settings_load();
+    return app_settings.tab_height;
+}
+
+void
+app_settings_set_tab_height(int height)
+{
+    app_settings_load();
+    app_settings.tab_height = (height < 24) ? 24 : (height > 64) ? 64 : height;
 }
