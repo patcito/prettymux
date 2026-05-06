@@ -2327,6 +2327,7 @@ finish_rename(GtkEntry *entry, RenameData *rd)
         if (rd->is_workspace_row && rd->workspace) {
             snprintf(rd->workspace->name, sizeof(rd->workspace->name),
                      "%.60s", new_text);
+            rd->workspace->user_renamed = TRUE;
         }
     }
 

@@ -255,6 +255,7 @@ socket_commands_on_socket_command(const char  *command,
         if (name && name[0] && workspaces && workspaces->len > 0) {
             Workspace *ws = g_ptr_array_index(workspaces, workspaces->len - 1);
             snprintf(ws->name, sizeof(ws->name), "%.60s", name);
+            ws->user_renamed = TRUE;  /* Preserve the explicit name */
             workspace_refresh_sidebar_label(ws);
         }
         json_builder_set_member_name(response, "status");

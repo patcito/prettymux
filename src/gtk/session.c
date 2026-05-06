@@ -1362,6 +1362,9 @@ session_save_for_instance(const char *instance_id,
             json_builder_set_member_name(b, "name");
             json_builder_add_string_value(b, ws->name);
 
+            json_builder_set_member_name(b, "customName");
+            json_builder_add_boolean_value(b, ws->user_renamed);
+
             json_builder_set_member_name(b, "notes");
             json_builder_add_string_value(b,
                 ws->notes_text ? ws->notes_text : "");
@@ -1619,6 +1622,10 @@ session_restore_for_instance(const char *instance_id,
             const char *name = json_object_get_string_member_with_default(
                 ws_obj, "name", ws->name);
             snprintf(ws->name, sizeof(ws->name), "%s", name);
+
+            /* Restore custom name flag so SET_TITLE doesn't overwrite it */
+            ws->user_renamed = json_object_get_boolean_member_with_default(
+                ws_obj, "customName", FALSE);
 
             /* Restore notes */
             const char *notes = json_object_get_string_member_with_default(

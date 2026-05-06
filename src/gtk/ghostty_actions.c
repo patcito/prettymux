@@ -127,7 +127,7 @@ action_idle_handler(gpointer user_data)
         loc = terminal_routing_find_for_surface(surface);
         if (loc.terminal) {
             ghostty_terminal_set_title(loc.terminal, action.action.set_title.title);
-            if (loc.workspace) {
+            if (loc.workspace && !loc.workspace->user_renamed) {
                 snprintf(loc.workspace->name, sizeof(loc.workspace->name),
                          "%.60s", action.action.set_title.title);
                 workspace_refresh_sidebar_label(loc.workspace);

@@ -57,6 +57,7 @@ typedef struct _Workspace {
     /* Notes panel */
     char *notes_text;            /* Per-workspace notes content (heap-allocated) */
 
+    gboolean user_renamed;       /* TRUE if user manually renamed this workspace */
 } Workspace;
 
 extern GPtrArray *workspaces;
