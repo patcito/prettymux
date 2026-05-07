@@ -416,6 +416,33 @@ workspace_strip_pan_to_focused_column(Workspace *ws)
     ensure_tick_running(ws);
 }
 
+void
+workspace_strip_pan_by(Workspace *ws, double dx_pixels)
+{
+    if (!ws || !ws->strip_state || dx_pixels == 0.0)
+        return;
+
+    WorkspaceStripState *state = ws->strip_state;
+    int viewport_width = 0;
+    if (state->scroll_container)
+        viewport_width = gtk_widget_get_width(state->scroll_container);
+    if (viewport_width <= 0)
+        viewport_width = STRIP_DEFAULT_COL_WIDTH;
+
+    /* Drive both target and current position so trackpad input feels
+     * 1:1 instead of waiting on the ease-toward animation. */
+    state->camera_target_x += dx_pixels;
+    workspace_strip_clamp_camera(state, viewport_width);
+    state->camera_x = state->camera_target_x;
+
+    if (state->scroll_container) {
+        GtkAdjustment *hadj = gtk_scrolled_window_get_hadjustment(
+            GTK_SCROLLED_WINDOW(state->scroll_container));
+        if (hadj)
+            gtk_adjustment_set_value(hadj, state->camera_x);
+    }
+}
+
 /* ── Column focus ───────────────────────────────────────────────── */
 
 void

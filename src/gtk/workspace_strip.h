@@ -40,6 +40,7 @@ GtkWidget *workspace_strip_create_root(Workspace *ws, GtkWidget *first_notebook)
 void       workspace_strip_apply_layout(Workspace *ws);
 void       workspace_strip_focus_column(Workspace *ws, int col_idx);
 void       workspace_strip_pan_to_focused_column(Workspace *ws);
+void       workspace_strip_pan_by(Workspace *ws, double dx_pixels);
 void       workspace_strip_clamp_camera(WorkspaceStripState *state,
                                         int viewport_width);
 gboolean   workspace_strip_tick_cb(GtkWidget *widget,

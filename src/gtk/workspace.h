@@ -234,3 +234,12 @@ gboolean workspace_close_current_tab(Workspace *ws);
 
 /* Trigger inline rename on the current tab's label */
 void workspace_start_tab_rename(Workspace *ws);
+
+/*
+ * If the widget lives inside a workspace that uses strip layout, apply
+ * dx_pixels of horizontal scroll to the strip camera and return TRUE.
+ * Returns FALSE when the widget is outside any strip-mode workspace
+ * (e.g. classic split layout) so the caller can handle the scroll itself.
+ */
+gboolean workspace_strip_consume_horizontal_scroll(GtkWidget *anchor,
+                                                   double dx_pixels);

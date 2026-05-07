@@ -19,6 +19,7 @@ override_dh_auto_install:
 	install -Dm644 $(CURDIR)/ghostty/src/shell-integration/bash/bash-preexec.sh $(CURDIR)/debian/prettymux/usr/share/prettymux/bash-preexec.sh
 	install -d $(CURDIR)/debian/prettymux/usr/share/prettymux/shell-integration
 	cp -a $(CURDIR)/ghostty/src/shell-integration/. $(CURDIR)/debian/prettymux/usr/share/prettymux/shell-integration/
+	bash $(CURDIR)/packaging/verify-shell-integration.sh $(CURDIR)/debian/prettymux/usr/share/prettymux
 	install -Dm755 src/gtk/bin/open $(CURDIR)/debian/prettymux/usr/share/prettymux/bin/open
 	install -Dm755 src/gtk/bin/xdg-open $(CURDIR)/debian/prettymux/usr/share/prettymux/bin/xdg-open
 	install -Dm644 packaging/prettymux.desktop $(CURDIR)/debian/prettymux/usr/share/applications/prettymux.desktop

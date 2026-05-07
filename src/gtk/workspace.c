@@ -4288,7 +4288,11 @@ static void on_ws_add_tab_clicked(GtkButton *btn, gpointer data) {
     (void)data;
     Workspace *w = g_object_get_data(G_OBJECT(btn), "workspace");
     ghostty_app_t a = g_object_get_data(G_OBJECT(btn), "app");
-    workspace_add_terminal(w, a);
+    GtkNotebook *target = g_object_get_data(G_OBJECT(btn), "notebook");
+    if (w && GTK_IS_NOTEBOOK(target))
+        workspace_add_terminal_to_notebook_external(w, target, a);
+    else
+        workspace_add_terminal(w, a);
     session_queue_save();
 }
 
@@ -4430,6 +4434,7 @@ create_pane_notebook(Workspace *ws, ghostty_app_t app)
     GtkWidget *add_btn = gtk_button_new_with_label("+");
     g_object_set_data(G_OBJECT(add_btn), "workspace", ws);
     g_object_set_data(G_OBJECT(add_btn), "app", app);
+    g_object_set_data(G_OBJECT(add_btn), "notebook", notebook);
     g_signal_connect(add_btn, "clicked", G_CALLBACK(on_ws_add_tab_clicked), NULL);
     gtk_notebook_set_action_widget(GTK_NOTEBOOK(notebook), add_btn, GTK_PACK_END);
     gtk_widget_set_visible(add_btn, TRUE);
@@ -5381,6 +5386,26 @@ workspace_toggle_notes(Workspace *ws, GtkWidget *notes_container)
 }
 
 /* ── Pane navigation ─────────────────────────────────────────── */
+
+gboolean
+workspace_strip_consume_horizontal_scroll(GtkWidget *anchor, double dx_pixels)
+{
+    if (!anchor || dx_pixels == 0.0)
+        return FALSE;
+
+    for (GtkWidget *w = anchor; w != NULL; w = gtk_widget_get_parent(w)) {
+        if (!GTK_IS_NOTEBOOK(w))
+            continue;
+        Workspace *ws = g_object_get_data(G_OBJECT(w), "workspace-ptr");
+        if (!ws)
+            continue;
+        if (workspace_get_layout_mode(ws) != WORKSPACE_LAYOUT_STRIP)
+            return FALSE;
+        workspace_strip_pan_by(ws, dx_pixels);
+        return TRUE;
+    }
+    return FALSE;
+}
 
 /*
  * workspace_navigate_pane:

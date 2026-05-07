@@ -12,6 +12,7 @@
 #include "app_settings.h"
 #include "hover_focus.h"
 #include "socket_server.h"
+#include "workspace.h"
 
 #include <errno.h>
 #include <gdk/gdk.h>
@@ -494,15 +495,35 @@ on_gl_realize(GtkGLArea *area, gpointer user_data)
 
         if (shell_name && g_strcmp0(shell_name, "zsh") == 0) {
             zsh_dotdir = g_build_filename(shell_hook_dir, "zsh", NULL);
-            if (old_zdotdir && old_zdotdir[0]) {
-                env_vars[env_count].key = "GHOSTTY_ZSH_ZDOTDIR";
-                env_vars[env_count].value = old_zdotdir;
-                env_count++;
-            }
-            if (g_file_test(zsh_dotdir, G_FILE_TEST_IS_DIR)) {
+            /* The bootstrap .zshenv is what restores the user's
+             * original ZDOTDIR and sources ghostty-integration. If it's
+             * missing (packaging didn't ship dotfiles, partial install,
+             * etc.) and we still set ZDOTDIR here, zsh stays pointed at
+             * prettymux's directory and never loads the user's .zshrc.
+             * Only override ZDOTDIR when the bootstrap is present, so
+             * broken installs degrade to "no shell-integration" rather
+             * than "shell never loads user config". */
+            char *zshenv_path = g_build_filename(zsh_dotdir, ".zshenv",
+                                                 NULL);
+            gboolean zshenv_present = g_file_test(zshenv_path,
+                                                   G_FILE_TEST_EXISTS);
+            g_free(zshenv_path);
+            if (zshenv_present &&
+                g_file_test(zsh_dotdir, G_FILE_TEST_IS_DIR)) {
+                if (old_zdotdir && old_zdotdir[0]) {
+                    env_vars[env_count].key = "GHOSTTY_ZSH_ZDOTDIR";
+                    env_vars[env_count].value = old_zdotdir;
+                    env_count++;
+                }
                 env_vars[env_count].key = "ZDOTDIR";
                 env_vars[env_count].value = zsh_dotdir;
                 env_count++;
+            } else if (!zshenv_present) {
+                g_warning("prettymux: zsh shell integration bootstrap "
+                          "missing at %s/.zshenv; user .zshrc will load "
+                          "but ghostty zsh integration features are "
+                          "disabled. Reinstall the package.",
+                          zsh_dotdir);
             }
         } else if (shell_name &&
                    (g_strcmp0(shell_name, "fish") == 0 ||
@@ -913,6 +934,24 @@ on_scroll(GtkEventControllerScroll *controller,
         return FALSE;
 
     GdkModifierType state = current_event_mods(GTK_EVENT_CONTROLLER(controller));
+
+    /* Two-finger horizontal scroll pans the strip layout instead of
+     * being passed to ghostty (terminals don't have meaningful
+     * horizontal content). The terminal widget lives in the workspace
+     * overlay, not under the notebook, so anchor the lookup at the
+     * dummy placeholder which is the actual notebook page child.
+     * The 50px/unit factor maps trackpad smooth deltas (~0.1–1.0) to
+     * comfortable column-fraction motion while still feeling
+     * responsive on mouse-wheel discrete units. */
+    if (dx != 0.0) {
+        GtkWidget *anchor = self->dummy_target
+            ? self->dummy_target : GTK_WIDGET(self);
+        if (workspace_strip_consume_horizontal_scroll(anchor, dx * 50.0)) {
+            if (dy == 0.0)
+                return TRUE;
+            dx = 0.0;
+        }
+    }
 
     /* Match Ghostty's native GTK apprt behavior.
      *
