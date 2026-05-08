@@ -248,7 +248,7 @@ test_session_strip_persistence = executable('test_session_strip_persistence',
   dependencies: [gtk4, json_glib],
   include_directories: extra_include_dirs,
   c_args: ['-ffunction-sections', '-fdata-sections'],
-  link_args: ['-Wl,--gc-sections'],
+  link_args: is_linux ? ['-Wl,--gc-sections'] : [],
 )
 test('session-strip-persistence', test_session_strip_persistence)
 
