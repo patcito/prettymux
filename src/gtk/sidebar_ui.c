@@ -129,6 +129,36 @@ sidebar_ui_start_row_reveal(GtkWidget *row)
     g_signal_connect(row, "map", G_CALLBACK(sidebar_ui_on_row_mapped), anim);
 }
 
+/* Pending workspace activation, deferred until the double-click
+ * window (~250ms) closes. If a double-click rename starts before the
+ * timeout fires, sidebar_ui_cancel_pending_activate() cancels it so
+ * the terminal-focus pull doesn't steal focus from the rename entry. */
+static guint   pending_activate_source_id;
+static int     pending_activate_index = -1;
+
+static gboolean
+deferred_activate_cb(gpointer user_data)
+{
+    (void)user_data;
+    pending_activate_source_id = 0;
+    int idx = pending_activate_index;
+    pending_activate_index = -1;
+    if (idx >= 0)
+        workspace_switch(idx, ui.terminal_stack, ui.workspace_list);
+    session_queue_save();
+    return G_SOURCE_REMOVE;
+}
+
+void
+sidebar_ui_cancel_pending_activate(void)
+{
+    if (pending_activate_source_id) {
+        g_source_remove(pending_activate_source_id);
+        pending_activate_source_id = 0;
+        pending_activate_index = -1;
+    }
+}
+
 static void
 on_workspace_row_activated(GtkListBox *list, GtkListBoxRow *row, gpointer user_data)
 {
@@ -158,9 +188,18 @@ on_workspace_row_activated(GtkListBox *list, GtkListBoxRow *row, gpointer user_d
     if (rename_in_progress || rename_suppressed)
         return;
 
-    workspace_switch(gtk_list_box_row_get_index(row),
-                     ui.terminal_stack, ui.workspace_list);
-    session_queue_save();
+    /* Defer the workspace activation by the double-click window so a
+     * pending rename gesture can cancel it before the row's focus
+     * pulls focus to the first ghostty terminal — otherwise the
+     * rename entry never wins focus. start_rename() (triggered from
+     * the second click in CAPTURE phase) calls
+     * sidebar_ui_cancel_pending_activate() which removes this
+     * timeout. */
+    int target_idx = gtk_list_box_row_get_index(row);
+    sidebar_ui_cancel_pending_activate();
+    pending_activate_index = target_idx;
+    pending_activate_source_id = g_timeout_add(280, deferred_activate_cb,
+                                                NULL);
 }
 
 static gboolean

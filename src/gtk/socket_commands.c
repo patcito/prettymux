@@ -255,6 +255,7 @@ socket_commands_on_socket_command(const char  *command,
         if (name && name[0] && workspaces && workspaces->len > 0) {
             Workspace *ws = g_ptr_array_index(workspaces, workspaces->len - 1);
             snprintf(ws->name, sizeof(ws->name), "%.60s", name);
+            ws->user_renamed = TRUE;
             workspace_refresh_sidebar_label(ws);
         }
         json_builder_set_member_name(response, "status");
@@ -913,6 +914,25 @@ socket_commands_on_socket_command(const char  *command,
             json_builder_set_member_name(response, "status");
             json_builder_add_string_value(response, "error");
         }
+    } else if (strcmp(command, "workspace.edit") == 0) {
+        int idx = (int)json_object_get_int_member_with_default(msg,
+                                                                "workspace",
+                                                                -1);
+        Workspace *ws = NULL;
+        if (idx >= 0 && workspaces && idx < (int)workspaces->len)
+            ws = g_ptr_array_index(workspaces, idx);
+        else
+            ws = workspace_get_current();
+        if (ws) {
+            workspace_start_workspace_rename(ws);
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "ok");
+        } else {
+            json_builder_set_member_name(response, "status");
+            json_builder_add_string_value(response, "error");
+            json_builder_set_member_name(response, "message");
+            json_builder_add_string_value(response, "no workspace");
+        }
     } else if (strcmp(command, "action") == 0) {
         const char *act = json_object_get_string_member_with_default(msg, "action", "");
         gboolean non_interactive =
@@ -1172,6 +1192,7 @@ socket_commands_on_socket_command(const char  *command,
         strcmp(command, "list.actions") != 0 &&
         strcmp(command, "app.quit") != 0 &&
         strcmp(command, "tab.edit") != 0 &&
+        strcmp(command, "workspace.edit") != 0 &&
         strcmp(command, "port.report") != 0) {
         session_queue_save();
     }

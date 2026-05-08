@@ -663,6 +663,12 @@ workspace_start_tab_rename(Workspace *ws)
 }
 
 void
+workspace_start_workspace_rename(Workspace *ws)
+{
+    (void)ws;
+}
+
+void
 workspace_switch(int index, GtkWidget *terminal_stack, GtkWidget *workspace_list)
 {
     (void)terminal_stack;

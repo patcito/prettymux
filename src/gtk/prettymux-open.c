@@ -75,6 +75,8 @@ usage(void)
         "       prettymux-open --type <text>            Type text into terminal\n"
         "       prettymux-open --new-workspace [name]   Create workspace\n"
         "       prettymux-open --new-tab                New terminal tab\n"
+        "       prettymux-open --edit-tab               Start inline rename of focused tab\n"
+        "       prettymux-open --edit-workspace [-w N]  Start inline rename of workspace N (or current)\n"
         "       prettymux-open --move-tab --from-w <n> --from-p <n> --from-t <n> --to-w <n> --to-p <n>\n"
         "       prettymux-open --move-workspace --to-instance <id> [-w <workspace-index>]\n"
         "       prettymux-open --select-tab -w <n> -p <n> -t <n>\n"
@@ -830,6 +832,27 @@ main(int argc, char *argv[])
 
     if (strcmp(arg, "--new-tab") == 0) {
         return send_command("{\"command\":\"tab.new\"}");
+    }
+
+    if (strcmp(arg, "--edit-tab") == 0) {
+        return send_command("{\"command\":\"tab.edit\"}");
+    }
+
+    if (strcmp(arg, "--edit-workspace") == 0) {
+        int ws_idx = -1;
+        for (int i = 1; i + 1 < cmd_argc; i += 2) {
+            if (strcmp(cmd_argv[i], "-w") == 0)
+                ws_idx = atoi(cmd_argv[i + 1]);
+        }
+        char msg[128];
+        if (ws_idx >= 0)
+            snprintf(msg, sizeof(msg),
+                     "{\"command\":\"workspace.edit\",\"workspace\":%d}",
+                     ws_idx);
+        else
+            snprintf(msg, sizeof(msg),
+                     "{\"command\":\"workspace.edit\"}");
+        return send_command(msg);
     }
 
     if (strcmp(arg, "--move-tab") == 0) {

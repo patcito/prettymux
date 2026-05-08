@@ -1362,6 +1362,12 @@ session_save_for_instance(const char *instance_id,
             json_builder_set_member_name(b, "name");
             json_builder_add_string_value(b, ws->name);
 
+            /* Persist the user-renamed flag so a custom workspace
+             * name survives a restart and isn't clobbered by ghostty
+             * SET_TITLE on the next `cd`. */
+            json_builder_set_member_name(b, "userRenamed");
+            json_builder_add_boolean_value(b, ws->user_renamed);
+
             json_builder_set_member_name(b, "notes");
             json_builder_add_string_value(b,
                 ws->notes_text ? ws->notes_text : "");
@@ -1619,6 +1625,11 @@ session_restore_for_instance(const char *instance_id,
             const char *name = json_object_get_string_member_with_default(
                 ws_obj, "name", ws->name);
             snprintf(ws->name, sizeof(ws->name), "%s", name);
+
+            /* Restore user-renamed flag so a previously customized
+             * name isn't overwritten by SET_TITLE post-restore. */
+            ws->user_renamed = json_object_get_boolean_member_with_default(
+                ws_obj, "userRenamed", FALSE);
 
             /* Restore notes */
             const char *notes = json_object_get_string_member_with_default(

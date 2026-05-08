@@ -324,20 +324,36 @@ workspace_sync_summary_from_first_terminal(Workspace *ws)
 void
 workspace_focus_first_terminal(Workspace *ws)
 {
-    GtkNotebook *pane;
+    GtkNotebook *pane = NULL;
     GtkWidget *terminal;
+    int page = 0;
 
     if (!ws)
         return;
 
-    pane = GTK_NOTEBOOK(ws->notebook);
+    /* Prefer the last-focused pane (and its current tab) so switching
+     * back to a workspace returns the user to where they left off,
+     * rather than jumping to pane 0 / tab 0 every time. Falls back to
+     * the workspace's primary notebook on first activation or when
+     * the cached pane was destroyed. */
+    if (ws->active_pane &&
+        workspace_get_pane_index(ws, ws->active_pane) >= 0) {
+        pane = ws->active_pane;
+        int cur = gtk_notebook_get_current_page(pane);
+        if (cur >= 0)
+            page = cur;
+    } else {
+        pane = GTK_NOTEBOOK(ws->notebook);
+    }
     if (!GTK_IS_NOTEBOOK(pane) || gtk_notebook_get_n_pages(pane) <= 0)
         return;
+    if (page < 0 || page >= gtk_notebook_get_n_pages(pane))
+        page = 0;
 
     workspace_set_active_pane(ws, pane);
-    gtk_notebook_set_current_page(pane, 0);
+    gtk_notebook_set_current_page(pane, page);
 
-    terminal = workspace_notebook_terminal_at(pane, 0);
+    terminal = workspace_notebook_terminal_at(pane, page);
     if (!terminal || !GHOSTTY_IS_TERMINAL(terminal))
         return;
 
@@ -346,7 +362,7 @@ workspace_focus_first_terminal(Workspace *ws)
     focus_terminal_page(terminal);
     focus_terminal_page_later(terminal);
     ghostty_terminal_clear_activity(GHOSTTY_TERMINAL(terminal));
-    workspace_clear_tab_notification(pane, 0);
+    workspace_clear_tab_notification(pane, page);
     workspace_refresh_tab_labels(ws);
     workspace_refresh_sidebar_label(ws);
 }
@@ -2217,16 +2233,151 @@ on_rename_key_pressed(GtkEventControllerKey *ctrl, guint keyval,
     return FALSE;
 }
 
+typedef struct {
+    Workspace *workspace;
+    GtkWidget *entry;
+    GtkWidget *popover;
+    GtkWidget *label;       /* the sidebar inner label, for live text update */
+    gboolean   committed;   /* set TRUE when Enter / focus-leave commits */
+} WorkspaceRenamePopoverData;
+
+static gboolean rename_grab_focus_idle_cb(gpointer user_data);
+
+static void
+ws_rename_popover_commit(WorkspaceRenamePopoverData *data)
+{
+    if (!data || data->committed)
+        return;
+    data->committed = TRUE;
+
+    const char *new_text = data->entry
+        ? gtk_editable_get_text(GTK_EDITABLE(data->entry))
+        : NULL;
+    if (data->workspace && new_text && new_text[0]) {
+        gboolean changed = g_strcmp0(new_text, data->workspace->name) != 0;
+        snprintf(data->workspace->name, sizeof(data->workspace->name),
+                 "%.60s", new_text);
+        if (data->label && GTK_IS_LABEL(data->label))
+            gtk_label_set_text(GTK_LABEL(data->label), new_text);
+        workspace_refresh_sidebar_label(data->workspace);
+        if (changed)
+            session_queue_save();
+    }
+}
+
+static void
+ws_rename_popover_on_activate(GtkEntry *entry, gpointer user_data)
+{
+    (void)entry;
+    WorkspaceRenamePopoverData *data = user_data;
+    ws_rename_popover_commit(data);
+    if (data->popover)
+        gtk_popover_popdown(GTK_POPOVER(data->popover));
+}
+
+static gboolean
+ws_rename_popover_on_key(GtkEventControllerKey *ctrl, guint keyval,
+                         guint keycode, GdkModifierType state,
+                         gpointer user_data)
+{
+    (void)ctrl;
+    (void)keycode;
+    (void)state;
+    if (keyval != GDK_KEY_Escape)
+        return FALSE;
+    WorkspaceRenamePopoverData *data = user_data;
+    /* Don't commit on Escape — pop down without saving. */
+    data->committed = TRUE;
+    if (data->popover)
+        gtk_popover_popdown(GTK_POPOVER(data->popover));
+    return TRUE;
+}
+
+static void
+ws_rename_popover_on_closed(GtkPopover *popover, gpointer user_data)
+{
+    WorkspaceRenamePopoverData *data = user_data;
+    /* If the popover dismisses without Enter / Escape (e.g. click
+     * outside), commit the typed value — matches inline-rename UX. */
+    ws_rename_popover_commit(data);
+    /* Tear the popover down so we don't leak a stale parent on the
+     * sidebar label after rename is done. The g_object_set_data_full
+     * ("popover-data", ..., g_free) on the popover frees `data`
+     * automatically when the popover is destroyed. */
+    gtk_widget_unparent(GTK_WIDGET(popover));
+}
+
+static void
+start_workspace_rename_popover(RenameData *rd)
+{
+    if (!rd || !rd->workspace || !rd->label || !rd->event_box)
+        return;
+
+    /* Anchor on the inner label widget so the popover sits over the
+     * row's visible name. event_box is a horizontal GtkBox; pointing
+     * at the label keeps the popover tight to the renamed text. */
+    GtkWidget *anchor = rd->label;
+    if (!anchor || !gtk_widget_get_parent(anchor))
+        anchor = rd->event_box;
+
+    GtkWidget *popover = gtk_popover_new();
+    gtk_popover_set_has_arrow(GTK_POPOVER(popover), TRUE);
+    gtk_popover_set_position(GTK_POPOVER(popover), GTK_POS_TOP);
+    gtk_popover_set_autohide(GTK_POPOVER(popover), TRUE);
+    gtk_widget_set_parent(popover, anchor);
+
+    GtkWidget *entry = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(entry), "Workspace name");
+    gtk_editable_set_text(GTK_EDITABLE(entry),
+                          rd->workspace->name);
+    gtk_entry_set_activates_default(GTK_ENTRY(entry), TRUE);
+    gtk_widget_set_size_request(entry, 240, -1);
+
+    WorkspaceRenamePopoverData *data =
+        g_new0(WorkspaceRenamePopoverData, 1);
+    data->workspace = rd->workspace;
+    data->entry = entry;
+    data->popover = popover;
+    data->label = rd->label;
+    data->committed = FALSE;
+    /* Tie data lifetime to the popover so it's freed if the row /
+     * label is destroyed mid-rename (e.g. workspace deleted). */
+    g_object_set_data_full(G_OBJECT(popover), "popover-data", data, g_free);
+
+    g_signal_connect(entry, "activate",
+                     G_CALLBACK(ws_rename_popover_on_activate), data);
+    GtkEventController *key = gtk_event_controller_key_new();
+    g_signal_connect(key, "key-pressed",
+                     G_CALLBACK(ws_rename_popover_on_key), data);
+    gtk_widget_add_controller(entry, key);
+    g_signal_connect(popover, "closed",
+                     G_CALLBACK(ws_rename_popover_on_closed), data);
+
+    gtk_popover_set_child(GTK_POPOVER(popover), entry);
+    gtk_popover_popup(GTK_POPOVER(popover));
+
+    /* Popover popup() doesn't fully realize the entry synchronously.
+     * Defer focus + select-all to an idle so the entry is mapped and
+     * its window/grab is in place — without this, the focus and
+     * selection can land on whatever widget had focus before. */
+    g_object_ref(entry);
+    g_idle_add(rename_grab_focus_idle_cb, entry);
+}
+
 static gboolean
 rename_grab_focus_idle_cb(gpointer user_data)
 {
     GtkWidget *entry = GTK_WIDGET(user_data);
     if (!GTK_IS_ENTRY(entry))
         goto out;
-    GtkRoot *root = gtk_widget_get_root(entry);
-    if (GTK_IS_WINDOW(root))
-        gtk_window_set_focus(GTK_WINDOW(root), entry);
-    else
+    /* Avoid gtk_widget_get_root + gtk_window_set_focus here: when the
+     * entry is mounted inside a sidebar listbox row, the get_root walk
+     * eventually triggers a Gtk-CRITICAL gtk_widget_get_parent
+     * assertion deep inside libgtk-4 (captured backtrace at
+     * crit.md). gtk_widget_grab_focus is sufficient: by the time this
+     * idle runs, the entry is realized and parented, so the focus
+     * grab settles correctly. */
+    if (gtk_widget_get_parent(entry))
         gtk_widget_grab_focus(entry);
     gtk_editable_select_region(GTK_EDITABLE(entry), 0, -1);
 out:
@@ -2247,9 +2398,14 @@ start_rename(RenameData *rd)
     GtkWidget *parent = rd->event_box;
     const char *current_text = gtk_label_get_text(GTK_LABEL(rd->label));
 
-    if (rd->is_workspace_row)
+    if (rd->is_workspace_row) {
+        /* Cancel any pending deferred row-activation so the terminal
+         * focus-grab from the first click of the double-click doesn't
+         * steal focus from the rename entry we're about to mount. */
+        sidebar_ui_cancel_pending_activate();
         g_object_set_data(G_OBJECT(parent), "rename-activate-suppressed",
                           GINT_TO_POINTER(1));
+    }
     if (!rd->is_workspace_row && rd->terminal)
         notebook = terminal_parent_notebook(rd->terminal);
     if (notebook)
@@ -2278,12 +2434,14 @@ start_rename(RenameData *rd)
     gtk_widget_add_controller(entry, key_ctrl);
     g_object_set_data(G_OBJECT(entry), "rename-key-controller", key_ctrl);
 
-    /* Clicking away should commit the inline rename like Enter does. */
-    GtkEventController *focus_ctrl = gtk_event_controller_focus_new();
-    g_signal_connect(focus_ctrl, "leave",
-                     G_CALLBACK(on_rename_entry_focus_leave), rd);
-    gtk_widget_add_controller(entry, focus_ctrl);
-    g_object_set_data(G_OBJECT(entry), "rename-focus-controller", focus_ctrl);
+    /* Earlier: a focus-leave handler committed the rename when the
+     * entry lost focus. That introduced a reentrancy hazard when a
+     * second rename (e.g. tab.edit while a workspace rename is open)
+     * stole focus — the focus-leave fired finish_rename which
+     * unparented the entry mid-event, triggering an infinite GTK
+     * focus-fixup loop (~500k CRITICALs/s, hard freeze). User must
+     * use Enter / Escape to commit/cancel for now. */
+    (void)0;
 
     g_object_set_data(G_OBJECT(parent), "rename-entry", entry);
     gtk_box_append(GTK_BOX(parent), entry);
@@ -2327,10 +2485,19 @@ finish_rename(GtkEntry *entry, RenameData *rd)
         if (rd->is_workspace_row && rd->workspace) {
             snprintf(rd->workspace->name, sizeof(rd->workspace->name),
                      "%.60s", new_text);
+            /* Mark workspace as explicitly renamed so SET_TITLE
+             * (e.g. ghostty's auto title from `cd <newdir>`) doesn't
+             * overwrite the custom name. Persisted via session JSON
+             * so the flag survives restarts. */
+            rd->workspace->user_renamed = TRUE;
         }
     }
 
-    /* Remove the entry, re-add the label */
+    /* Remove the entry, re-add the label at its original position
+     * (between icon_stack and spacer). gtk_box_append would put it
+     * at the END of the box — past the spacer — so the name would
+     * render in the middle/right of the row instead of left-aligned
+     * after the icon. Find the icon (first child) and insert after. */
     GtkWidget *entry_widget = GTK_WIDGET(entry);
     GtkWidget *parent = rd->event_box;
     if (g_object_get_data(G_OBJECT(parent), "rename-entry") != entry_widget)
@@ -2339,7 +2506,14 @@ finish_rename(GtkEntry *entry, RenameData *rd)
         notebook = terminal_parent_notebook(rd->terminal);
 
     gtk_box_remove(GTK_BOX(parent), entry_widget);
-    gtk_box_append(GTK_BOX(parent), rd->label);
+    {
+        GtkWidget *first_child = gtk_widget_get_first_child(parent);
+        if (first_child)
+            gtk_box_insert_child_after(GTK_BOX(parent), rd->label,
+                                       first_child);
+        else
+            gtk_box_append(GTK_BOX(parent), rd->label);
+    }
     gtk_widget_set_visible(rd->label, TRUE);
     g_object_set_data(G_OBJECT(parent), "rename-entry", NULL);
     g_object_set_data(G_OBJECT(parent), "rename-in-progress", NULL);
@@ -2347,6 +2521,17 @@ finish_rename(GtkEntry *entry, RenameData *rd)
     g_object_set_data(G_OBJECT(rd->label), "rename-in-progress", NULL);
     if (notebook)
         g_object_set_data(G_OBJECT(notebook), "tab-rename-in-progress", NULL);
+    /* The double-click gesture pre-disabled the row's activatable/
+     * selectable; restore them here. By the time finish_rename runs
+     * the click has fully unwound so walking the parent chain is safe. */
+    if (rd->is_workspace_row && parent) {
+        GtkWidget *row = gtk_widget_get_ancestor(parent,
+                                                  GTK_TYPE_LIST_BOX_ROW);
+        if (GTK_IS_LIST_BOX_ROW(row)) {
+            gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), TRUE);
+            gtk_list_box_row_set_selectable(GTK_LIST_BOX_ROW(row), TRUE);
+        }
+    }
     g_object_unref(rd->label); /* Balance the ref from start_rename */
 
     /* Now safe to refresh sidebar */
@@ -2375,6 +2560,15 @@ on_rename_entry_focus_leave(GtkEventControllerFocus *ctrl, gpointer user_data)
         finish_rename(GTK_ENTRY(entry_widget), rd);
 }
 
+static gboolean
+start_rename_idle_cb(gpointer user_data)
+{
+    RenameData *rd = user_data;
+    if (rd && GTK_IS_BOX(rd->event_box) && GTK_IS_LABEL(rd->label))
+        start_rename(rd);
+    return G_SOURCE_REMOVE;
+}
+
 static void
 on_label_double_click(GtkGestureClick *gesture, int n_press,
                       double x, double y, gpointer user_data)
@@ -2384,6 +2578,29 @@ on_label_double_click(GtkGestureClick *gesture, int n_press,
 
     RenameData *rd = user_data;
     gtk_gesture_set_state(GTK_GESTURE(gesture), GTK_EVENT_SEQUENCE_CLAIMED);
+
+    if (rd->is_workspace_row) {
+        /* Cancel any pending deferred row-activation NOW so the
+         * first click's terminal focus-grab is killed before its
+         * timeout fires. on_workspace_row_activated schedules the
+         * activation with a 280ms delay; this gesture (the second
+         * click) typically fires within that window. */
+        sidebar_ui_cancel_pending_activate();
+
+        /* Pre-disable row activation/selection right inside the
+         * gesture so the in-flight click can't switch workspaces or
+         * grab keyboard focus on the listbox row. Defer the actual
+         * label-to-entry swap to an idle so the rest of the click
+         * sequence settles first. */
+        GtkWidget *row = gtk_widget_get_ancestor(rd->event_box,
+                                                 GTK_TYPE_LIST_BOX_ROW);
+        if (GTK_IS_LIST_BOX_ROW(row)) {
+            gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), FALSE);
+            gtk_list_box_row_set_selectable(GTK_LIST_BOX_ROW(row), FALSE);
+        }
+        g_idle_add(start_rename_idle_cb, rd);
+        return;
+    }
     start_rename(rd);
 }
 
@@ -4263,6 +4480,174 @@ void workspace_start_tab_rename(Workspace *ws) {
     start_rename(rd);
 }
 
+void workspace_start_workspace_rename(Workspace *ws) {
+    if (!ws || !ws->sidebar_label) return;
+    GtkWidget *box = gtk_widget_get_parent(ws->sidebar_label);
+    if (!box) return;
+    RenameData *rd = g_object_get_data(G_OBJECT(box), "rename-data");
+    if (!rd) return;
+    start_rename(rd);
+}
+
+/* ── Workspace sidebar reorder (drag) ──────────────────────────── */
+
+/*
+ * Move a workspace from `from_idx` to `to_idx`, keeping the listbox
+ * rows, the global `workspaces` array, and `current_workspace` in
+ * sync. Used by drag-to-reorder of sidebar rows.
+ */
+static void
+workspace_move_in_array(int from_idx, int to_idx)
+{
+    if (!workspaces || !g_workspace_list)
+        return;
+    int n = (int)workspaces->len;
+    if (from_idx < 0 || from_idx >= n || to_idx < 0 || to_idx >= n)
+        return;
+    if (from_idx == to_idx)
+        return;
+
+    Workspace *ws = g_ptr_array_index(workspaces, from_idx);
+
+    /* Reorder the listbox row. Hold a ref so removing it from the
+     * listbox doesn't destroy the card before we re-insert. */
+    GtkListBoxRow *row = gtk_list_box_get_row_at_index(
+        GTK_LIST_BOX(g_workspace_list), from_idx);
+    GtkWidget *row_widget = row ? GTK_WIDGET(row) : NULL;
+    if (row_widget)
+        g_object_ref(row_widget);
+
+    /* Reorder the workspaces ptr array (steal-then-insert avoids the
+     * automatic free that g_ptr_array_remove_index does when an element
+     * destroy func is set). */
+    g_ptr_array_steal_index(workspaces, from_idx);
+    g_ptr_array_insert(workspaces, to_idx, ws);
+
+    if (row_widget) {
+        gtk_list_box_remove(GTK_LIST_BOX(g_workspace_list), row_widget);
+        gtk_list_box_insert(GTK_LIST_BOX(g_workspace_list), row_widget,
+                            to_idx);
+        g_object_unref(row_widget);
+    }
+
+    /* Track current_workspace through the move. */
+    if (current_workspace == from_idx) {
+        current_workspace = to_idx;
+    } else if (from_idx < current_workspace && current_workspace <= to_idx) {
+        current_workspace--;
+    } else if (to_idx <= current_workspace && current_workspace < from_idx) {
+        current_workspace++;
+    }
+
+    /* Reflect the change in the listbox selection. */
+    GtkListBoxRow *current_row = gtk_list_box_get_row_at_index(
+        GTK_LIST_BOX(g_workspace_list), current_workspace);
+    if (current_row)
+        gtk_list_box_select_row(GTK_LIST_BOX(g_workspace_list), current_row);
+
+    /* Note: notifications track workspaces by index; after reorder
+     * any pinned notifications still reference the old indices. The
+     * helper notifications_on_workspace_removed only handles removal,
+     * so a full remap is out of scope for this change. */
+    session_queue_save();
+}
+
+typedef struct {
+    Workspace *workspace;
+    int        source_idx;
+    gboolean   active;
+} WorkspaceReorderState;
+
+static void
+on_ws_row_drag_begin(GtkGestureDrag *drag, double start_x, double start_y,
+                     gpointer user_data)
+{
+    (void)start_x;
+    (void)start_y;
+    WorkspaceReorderState *st = user_data;
+    if (!st || !st->workspace)
+        return;
+    GtkWidget *widget = gtk_event_controller_get_widget(
+        GTK_EVENT_CONTROLLER(drag));
+    GtkWidget *row = widget
+        ? gtk_widget_get_ancestor(widget, GTK_TYPE_LIST_BOX_ROW)
+        : NULL;
+    if (!row)
+        return;
+    st->source_idx = gtk_list_box_row_get_index(GTK_LIST_BOX_ROW(row));
+    st->active = TRUE;
+    gtk_widget_add_css_class(row, "ws-row-dragging");
+}
+
+static void
+on_ws_row_drag_end(GtkGestureDrag *drag, double offset_x, double offset_y,
+                   gpointer user_data)
+{
+    (void)offset_x;
+    WorkspaceReorderState *st = user_data;
+    if (!st || !st->active)
+        return;
+    st->active = FALSE;
+
+    GtkWidget *widget = gtk_event_controller_get_widget(
+        GTK_EVENT_CONTROLLER(drag));
+    GtkWidget *row = widget
+        ? gtk_widget_get_ancestor(widget, GTK_TYPE_LIST_BOX_ROW)
+        : NULL;
+    if (row)
+        gtk_widget_remove_css_class(row, "ws-row-dragging");
+
+    if (!g_workspace_list || st->source_idx < 0)
+        return;
+
+    /* Translate the gesture's start point to listbox coords, then add
+     * the drag offset to find the drop target. compute_point with the
+     * source row keeps the conversion correct even though the row's
+     * geometry hasn't moved during the drag (no live-reorder). */
+    double start_x = 0.0, start_y = 0.0;
+    gtk_gesture_drag_get_start_point(drag, &start_x, &start_y);
+
+    graphene_point_t lb_pt;
+    if (!widget || !gtk_widget_compute_point(
+            widget, g_workspace_list,
+            &GRAPHENE_POINT_INIT((float)start_x, (float)start_y),
+            &lb_pt))
+        return;
+
+    int target_y = (int)(lb_pt.y + offset_y);
+    GtkListBoxRow *target_row = gtk_list_box_get_row_at_y(
+        GTK_LIST_BOX(g_workspace_list), target_y);
+    if (!target_row)
+        return;
+
+    int target_idx = gtk_list_box_row_get_index(target_row);
+    if (target_idx == st->source_idx)
+        return;
+
+    workspace_move_in_array(st->source_idx, target_idx);
+}
+
+static void
+attach_ws_reorder_drag(GtkWidget *card, Workspace *ws)
+{
+    WorkspaceReorderState *st = g_new0(WorkspaceReorderState, 1);
+    st->workspace = ws;
+    st->source_idx = -1;
+    st->active = FALSE;
+    g_object_set_data_full(G_OBJECT(card), "ws-reorder-state", st, g_free);
+
+    GtkGesture *drag = gtk_gesture_drag_new();
+    /* Mouse: primary button drag. Touch: long-press + drag is built in
+     * to GtkGestureDrag's touch handling — no extra setup needed. */
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(drag),
+                                  GDK_BUTTON_PRIMARY);
+    g_signal_connect(drag, "drag-begin",
+                     G_CALLBACK(on_ws_row_drag_begin), st);
+    g_signal_connect(drag, "drag-end",
+                     G_CALLBACK(on_ws_row_drag_end), st);
+    gtk_widget_add_controller(card, GTK_EVENT_CONTROLLER(drag));
+}
+
 /* ── Workspace sidebar row ──────────────────────────────────────── */
 
 static GtkWidget *create_workspace_row(Workspace *ws) {
@@ -4294,6 +4679,7 @@ static GtkWidget *create_workspace_row(Workspace *ws) {
     gtk_label_set_max_width_chars(GTK_LABEL(inner_label), 22);
 
     setup_ws_sidebar_drop_target(card);
+    attach_ws_reorder_drag(card, ws);
 
     {
         SidebarCtxData *ctx = g_new0(SidebarCtxData, 1);

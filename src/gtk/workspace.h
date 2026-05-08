@@ -57,6 +57,12 @@ typedef struct _Workspace {
     /* Notes panel */
     char *notes_text;            /* Per-workspace notes content (heap-allocated) */
 
+    /* TRUE if the user has renamed this workspace explicitly (via
+     * inline rename, sidebar context menu, or socket command). Set
+     * to skip the SET_TITLE auto-overwrite so the custom name
+     * survives `cd` and other terminal title updates. */
+    gboolean user_renamed;
+
 } Workspace;
 
 extern GPtrArray *workspaces;
@@ -234,6 +240,9 @@ gboolean workspace_close_current_tab(Workspace *ws);
 
 /* Trigger inline rename on the current tab's label */
 void workspace_start_tab_rename(Workspace *ws);
+
+/* Trigger inline rename on the workspace's sidebar row label. */
+void workspace_start_workspace_rename(Workspace *ws);
 
 /*
  * If the widget lives inside a workspace that uses strip layout, apply
