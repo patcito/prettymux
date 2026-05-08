@@ -279,6 +279,11 @@ sidebar_ui_show_move_to_window_menu(Workspace *workspace)
     (void)workspace;
 }
 
+void
+sidebar_ui_cancel_pending_activate(void)
+{
+}
+
 static gsize terminal_signals_registered = 0;
 
 static void
