@@ -56,11 +56,14 @@ jobs:
             -Doptimize=ReleaseFast \
             -Dtarget=x86_64-linux-gnu
 
+      - name: Pack ghostty tree
+        run: tar czf ghostty-prebuilt.tar.gz ghostty
+
       - name: Upload ghostty tree
         uses: actions/upload-artifact@v6
         with:
           name: ghostty-prebuilt
-          path: ghostty/
+          path: ghostty-prebuilt.tar.gz
 
   build-flatpak:
     needs: fetch-libghostty
@@ -89,7 +92,10 @@ jobs:
         uses: actions/download-artifact@v5
         with:
           name: ghostty-prebuilt
-          path: ghostty
+          path: .
+
+      - name: Extract prebuilt ghostty
+        run: tar xzf ghostty-prebuilt.tar.gz
 
       - name: Build Flatpak bundle
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
