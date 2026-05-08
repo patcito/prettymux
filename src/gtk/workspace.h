@@ -243,3 +243,12 @@ void workspace_start_tab_rename(Workspace *ws);
  */
 gboolean workspace_strip_consume_horizontal_scroll(GtkWidget *anchor,
                                                    double dx_pixels);
+
+/*
+ * Workspace drag-reorder.
+ *
+ * workspace_reorder: move a workspace from src_idx to dest_idx in the
+ *   sidebar and the internal workspaces array. After reordering, the
+ *   active workspace and sidebar selection are updated.
+ */
+void workspace_reorder(int src_idx, int dest_idx);

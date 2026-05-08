@@ -2796,6 +2796,65 @@ on_ws_sidebar_drop(GtkDropTarget *target, const GValue *value,
     return move_terminal_to_notebook(src_ws, src_nb, terminal, dest_ws, dest_nb);
 }
 
+/* ── Workspace sidebar drag-reorder ──────────────────────────── */
+
+static GdkContentProvider *
+on_ws_sidebar_drag_prepare(GtkDragSource *source,
+                            double x, double y,
+                            gpointer user_data)
+{
+    (void)source;
+    (void)x;
+    (void)y;
+    Workspace *ws = user_data;
+    guint64 serial = ws->serial;
+    GValue value = G_VALUE_INIT;
+    g_value_init(&value, G_TYPE_UINT64);
+    g_value_set_uint64(&value, serial);
+    GdkContentProvider *provider = gdk_content_provider_new_for_value(&value);
+    g_value_unset(&value);
+    return provider;
+}
+
+static void
+on_ws_sidebar_drag_begin(GtkDragSource *source,
+                            GdkDrag *drag,
+                            gpointer user_data)
+{
+    (void)source;
+    (void)drag;
+    /* No custom drag icon — GTK will use a widget snapshot by default */
+}
+
+static gboolean
+on_ws_sidebar_row_drop(GtkDropTarget *target,
+                        const GValue *value,
+                        double x,
+                        double y,
+                        gpointer user_data)
+{
+    (void)target;
+    (void)x;
+    (void)y;
+    if (!G_VALUE_HOLDS_UINT64(value))
+        return FALSE;
+
+    guint64 src_serial = g_value_get_uint64(value);
+    Workspace *src_ws = workspace_get_by_serial(src_serial);
+    Workspace *dest_ws = user_data;
+
+    if (!src_ws || !dest_ws || src_ws == dest_ws)
+        return FALSE;
+
+    int src_idx = workspace_get_index(src_ws);
+    int dest_idx = workspace_get_index(dest_ws);
+    if (src_idx < 0 || dest_idx < 0)
+        return FALSE;
+
+    workspace_reorder(src_idx, dest_idx);
+    return TRUE;
+}
+
 /* ── DnD: Setup drag source on tab labels ───────────────────────── */
 
 static void
@@ -4295,6 +4354,24 @@ static GtkWidget *create_workspace_row(Workspace *ws) {
 
     setup_ws_sidebar_drop_target(card);
 
+    /* Workspace reorder: drag source sends serial, drop target receives it */
+    {
+        GtkDragSource *ws_drag = gtk_drag_source_new();
+        gtk_drag_source_set_actions(ws_drag, GDK_ACTION_MOVE);
+        g_signal_connect(ws_drag, "prepare",
+                         G_CALLBACK(on_ws_sidebar_drag_prepare), ws);
+        g_signal_connect(ws_drag, "drag-begin",
+                         G_CALLBACK(on_ws_sidebar_drag_begin), ws);
+        gtk_widget_add_controller(card, GTK_EVENT_CONTROLLER(ws_drag));
+    }
+    {
+        GtkDropTarget *ws_drop = gtk_drop_target_new(G_TYPE_UINT64,
+                                                      GDK_ACTION_MOVE);
+        g_signal_connect(ws_drop, "drop",
+                         G_CALLBACK(on_ws_sidebar_row_drop), ws);
+        gtk_widget_add_controller(card, GTK_EVENT_CONTROLLER(ws_drop));
+    }
+
     {
         SidebarCtxData *ctx = g_new0(SidebarCtxData, 1);
         ctx->workspace = ws;
@@ -4605,6 +4682,47 @@ void workspace_remove(int index, GtkWidget *terminal_stack, GtkWidget *workspace
     g_clear_pointer(&ws->status_entries, g_hash_table_unref);
     g_free(ws->notes_text);
     g_free(ws);
+}
+
+void
+workspace_reorder(int src_idx, int dest_idx)
+{
+    if (!workspaces || src_idx == dest_idx)
+        return;
+    if (src_idx < 0 || src_idx >= (int)workspaces->len)
+        return;
+    if (dest_idx < 0 || dest_idx >= (int)workspaces->len)
+        return;
+
+    /* Reorder the workspaces array */
+    Workspace *moved = g_ptr_array_index(workspaces, src_idx);
+    g_ptr_array_remove_index(workspaces, src_idx);
+    g_ptr_array_insert(workspaces, dest_idx, moved);
+
+    /* Reorder the sidebar ListBox to match */
+    GtkListBoxRow *src_row = gtk_list_box_get_row_at_index(
+        GTK_LIST_BOX(g_workspace_list), src_idx);
+    if (src_row) {
+        g_object_ref(src_row);
+        gtk_list_box_remove(GTK_LIST_BOX(g_workspace_list), GTK_WIDGET(src_row));
+        gtk_list_box_insert(GTK_LIST_BOX(g_workspace_list),
+                            GTK_WIDGET(src_row), dest_idx);
+        g_object_unref(src_row);
+    }
+
+    /* Update the stack visible child to follow the active workspace */
+    if (current_workspace == src_idx)
+        current_workspace = dest_idx;
+    else if (current_workspace > src_idx && current_workspace <= dest_idx)
+        current_workspace--;
+    else if (current_workspace >= dest_idx && current_workspace < src_idx)
+        current_workspace++;
+
+    /* Re-select the active row and ensure the stack shows it */
+    workspace_switch(current_workspace, g_terminal_stack, g_workspace_list);
+
+    /* Persist the new order */
+    session_queue_save();
 }
 
 void workspace_switch(int index, GtkWidget *terminal_stack, GtkWidget *workspace_list) {
