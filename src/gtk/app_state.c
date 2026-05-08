@@ -1,4 +1,4 @@
-#ifdef G_OS_WIN32
+#if defined(_WIN32) || defined(_WIN64)
 #include <windows.h>
 #else
 #include <dirent.h>
