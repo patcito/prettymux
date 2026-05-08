@@ -56,7 +56,8 @@ typedef struct _Workspace {
 
     /* Notes panel */
     char *notes_text;            /* Per-workspace notes content (heap-allocated) */
-
+    char        *default_cwd;        /* Default directory for new terminals (NULL = inherit) */
+    char        *start_command;      /* Command to run instead of shell (NULL = default shell) */
 } Workspace;
 
 extern GPtrArray *workspaces;

@@ -27,6 +27,7 @@ extern float g_ghostty_default_font_size;
  * Returns: a new #GhosttyTerminal widget.
  */
 GtkWidget *ghostty_terminal_new(const char *start_cwd);
+GtkWidget *ghostty_terminal_new_full(const char *start_cwd, const char *start_command);
 
 /*
  * ghostty_terminal_get_surface:

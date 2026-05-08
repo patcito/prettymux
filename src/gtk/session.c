@@ -1366,6 +1366,13 @@ session_save_for_instance(const char *instance_id,
             json_builder_add_string_value(b,
                 ws->notes_text ? ws->notes_text : "");
 
+            json_builder_set_member_name(b, "defaultCwd");
+            json_builder_add_string_value(b,
+                ws->default_cwd ? ws->default_cwd : "");
+            json_builder_set_member_name(b, "startCommand");
+            json_builder_add_string_value(b,
+                ws->start_command ? ws->start_command : "");
+
             session_save_workspace_layout_mode(b, ws);
 
             json_builder_set_member_name(b, "layout");
@@ -1625,6 +1632,18 @@ session_restore_for_instance(const char *instance_id,
                 ws_obj, "notes", "");
             g_free(ws->notes_text);
             ws->notes_text = g_strdup(notes);
+
+            /* Restore default CWD */
+            const char *default_cwd = json_object_get_string_member_with_default(
+                ws_obj, "defaultCwd", "");
+            g_free(ws->default_cwd);
+            ws->default_cwd = default_cwd[0] ? g_strdup(default_cwd) : NULL;
+
+            /* Restore start command */
+            const char *start_command = json_object_get_string_member_with_default(
+                ws_obj, "startCommand", "");
+            g_free(ws->start_command);
+            ws->start_command = start_command[0] ? g_strdup(start_command) : NULL;
 
             /* Update sidebar label via the workspace's inner label */
             workspace_refresh_sidebar_label(ws);

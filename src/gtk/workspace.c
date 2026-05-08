@@ -2651,7 +2651,9 @@ create_terminal_tab(Workspace *ws, GtkNotebook *notebook,
                     const char *cwd, int page_num)
 {
     GtkWidget *dummy = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    GtkWidget *terminal = ghostty_terminal_new((cwd && cwd[0]) ? cwd : NULL);
+    const char *effective_cwd = (cwd && cwd[0]) ? cwd : (ws->default_cwd ? ws->default_cwd : NULL);
+    const char *effective_cmd = ws->start_command;
+    GtkWidget *terminal = ghostty_terminal_new_full(effective_cwd, effective_cmd);
     GtkWidget *inner_label = NULL;
     GtkWidget *tab_label = create_editable_tab_label(
         "Terminal", terminal, ws, FALSE, &inner_label);
@@ -4074,6 +4076,8 @@ workspace_free_detached(Workspace *ws)
     g_ptr_array_unref(ws->pane_notebooks);
     g_clear_pointer(&ws->status_entries, g_hash_table_unref);
     g_free(ws->notes_text);
+    g_free(ws->default_cwd);
+    g_free(ws->start_command);
     g_free(ws);
 }
 
@@ -4604,6 +4608,8 @@ void workspace_remove(int index, GtkWidget *terminal_stack, GtkWidget *workspace
     g_ptr_array_unref(ws->pane_notebooks);
     g_clear_pointer(&ws->status_entries, g_hash_table_unref);
     g_free(ws->notes_text);
+    g_free(ws->default_cwd);
+    g_free(ws->start_command);
     g_free(ws);
 }
 
@@ -5691,6 +5697,181 @@ on_sidebar_ctx_rename_activate(GSimpleAction *action, GVariant *param,
     start_rename(rd);
 }
 
+/* ── Set Default Directory dialog ─────────────────────────────── */
+
+typedef struct {
+    Workspace *workspace;
+    GtkWidget *entry;
+} DefaultCwdDialogData;
+
+static void
+on_default_cwd_response(GtkDialog *dialog, int response_id,
+                         gpointer user_data)
+{
+    DefaultCwdDialogData *data = user_data;
+    if (response_id == GTK_RESPONSE_OK) {
+        const char *text = gtk_editable_get_text(GTK_EDITABLE(data->entry));
+        g_free(data->workspace->default_cwd);
+        data->workspace->default_cwd = (text && text[0]) ? g_strdup(text) : NULL;
+        session_queue_save();
+    }
+    gtk_window_destroy(GTK_WINDOW(dialog));
+    g_free(data);
+}
+
+static void
+on_sidebar_ctx_set_cwd_activate(GSimpleAction *action, GVariant *param,
+                                 gpointer user_data)
+{
+    (void)action;
+    (void)param;
+    SidebarCtxData *ctx = user_data;
+    Workspace *ws = ctx->workspace;
+    if (!ws) return;
+
+    GtkWidget *dialog = gtk_dialog_new_with_buttons(
+        "Set Default Directory",
+        GTK_WINDOW(g_main_window),
+        GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+        "Cancel", GTK_RESPONSE_CANCEL,
+        "OK", GTK_RESPONSE_OK,
+        NULL);
+    gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_OK);
+
+    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_box_set_spacing(GTK_BOX(box), 4);
+
+    GtkWidget *label = gtk_label_new(
+        "New tabs in this workspace will start in this directory.\n"
+        "Leave empty to inherit from the active terminal.");
+    gtk_label_set_wrap(GTK_LABEL(label), TRUE);
+    gtk_widget_set_halign(label, GTK_ALIGN_START);
+    gtk_box_append(GTK_BOX(box), label);
+
+    GtkWidget *entry = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(entry),
+        "/home/user/projects/my-project");
+    {
+        /* Prefer explicit default_cwd, then ask the focused terminal directly,
+         * then fall back to the workspace-level tracked CWD */
+        const char *prefill = (ws->default_cwd && ws->default_cwd[0])
+            ? ws->default_cwd
+            : NULL;
+        if (!prefill) {
+            GtkNotebook *pane = workspace_get_focused_pane(ws);
+            if (pane) {
+                int pg = gtk_notebook_get_current_page(pane);
+                GtkWidget *term = workspace_notebook_terminal_at(pane, pg);
+                if (term && GHOSTTY_IS_TERMINAL(term))
+                    prefill = ghostty_terminal_get_cwd(GHOSTTY_TERMINAL(term));
+            }
+        }
+        if (!prefill || !prefill[0])
+            prefill = (ws->cwd[0] ? ws->cwd : NULL);
+        if (prefill && prefill[0])
+            gtk_editable_set_text(GTK_EDITABLE(entry), prefill);
+    }
+    gtk_box_append(GTK_BOX(box), entry);
+
+    /* Enter activates OK */
+    gtk_entry_set_activates_default(GTK_ENTRY(entry), TRUE);
+
+    gtk_box_append(GTK_BOX(content), box);
+    gtk_widget_set_margin_start(box, 12);
+    gtk_widget_set_margin_end(box, 12);
+    gtk_widget_set_margin_top(box, 12);
+    gtk_widget_set_margin_bottom(box, 12);
+    gtk_widget_set_visible(dialog, TRUE);
+
+    DefaultCwdDialogData *data = g_new0(DefaultCwdDialogData, 1);
+    data->workspace = ws;
+    data->entry = entry;
+    g_signal_connect(dialog, "response",
+                     G_CALLBACK(on_default_cwd_response), data);
+
+    gtk_widget_grab_focus(entry);
+}
+
+/* ── Set Startup Command dialog ──────────────────────────────── */
+
+typedef struct {
+    Workspace *workspace;
+    GtkWidget *entry;
+} StartCommandDialogData;
+
+static void
+on_start_command_response(GtkDialog *dialog, int response_id,
+                            gpointer user_data)
+{
+    StartCommandDialogData *data = user_data;
+    if (response_id == GTK_RESPONSE_OK) {
+        const char *text = gtk_editable_get_text(GTK_EDITABLE(data->entry));
+        g_free(data->workspace->start_command);
+        data->workspace->start_command = (text && text[0]) ? g_strdup(text) : NULL;
+        session_queue_save();
+    }
+    gtk_window_destroy(GTK_WINDOW(dialog));
+    g_free(data);
+}
+
+static void
+on_sidebar_ctx_set_command_activate(GSimpleAction *action, GVariant *param,
+                                     gpointer user_data)
+{
+    (void)action;
+    (void)param;
+    SidebarCtxData *ctx = user_data;
+    Workspace *ws = ctx->workspace;
+    if (!ws) return;
+
+    GtkWidget *dialog = gtk_dialog_new_with_buttons(
+        "Set Startup Command",
+        GTK_WINDOW(g_main_window),
+        GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+        "Cancel", GTK_RESPONSE_CANCEL,
+        "OK", GTK_RESPONSE_OK,
+        NULL);
+    gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_OK);
+
+    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_box_set_spacing(GTK_BOX(box), 4);
+
+    GtkWidget *label = gtk_label_new(
+        "New tabs will run this command instead of a shell.\n"
+        "Useful for SSH: ssh database-server\n"
+        "Leave empty for the default shell.");
+    gtk_label_set_wrap(GTK_LABEL(label), TRUE);
+    gtk_widget_set_halign(label, GTK_ALIGN_START);
+    gtk_box_append(GTK_BOX(box), label);
+
+    GtkWidget *entry = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(entry),
+        "ssh database-server");
+    if (ws->start_command && ws->start_command[0])
+        gtk_editable_set_text(GTK_EDITABLE(entry), ws->start_command);
+    gtk_box_append(GTK_BOX(box), entry);
+
+    /* Enter activates OK */
+    gtk_entry_set_activates_default(GTK_ENTRY(entry), TRUE);
+
+    gtk_box_append(GTK_BOX(content), box);
+    gtk_widget_set_margin_start(box, 12);
+    gtk_widget_set_margin_end(box, 12);
+    gtk_widget_set_margin_top(box, 12);
+    gtk_widget_set_margin_bottom(box, 12);
+    gtk_widget_set_visible(dialog, TRUE);
+
+    StartCommandDialogData *data = g_new0(StartCommandDialogData, 1);
+    data->workspace = ws;
+    data->entry = entry;
+    g_signal_connect(dialog, "response",
+                     G_CALLBACK(on_start_command_response), data);
+
+    gtk_widget_grab_focus(entry);
+}
+
 static gboolean
 sidebar_ctx_delete_idle_cb(gpointer data)
 {
@@ -5748,6 +5929,8 @@ on_sidebar_right_click(GtkGestureClick *gesture, int n_press,
     GMenu *menu = g_menu_new();
     char action_rename[64];
     char action_move_to_window[64];
+    char action_set_cwd[64];
+    char action_set_command[64];
     char action_delete[64];
     int ws_idx = ctx && ctx->workspace ? workspace_get_index(ctx->workspace) : -1;
     guint64 token = (ctx && ctx->workspace) ? ctx->workspace->serial : 0;
@@ -5759,10 +5942,16 @@ on_sidebar_right_click(GtkGestureClick *gesture, int n_press,
              token);
     snprintf(action_move_to_window, sizeof(action_move_to_window),
              "sidebar-ctx-%" G_GUINT64_FORMAT ".move-to-window", token);
+    snprintf(action_set_cwd, sizeof(action_set_cwd),
+             "sidebar-ctx-%" G_GUINT64_FORMAT ".set-cwd", token);
+    snprintf(action_set_command, sizeof(action_set_command),
+             "sidebar-ctx-%" G_GUINT64_FORMAT ".set-command", token);
     snprintf(action_delete, sizeof(action_delete), "sidebar-ctx-%" G_GUINT64_FORMAT ".delete",
              token);
 
     g_menu_append(menu, "Rename", action_rename);
+    g_menu_append(menu, "Set Default Directory\u2026", action_set_cwd);
+    g_menu_append(menu, "Set Startup Command\u2026", action_set_command);
     g_menu_append(menu, "Move to Window...", action_move_to_window);
     g_menu_append(menu, "Delete", action_delete);
 
@@ -5789,6 +5978,16 @@ on_sidebar_right_click(GtkGestureClick *gesture, int n_press,
                      G_CALLBACK(on_sidebar_ctx_delete_activate), ctx);
     g_action_map_add_action(G_ACTION_MAP(ag), G_ACTION(act_delete));
 
+    GSimpleAction *act_set_cwd = g_simple_action_new("set-cwd", NULL);
+    g_signal_connect(act_set_cwd, "activate",
+                     G_CALLBACK(on_sidebar_ctx_set_cwd_activate), ctx);
+    g_action_map_add_action(G_ACTION_MAP(ag), G_ACTION(act_set_cwd));
+
+    GSimpleAction *act_set_command = g_simple_action_new("set-command", NULL);
+    g_signal_connect(act_set_command, "activate",
+                     G_CALLBACK(on_sidebar_ctx_set_command_activate), ctx);
+    g_action_map_add_action(G_ACTION_MAP(ag), G_ACTION(act_set_command));
+
     gtk_widget_insert_action_group(widget, group_name, G_ACTION_GROUP(ag));
 
     GtkWidget *popover = gtk_popover_menu_new_from_model(G_MENU_MODEL(menu));
@@ -5801,6 +6000,8 @@ on_sidebar_right_click(GtkGestureClick *gesture, int n_press,
     g_object_unref(menu);
     g_object_unref(act_rename);
     g_object_unref(act_move_to_window);
+    g_object_unref(act_set_cwd);
+    g_object_unref(act_set_command);
     g_object_unref(act_delete);
     g_object_unref(ag);
 }

@@ -54,6 +54,7 @@ struct _GhosttyTerminal {
     char              *title;
     char              *cwd;
     char              *start_cwd;
+    char              *start_command;   /* command to exec instead of default shell */
     char              *terminal_id;
     pid_t              session_id;
     char              *tty_name;
@@ -400,6 +401,8 @@ on_gl_realize(GtkGLArea *area, gpointer user_data)
     config.working_directory = (self->start_cwd && self->start_cwd[0])
                                    ? self->start_cwd
                                    : home;
+    if (self->start_command && self->start_command[0])
+        config.command = self->start_command;
 
     /* Shell integration env vars */
     ghostty_env_var_s env_vars[18];
@@ -1041,6 +1044,7 @@ ghostty_terminal_finalize(GObject *object)
     g_free(self->title);
     g_free(self->cwd);
     g_free(self->start_cwd);
+    g_free(self->start_command);
     g_free(self->terminal_id);
     g_free(self->tty_name);
     g_free(self->tty_path);
@@ -1119,6 +1123,7 @@ ghostty_terminal_init(GhosttyTerminal *self)
     self->title = NULL;
     self->cwd = NULL;
     self->start_cwd = NULL;
+    self->start_command = NULL;
     self->terminal_id =
         g_strdup_printf("term-%" G_GUINT64_FORMAT, next_terminal_id++);
     self->exit_code = -1;
@@ -1268,6 +1273,22 @@ ghostty_terminal_new(const char *start_cwd)
         self->cwd = g_strdup(initial_cwd);
         ghostty_terminal_set_status(self, self->cwd, NULL);
     }
+    return GTK_WIDGET(self);
+}
+
+GtkWidget *
+ghostty_terminal_new_full(const char *start_cwd, const char *start_command)
+{
+    GhosttyTerminal *self = g_object_new(GHOSTTY_TYPE_TERMINAL, NULL);
+    const char *initial_cwd = (start_cwd && *start_cwd) ? start_cwd : g_get_home_dir();
+
+    if (initial_cwd && *initial_cwd) {
+        self->start_cwd = g_strdup(initial_cwd);
+        self->cwd = g_strdup(initial_cwd);
+        ghostty_terminal_set_status(self, self->cwd, NULL);
+    }
+    if (start_command && *start_command)
+        self->start_command = g_strdup(start_command);
     return GTK_WIDGET(self);
 }
 
