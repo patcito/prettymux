@@ -628,12 +628,34 @@ tick_callback(gpointer user_data)
                                          &GRAPHENE_POINT_INIT(0, 0), &p)) {
                 int w = gtk_widget_get_width(self->dummy_target);
                 int h = gtk_widget_get_height(self->dummy_target);
+                int overlay_w = gtk_widget_get_width(overlay);
+                int overlay_h = gtk_widget_get_height(overlay);
 
-                gtk_widget_set_margin_start(GTK_WIDGET(self), (int)p.x);
-                gtk_widget_set_margin_top(GTK_WIDGET(self), (int)p.y);
-                gtk_widget_set_size_request(GTK_WIDGET(self), w, h);
-                if (!gtk_widget_get_visible(GTK_WIDGET(self)))
-                    gtk_widget_set_visible(GTK_WIDGET(self), TRUE);
+                /* If the dummy is partially or fully outside the
+                 * overlay's visible bounds (e.g. a strip-layout
+                 * column scrolled off-screen), hide the terminal.
+                 * gtk_widget_set_margin_start() doesn't accept
+                 * negative values — GTK4 clamps them to 0, which
+                 * makes the off-screen terminal render at the
+                 * overlay's left edge on top of whichever column is
+                 * actually visible. That's the "first big pane gets
+                 * on top of the one around it" bug when multiple
+                 * strip columns are maximized at viewport width. */
+                gboolean fully_visible =
+                    p.x >= 0 && p.y >= 0 &&
+                    p.x + w <= overlay_w &&
+                    p.y + h <= overlay_h;
+
+                if (!fully_visible) {
+                    if (gtk_widget_get_visible(GTK_WIDGET(self)))
+                        gtk_widget_set_visible(GTK_WIDGET(self), FALSE);
+                } else {
+                    gtk_widget_set_margin_start(GTK_WIDGET(self), (int)p.x);
+                    gtk_widget_set_margin_top(GTK_WIDGET(self), (int)p.y);
+                    gtk_widget_set_size_request(GTK_WIDGET(self), w, h);
+                    if (!gtk_widget_get_visible(GTK_WIDGET(self)))
+                        gtk_widget_set_visible(GTK_WIDGET(self), TRUE);
+                }
             }
         }
     } else if (self->dummy_target) {
