@@ -2863,6 +2863,45 @@ create_editable_tab_label(const char *text, GtkWidget *terminal,
     return box;
 }
 
+/*
+ * Position floating terminals to mirror their dummy page widget. Used
+ * as the workspace overlay's get-child-position handler. The returned
+ * allocation may have a negative x/y or extend past the overlay, so a
+ * strip column scrolled partly off-screen is clipped to its visible
+ * portion by the overlay's GTK_OVERFLOW_HIDDEN — without resizing /
+ * reflowing the ghostty surface or blanking it. (Margins can't do this
+ * because GTK4 clamps negative margins to 0.)
+ */
+static gboolean
+on_overlay_get_child_position(GtkOverlay *overlay, GtkWidget *widget,
+                             GdkRectangle *allocation, gpointer user_data)
+{
+    (void)user_data;
+    if (!GHOSTTY_IS_TERMINAL(widget))
+        return FALSE;
+
+    GtkWidget *dummy =
+        ghostty_terminal_get_dummy_target(GHOSTTY_TERMINAL(widget));
+    if (!dummy || !gtk_widget_get_mapped(dummy))
+        return FALSE;
+
+    int w = gtk_widget_get_width(dummy);
+    int h = gtk_widget_get_height(dummy);
+    if (w <= 0 || h <= 0)
+        return FALSE;
+
+    graphene_point_t p;
+    if (!gtk_widget_compute_point(dummy, GTK_WIDGET(overlay),
+                                  &GRAPHENE_POINT_INIT(0, 0), &p))
+        return FALSE;
+
+    allocation->x = (int)p.x;
+    allocation->y = (int)p.y;
+    allocation->width = w;
+    allocation->height = h;
+    return TRUE;
+}
+
 static GtkWidget *
 create_terminal_tab(Workspace *ws, GtkNotebook *notebook,
                     const char *cwd, int page_num)
@@ -4914,6 +4953,12 @@ void workspace_add(GtkWidget *terminal_stack, GtkWidget *workspace_list, ghostty
     ws->layout_mode = app_settings_get_default_layout_mode();
 
     ws->overlay = gtk_overlay_new();
+    /* Clip floating terminals to the overlay so a strip column scrolled
+     * partly off-screen shows only its visible slice instead of
+     * bleeding over its neighbors. */
+    gtk_widget_set_overflow(ws->overlay, GTK_OVERFLOW_HIDDEN);
+    g_signal_connect(ws->overlay, "get-child-position",
+                     G_CALLBACK(on_overlay_get_child_position), NULL);
     workspace_set_primary_notebook(ws, create_pane_notebook(ws, app));
     GtkWidget *root_child = workspace_layout_create_root(ws, ws->notebook);
     gtk_overlay_set_child(GTK_OVERLAY(ws->overlay), root_child);

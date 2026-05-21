@@ -619,45 +619,26 @@ tick_callback(gpointer user_data)
         g_signal_emit(self, signals[SIGNAL_PROCESS_EXITED], 0, self->exit_code);
     }
 
+    /* Mirror the dummy page widget's geometry. Keep a size_request so
+     * the GL area measures/realizes correctly. The actual *position*
+     * is handled by the workspace overlay's get-child-position handler
+     * (on_overlay_get_child_position in workspace.c) which can place
+     * the terminal at negative coordinates so a strip column scrolled
+     * partly off-screen is clipped — not hidden, not reflowed — by the
+     * overlay's GTK_OVERFLOW_HIDDEN. We deliberately do NOT set margins
+     * (GTK4 clamps negative margins to 0, which planted off-screen
+     * terminals on top of the visible column). */
     if (self->dummy_target && gtk_widget_get_mapped(self->dummy_target)) {
+        int w = gtk_widget_get_width(self->dummy_target);
+        int h = gtk_widget_get_height(self->dummy_target);
+        if (w > 0 && h > 0)
+            gtk_widget_set_size_request(GTK_WIDGET(self), w, h);
+        if (!gtk_widget_get_visible(GTK_WIDGET(self)))
+            gtk_widget_set_visible(GTK_WIDGET(self), TRUE);
         GtkWidget *overlay = gtk_widget_get_ancestor(GTK_WIDGET(self),
                                                      GTK_TYPE_OVERLAY);
-        if (overlay) {
-            graphene_point_t p;
-            if (gtk_widget_compute_point(self->dummy_target, overlay,
-                                         &GRAPHENE_POINT_INIT(0, 0), &p)) {
-                int w = gtk_widget_get_width(self->dummy_target);
-                int h = gtk_widget_get_height(self->dummy_target);
-                int overlay_w = gtk_widget_get_width(overlay);
-                int overlay_h = gtk_widget_get_height(overlay);
-
-                /* If the dummy is partially or fully outside the
-                 * overlay's visible bounds (e.g. a strip-layout
-                 * column scrolled off-screen), hide the terminal.
-                 * gtk_widget_set_margin_start() doesn't accept
-                 * negative values — GTK4 clamps them to 0, which
-                 * makes the off-screen terminal render at the
-                 * overlay's left edge on top of whichever column is
-                 * actually visible. That's the "first big pane gets
-                 * on top of the one around it" bug when multiple
-                 * strip columns are maximized at viewport width. */
-                gboolean fully_visible =
-                    p.x >= 0 && p.y >= 0 &&
-                    p.x + w <= overlay_w &&
-                    p.y + h <= overlay_h;
-
-                if (!fully_visible) {
-                    if (gtk_widget_get_visible(GTK_WIDGET(self)))
-                        gtk_widget_set_visible(GTK_WIDGET(self), FALSE);
-                } else {
-                    gtk_widget_set_margin_start(GTK_WIDGET(self), (int)p.x);
-                    gtk_widget_set_margin_top(GTK_WIDGET(self), (int)p.y);
-                    gtk_widget_set_size_request(GTK_WIDGET(self), w, h);
-                    if (!gtk_widget_get_visible(GTK_WIDGET(self)))
-                        gtk_widget_set_visible(GTK_WIDGET(self), TRUE);
-                }
-            }
-        }
+        if (overlay)
+            gtk_widget_queue_allocate(overlay);
     } else if (self->dummy_target) {
         gtk_widget_set_visible(GTK_WIDGET(self), FALSE);
     }
