@@ -83,6 +83,7 @@ static gboolean have_display = FALSE;
 static void
 reset_stub_counters(void)
 {
+    sidebar_ui_cancel_pending_activate();
     workspace_switch_call_count = 0;
     workspace_switch_last_index = -1;
     session_queue_save_call_count = 0;
@@ -98,6 +99,24 @@ require_display_or_skip(void)
 {
     if (!have_display)
         g_test_skip("No GTK display available");
+}
+
+static gboolean
+wait_for_workspace_switch_count(int expected)
+{
+    gint64 deadline = g_get_monotonic_time() + G_TIME_SPAN_SECOND;
+
+    while (g_get_monotonic_time() < deadline) {
+        while (g_main_context_iteration(NULL, FALSE))
+            ;
+        if (workspace_switch_call_count >= expected)
+            return TRUE;
+        g_usleep(1000);
+    }
+
+    while (g_main_context_iteration(NULL, FALSE))
+        ;
+    return workspace_switch_call_count >= expected;
 }
 
 static int
@@ -527,6 +546,7 @@ test_row_activation_switches_workspace_when_not_renaming(void)
     g_signal_emit_by_name(ui.workspace_list, "row-activated",
                           GTK_LIST_BOX_ROW(row1));
 
+    g_assert_true(wait_for_workspace_switch_count(1));
     g_assert_cmpint(workspace_switch_call_count, ==, 1);
     g_assert_cmpint(workspace_switch_last_index, ==, 1);
     g_assert_cmpint(session_queue_save_call_count, ==, 1);

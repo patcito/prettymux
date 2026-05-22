@@ -501,6 +501,8 @@ free_workspace_fixture(Workspace *ws)
     }
     if (ws->overlay)
         g_object_unref(ws->overlay);
+    if (ws->container && !gtk_widget_get_parent(ws->container))
+        g_object_unref(ws->container);
     if (ws->strip_state)
         workspace_strip_state_free(ws->strip_state);
     if (ws->pane_notebooks)
@@ -521,6 +523,8 @@ free_workspace_fixture_without_async_cancel(Workspace *ws)
     g_clear_object(&ws->primary_branch_cancel);
     if (ws->overlay)
         g_object_unref(ws->overlay);
+    if (ws->container && !gtk_widget_get_parent(ws->container))
+        g_object_unref(ws->container);
     if (ws->strip_state)
         workspace_strip_state_free(ws->strip_state);
     if (ws->pane_notebooks)
@@ -639,7 +643,6 @@ make_classic_workspace_with_two_panes(void)
 
     ws->layout_mode = WORKSPACE_LAYOUT_CLASSIC;
     ws->overlay = NULL;
-    ws->notebook = GTK_WIDGET(nb0);
     ws->active_pane = nb0;
 
     g_ptr_array_add(ws->pane_notebooks, nb0);
@@ -650,6 +653,8 @@ make_classic_workspace_with_two_panes(void)
     gtk_paned_set_start_child(GTK_PANED(paned), GTK_WIDGET(nb0));
     gtk_paned_set_end_child(GTK_PANED(paned), GTK_WIDGET(nb1));
     gtk_overlay_set_child(GTK_OVERLAY(overlay), paned);
+    ws->container = GTK_WIDGET(g_object_ref_sink(overlay));
+    workspace_set_primary_notebook(ws, GTK_WIDGET(nb0));
     return ws;
 }
 
@@ -1347,6 +1352,7 @@ test_workspace_sidebar_card_double_click_starts_inline_rename(void)
                                                 "rename-click-controller"));
     g_assert_true(GTK_IS_GESTURE_CLICK(click));
     g_signal_emit_by_name(click, "pressed", 2, 0.0, 0.0);
+    drain_main_context();
 
     rename_entry = g_object_get_data(G_OBJECT(header_box), "rename-entry");
     g_assert_true(GTK_IS_ENTRY(rename_entry));
@@ -1396,7 +1402,7 @@ test_workspace_terminal_tab_double_click_starts_inline_rename(void)
 }
 
 static void
-test_workspace_sidebar_card_rename_focus_leave_commits_and_saves(void)
+test_workspace_sidebar_card_rename_activate_commits_and_saves(void)
 {
     GtkWidget *terminal_stack;
     GtkWidget *workspace_list;
@@ -1407,7 +1413,6 @@ test_workspace_sidebar_card_rename_focus_leave_commits_and_saves(void)
     GtkWidget *rename_entry;
     GtkWidget *rename_label;
     GtkGestureClick *click;
-    GtkEventController *focus_ctrl;
 
     require_display_or_skip();
     reset_workspace_globals();
@@ -1429,15 +1434,13 @@ test_workspace_sidebar_card_rename_focus_leave_commits_and_saves(void)
                                                 "rename-click-controller"));
     g_assert_true(GTK_IS_GESTURE_CLICK(click));
     g_signal_emit_by_name(click, "pressed", 2, 0.0, 0.0);
+    drain_main_context();
 
     rename_entry = g_object_get_data(G_OBJECT(header_box), "rename-entry");
     g_assert_true(GTK_IS_ENTRY(rename_entry));
     gtk_editable_set_text(GTK_EDITABLE(rename_entry), "renamed sidebar");
 
-    focus_ctrl = g_object_get_data(G_OBJECT(rename_entry),
-                                   "rename-focus-controller");
-    g_assert_true(GTK_IS_EVENT_CONTROLLER_FOCUS(focus_ctrl));
-    g_signal_emit_by_name(focus_ctrl, "leave");
+    g_signal_emit_by_name(rename_entry, "activate");
 
     g_assert_null(g_object_get_data(G_OBJECT(header_box), "rename-entry"));
     g_assert_cmpstr(target_ws->name, ==, "renamed sidebar");
@@ -1484,6 +1487,7 @@ test_workspace_sidebar_card_rename_escape_cancels_without_save(void)
                                                 "rename-click-controller"));
     g_assert_true(GTK_IS_GESTURE_CLICK(click));
     g_signal_emit_by_name(click, "pressed", 2, 0.0, 0.0);
+    drain_main_context();
 
     rename_entry = g_object_get_data(G_OBJECT(header_box), "rename-entry");
     g_assert_true(GTK_IS_ENTRY(rename_entry));
@@ -2024,8 +2028,8 @@ main(int argc, char **argv)
                     test_workspace_sidebar_card_double_click_starts_inline_rename);
     g_test_add_func("/workspace-interactions/tab/rename-double-click-starts-inline",
                     test_workspace_terminal_tab_double_click_starts_inline_rename);
-    g_test_add_func("/workspace-interactions/card/rename-focus-leave-commits",
-                    test_workspace_sidebar_card_rename_focus_leave_commits_and_saves);
+    g_test_add_func("/workspace-interactions/card/rename-activate-commits",
+                    test_workspace_sidebar_card_rename_activate_commits_and_saves);
     g_test_add_func("/workspace-interactions/card/rename-escape-cancels",
                     test_workspace_sidebar_card_rename_escape_cancels_without_save);
     g_test_add_func("/workspace-interactions/tab/title-format-and-system-icons",

@@ -63,12 +63,12 @@ test_assert_saved_layout_mode(const char *home, const char *expected_mode)
 }
 
 static void
-test_default_layout_mode_fallback_classic(void)
+test_default_layout_mode_fallback_strip(void)
 {
     if (g_test_subprocess()) {
         test_prepare_home();
         g_assert_cmpint(app_settings_get_default_layout_mode(), ==,
-                        WORKSPACE_LAYOUT_CLASSIC);
+                        WORKSPACE_LAYOUT_STRIP);
         return;
     }
 
@@ -76,7 +76,7 @@ test_default_layout_mode_fallback_classic(void)
     g_assert_nonnull(home);
     g_setenv("PRETTYMUX_TEST_HOME", home, TRUE);
     g_setenv("HOME", home, TRUE);
-    g_test_trap_subprocess("/app-settings/layout/default-fallback-classic", 0,
+    g_test_trap_subprocess("/app-settings/layout/default-fallback-strip", 0,
                            0);
     g_test_trap_assert_passed();
 
@@ -161,8 +161,8 @@ main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
 
-    g_test_add_func("/app-settings/layout/default-fallback-classic",
-                    test_default_layout_mode_fallback_classic);
+    g_test_add_func("/app-settings/layout/default-fallback-strip",
+                    test_default_layout_mode_fallback_strip);
     g_test_add_func("/app-settings/layout/roundtrip-strip",
                     test_default_layout_mode_roundtrip_strip);
     g_test_add_func("/app-settings/layout/invalid-value-fallback",
