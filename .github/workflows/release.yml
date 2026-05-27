@@ -341,7 +341,7 @@ jobs:
           rm -rf snap-root
           unsquashfs -f -d snap-root "${{ steps.snapcraft.outputs.snap }}"
           bash packaging/ci-smoke-test.sh snap \
-            sh -lc 'LD_LIBRARY_PATH="$PWD/snap-root/usr/lib/prettymux:${LD_LIBRARY_PATH:-}" "$PWD/snap-root/usr/bin/prettymux"'
+            sh -lc 'LD_LIBRARY_PATH="$PWD/snap-root/usr/lib/prettymux:$PWD/snap-root/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}" "$PWD/snap-root/usr/bin/prettymux"'
 
       - name: Upload snap
         uses: actions/upload-artifact@v6
@@ -710,6 +710,7 @@ jobs:
       - build-linux-ubuntu-lts
       - build-linux-fedora
       - build-linux-deb
+      - build-snap
       - build-flatpak
       - build-archlinux
       - build-appimage
