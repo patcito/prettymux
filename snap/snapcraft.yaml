@@ -1,6 +1,6 @@
 name: prettymux
 base: core24
-version: '0.2.39'
+version: '0.2.40'
 license: GPL-3.0-only
 summary: GPU-accelerated terminal multiplexer
 description: |
@@ -40,6 +40,8 @@ parts:
       mkdir -p $CRAFT_PART_INSTALL/ghostty
       cp -a include $CRAFT_PART_INSTALL/ghostty/
       cp -a vendor $CRAFT_PART_INSTALL/ghostty/
+      mkdir -p $CRAFT_PART_INSTALL/ghostty/src
+      cp -a src/shell-integration $CRAFT_PART_INSTALL/ghostty/src/
       mkdir -p $CRAFT_PART_INSTALL/ghostty/zig-out
       cp -a zig-out/lib $CRAFT_PART_INSTALL/ghostty/zig-out/
       mkdir -p $CRAFT_PART_INSTALL/usr/lib/prettymux
