@@ -7,14 +7,12 @@
 #include "app_settings.h"
 #include "app_support.h"
 #include "app_state.h"
-#include "browser_tab.h"
 #include "close_confirm.h"
 #include "command_palette.h"
 #include "ghostty.h"
 #include "ghostty_terminal.h"
 #include "notifications.h"
 #include "pane_move_overlay.h"
-#include "pip_window.h"
 #include "session.h"
 #include "settings_dialog.h"
 #include "shortcuts.h"
@@ -23,9 +21,6 @@
 #include "theme.h"
 #include "workspace.h"
 #include "workspace_strip.h"
-
-static const char *k_default_browser_url =
-    "https://prettymux-web.vercel.app/?prettymux=t";
 
 static gboolean g_app_quit_in_progress = FALSE;
 
@@ -39,11 +34,6 @@ typedef struct {
 } PendingWorkspaceClose;
 
 typedef struct {
-    GtkNotebook *notebook;
-    int page;
-} PendingBrowserTabClose;
-
-typedef struct {
     Workspace *ws;
     GtkNotebook *notebook;
     int page;
@@ -51,28 +41,18 @@ typedef struct {
 
 static void save_session_now(void);
 static gboolean quit_window_idle_cb(gpointer data);
-static void request_close_current_browser_tab(void);
 static void request_close_current_tab(Workspace *ws);
 static void request_close_current_pane(Workspace *ws);
 static void request_close_current_workspace(void);
 static void on_clipboard_text_received(GObject *source,
                                        GAsyncResult *result,
                                        gpointer user_data);
-static void on_browser_title_changed(BrowserTab *bt,
-                                     const char *title,
-                                     gpointer lbl);
-static void on_browser_new_tab_requested(BrowserTab *bt,
-                                         const char *url,
-                                         gpointer user_data);
-static void on_new_browser_tab_clicked(GtkButton *button, gpointer user_data);
 static void perform_app_quit(void);
 static void on_app_close_confirmed(gboolean confirmed, gpointer user_data);
 static void request_app_quit(void);
 static void on_pane_close_confirmed(gboolean confirmed, gpointer user_data);
 static void on_workspace_close_confirmed(gboolean confirmed, gpointer user_data);
 static void on_tab_close_confirmed(gboolean confirmed, gpointer user_data);
-static void on_browser_tab_close_confirmed(gboolean confirmed,
-                                           gpointer user_data);
 static gboolean focus_direction_for_layout_with_error(Workspace *ws,
                                                       int dx,
                                                       int dy,
@@ -158,7 +138,7 @@ static void
 save_session_now(void)
 {
     if (g_main_window) {
-        session_save(g_main_window, ui.browser_notebook,
+        session_save(g_main_window,
                      ui.terminal_stack, ui.workspace_list);
     }
 }
@@ -178,64 +158,6 @@ on_clipboard_text_received(GObject *source, GAsyncResult *result,
         g_error_free(error);
 }
 
-static void
-on_browser_title_changed(BrowserTab *bt, const char *title, gpointer lbl)
-{
-    (void)bt;
-    const char *safe_title = title ? title : "";
-    char s[24];
-
-    snprintf(s, sizeof(s), "%.20s", safe_title);
-    gtk_label_set_text(GTK_LABEL(lbl), s);
-}
-
-static void
-on_browser_new_tab_requested(BrowserTab *bt, const char *url, gpointer user_data)
-{
-    (void)bt;
-    (void)user_data;
-    app_actions_add_browser_tab(url);
-    session_queue_save();
-}
-
-static void
-on_browser_close_btn_clicked(GtkButton *btn, gpointer user_data)
-{
-    (void)btn;
-    (void)user_data;
-    request_close_current_browser_tab();
-}
-
-void
-app_actions_add_browser_tab(const char *url)
-{
-    GtkWidget *tab = browser_tab_new(url);
-    GtkWidget *label = gtk_label_new("Loading...");
-    GtkWidget *tab_label = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
-    gtk_widget_set_hexpand(label, TRUE);
-    gtk_box_append(GTK_BOX(tab_label), label);
-
-    GtkWidget *close_btn = gtk_button_new_from_icon_name("window-close-symbolic");
-    gtk_button_set_has_frame(GTK_BUTTON(close_btn), FALSE);
-    gtk_widget_set_focusable(close_btn, FALSE);
-    gtk_widget_set_valign(close_btn, GTK_ALIGN_CENTER);
-    g_signal_connect(close_btn, "clicked",
-                     G_CALLBACK(on_browser_close_btn_clicked), NULL);
-    gtk_box_append(GTK_BOX(tab_label), close_btn);
-
-    int idx;
-
-    g_signal_connect_object(tab, "title-changed",
-                            G_CALLBACK(on_browser_title_changed), label, 0);
-    g_signal_connect(tab, "new-tab-requested",
-                     G_CALLBACK(on_browser_new_tab_requested), NULL);
-
-    idx = gtk_notebook_append_page(GTK_NOTEBOOK(ui.browser_notebook), tab, tab_label);
-    gtk_notebook_set_tab_reorderable(GTK_NOTEBOOK(ui.browser_notebook), tab, TRUE);
-    gtk_notebook_set_current_page(GTK_NOTEBOOK(ui.browser_notebook), idx);
-    gtk_widget_set_visible(tab, TRUE);
-}
-
 void
 app_actions_open_url_in_preferred_target(const char *url)
 {
@@ -244,42 +166,11 @@ app_actions_open_url_in_preferred_target(const char *url)
     if (!url || !url[0])
         return;
 
-    if (app_settings_get_open_links_in_browser()) {
-        app_actions_add_browser_tab(url);
-        gtk_widget_set_visible(ui.browser_notebook, TRUE);
-        return;
-    }
-
     if (!g_app_info_launch_default_for_uri(url, NULL, &error)) {
         g_warning("Failed to open URL in system browser: %s",
                   error ? error->message : "unknown error");
         g_clear_error(&error);
     }
-}
-
-static void
-on_new_browser_tab_clicked(GtkButton *button, gpointer user_data)
-{
-    (void)button;
-    (void)user_data;
-    app_actions_add_browser_tab(k_default_browser_url);
-    session_queue_save();
-}
-
-void
-app_actions_build_browser(void)
-{
-    GtkWidget *btn;
-
-    ui.browser_notebook = gtk_notebook_new();
-    gtk_notebook_set_scrollable(GTK_NOTEBOOK(ui.browser_notebook), TRUE);
-    gtk_notebook_set_show_border(GTK_NOTEBOOK(ui.browser_notebook), FALSE);
-
-    btn = gtk_button_new_with_label("+");
-    g_signal_connect(btn, "clicked", G_CALLBACK(on_new_browser_tab_clicked), NULL);
-    gtk_notebook_set_action_widget(GTK_NOTEBOOK(ui.browser_notebook), btn,
-                                   GTK_PACK_END);
-    gtk_widget_set_visible(btn, TRUE);
 }
 
 static void
@@ -296,16 +187,6 @@ static void
 pending_workspace_close_free(gpointer data)
 {
     g_free(data);
-}
-
-static void
-pending_browser_tab_close_free(gpointer data)
-{
-    PendingBrowserTabClose *pending = data;
-
-    if (pending->notebook)
-        g_object_unref(pending->notebook);
-    g_free(pending);
 }
 
 static void
@@ -546,48 +427,6 @@ request_close_current_tab(Workspace *ws)
                           pending_main_tab_close_free);
 }
 
-static void
-on_browser_tab_close_confirmed(gboolean confirmed, gpointer user_data)
-{
-    PendingBrowserTabClose *pending = user_data;
-
-    if (!confirmed || !pending->notebook)
-        return;
-
-    if (pending->page >= 0 &&
-        pending->page < gtk_notebook_get_n_pages(pending->notebook)) {
-        gtk_notebook_remove_page(pending->notebook, pending->page);
-        session_queue_save();
-    }
-}
-
-static void
-request_close_current_browser_tab(void)
-{
-    GtkNotebook *notebook = GTK_NOTEBOOK(ui.browser_notebook);
-    int n;
-    int pg;
-    PendingBrowserTabClose *pending;
-
-    if (!gtk_widget_get_visible(ui.browser_notebook))
-        return;
-
-    n = gtk_notebook_get_n_pages(notebook);
-    if (n <= 1)
-        return;
-
-    pg = gtk_notebook_get_current_page(notebook);
-    if (pg < 0)
-        return;
-
-    pending = g_new0(PendingBrowserTabClose, 1);
-    pending->notebook = g_object_ref(notebook);
-    pending->page = pg;
-    close_confirm_request(g_main_window, CLOSE_CONFIRM_TAB,
-                          on_browser_tab_close_confirmed, pending,
-                          pending_browser_tab_close_free);
-}
-
 void
 app_actions_handle(const char *action)
 {
@@ -646,24 +485,6 @@ app_actions_handle(const char *action)
         Workspace *ws = workspace_get_current();
         if (ws)
             focus_direction_for_layout(ws, 0, 1, action);
-    } else if (strcmp(action, "browser.toggle") == 0) {
-        gboolean vis = gtk_widget_get_visible(ui.browser_notebook);
-        gtk_widget_set_visible(ui.browser_notebook, !vis);
-    } else if (strcmp(action, "browser.new") == 0 ||
-               strcmp(action, "browser.tab.new") == 0) {
-        app_actions_add_browser_tab(k_default_browser_url);
-        gtk_widget_set_visible(ui.browser_notebook, TRUE);
-    } else if (strcmp(action, "browser.tab.close") == 0) {
-        request_close_current_browser_tab();
-    } else if (strcmp(action, "devtools.docked") == 0 ||
-               strcmp(action, "devtools.window") == 0) {
-        int pg = gtk_notebook_get_current_page(GTK_NOTEBOOK(ui.browser_notebook));
-        if (pg >= 0) {
-            GtkWidget *child =
-                gtk_notebook_get_nth_page(GTK_NOTEBOOK(ui.browser_notebook), pg);
-            if (BROWSER_IS_TAB(child))
-                browser_tab_show_inspector(BROWSER_TAB(child));
-        }
     } else if (strcmp(action, "settings.show") == 0) {
         if (g_main_window)
             settings_dialog_present(g_main_window, apply_runtime_settings, NULL);
@@ -708,8 +529,6 @@ app_actions_handle(const char *action)
     } else if (strcmp(action, "shortcuts.show") == 0) {
         if (ui.overlay)
             shortcuts_overlay_toggle(GTK_OVERLAY(ui.overlay));
-    } else if (strcmp(action, "pip.toggle") == 0) {
-        pip_window_toggle(g_main_window, ui.browser_notebook);
     } else if (strcmp(action, "pane.zoom") == 0) {
         Workspace *ws = workspace_get_current();
         if (ws)
@@ -736,16 +555,6 @@ app_actions_handle(const char *action)
                         }
                     }
                 }
-            }
-        }
-    } else if (strcmp(action, "browser.focus_url") == 0) {
-        if (gtk_widget_get_visible(ui.browser_notebook)) {
-            int pg = gtk_notebook_get_current_page(GTK_NOTEBOOK(ui.browser_notebook));
-            if (pg >= 0) {
-                GtkWidget *child = gtk_notebook_get_nth_page(
-                    GTK_NOTEBOOK(ui.browser_notebook), pg);
-                if (BROWSER_IS_TAB(child))
-                    browser_tab_focus_url(BROWSER_TAB(child));
             }
         }
     } else if (strcmp(action, "terminal.copy") == 0) {
@@ -957,11 +766,6 @@ app_actions_on_key_pressed(GtkEventControllerKey *ctrl, guint keyval,
             const ShortcutDef *binding = shortcut_find_by_action(action);
             g_autofree char *keys = shortcut_format_binding(binding);
 
-            if (strcmp(action, "browser.tab.close") == 0) {
-                GtkWidget *focus = gtk_window_get_focus(GTK_WINDOW(g_main_window));
-                if (!focus || !gtk_widget_is_ancestor(focus, ui.browser_notebook))
-                    return FALSE;
-            }
             if (strcmp(action, "recording.mark") != 0)
                 shortcut_log_event("shortcut", action, keys);
             app_actions_handle(action);

@@ -13,7 +13,6 @@ RUN dnf install -y \
         meson \
         ninja-build \
         tar \
-        webkitgtk6.0-devel \
         which \
     && curl -fsSL "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz" \
         | tar -xz -C /usr/local/bin nfpm \

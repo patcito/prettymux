@@ -12,7 +12,6 @@ RUN apt-get update \
         libadwaita-1-dev \
         libgtk-4-dev \
         libjson-glib-dev \
-        libwebkitgtk-6.0-dev \
         meson \
         ninja-build \
         pkg-config \

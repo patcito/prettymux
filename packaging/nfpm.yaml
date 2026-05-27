@@ -12,13 +12,11 @@ overrides:
     depends:
       - libgtk-4-1
       - libadwaita-1-0
-      - libwebkitgtk-6.0-4
       - libjson-glib-1.0-0
   rpm:
     depends:
       - gtk4
       - libadwaita
-      - webkitgtk6.0
       - json-glib
 
 contents:

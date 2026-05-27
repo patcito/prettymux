@@ -469,7 +469,6 @@ jobs:
             "license = GPL-3.0-only" \
             "depend = gtk4" \
             "depend = libadwaita" \
-            "depend = webkitgtk-6.0" \
             "depend = json-glib" \
             > "$PKGDIR/.PKGINFO"
 
@@ -630,7 +629,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev libadwaita-1-dev libwebkitgtk-6.0-dev libjson-glib-dev meson ninja-build
+          sudo apt-get install -y libgtk-4-dev libadwaita-1-dev libjson-glib-dev meson ninja-build
 
       - name: Build prettymux
         run: |
@@ -714,9 +713,9 @@ jobs:
       - build-flatpak
       - build-archlinux
       - build-appimage
-      # - build-windows      # DISABLED: GTK4+WebKitGTK is Linux-only
-      # - build-macos        # DISABLED: GTK4+WebKitGTK is Linux-only
-      # - build-macos-intel  # DISABLED: GTK4+WebKitGTK is Linux-only
+      # - build-windows      # DISABLED: GTK4 is Linux-only
+      # - build-macos        # DISABLED: GTK4 is Linux-only
+      # - build-macos-intel  # DISABLED: GTK4 is Linux-only
     runs-on: ubuntu-latest
     permissions:
       contents: write

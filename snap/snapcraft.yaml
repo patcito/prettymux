@@ -5,8 +5,7 @@ license: GPL-3.0-only
 summary: GPU-accelerated terminal multiplexer
 description: |
   PrettyMux is a GPU-accelerated terminal multiplexer built on
-  libghostty with an embedded browser, workspace management,
-  and shell integration.
+  libghostty with workspace management and shell integration.
 confinement: classic
 grade: devel
 platforms:
@@ -53,7 +52,6 @@ parts:
     build-packages:
       - libgtk-4-dev
       - libadwaita-1-dev
-      - libwebkitgtk-6.0-dev
       - libjson-glib-dev
       - meson
       - ninja-build
@@ -61,7 +59,6 @@ parts:
     stage-packages:
       - libgtk-4-1
       - libadwaita-1-0
-      - libwebkitgtk-6.0-4
       - libjson-glib-1.0-0
     override-build: |
       cd $CRAFT_PART_SRC/src/gtk

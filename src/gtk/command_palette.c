@@ -2,15 +2,14 @@
  * command_palette.c - Search overlay / command palette widget
  *
  * Shows a centred card with a search entry and a filtered list of all
- * workspaces, terminal tabs and browser tabs.  Arrow keys navigate,
- * Enter activates the selected item, Escape closes the palette.
+ * workspaces and terminal tabs.  Arrow keys navigate, Enter activates
+ * the selected item, Escape closes the palette.
  */
 
 #include "command_palette.h"
 #include "workspace.h"
 #include "ghostty_terminal.h"
 #include "project_icon_cache.h"
-#include "browser_tab.h"
 #include "theme.h"
 
 #include <ctype.h>
@@ -22,7 +21,6 @@
 typedef enum {
     PALETTE_ITEM_WORKSPACE,
     PALETTE_ITEM_TERMINAL,
-    PALETTE_ITEM_BROWSER,
 } PaletteItemKind;
 
 typedef struct {
@@ -33,7 +31,6 @@ typedef struct {
     int             workspace_idx;
     int             pane_notebook_page;  /* which notebook page (terminal tab) */
     GtkNotebook    *pane_notebook;       /* the notebook containing the terminal */
-    int             browser_tab_idx;
 } PaletteItem;
 
 /* ── Private structure ────────────────────────────────────────── */
@@ -48,7 +45,6 @@ struct _CommandPalette {
     GtkWidget   *hint_label;
 
     /* External refs (not owned) */
-    GtkWidget   *browser_notebook;
     GtkWidget   *terminal_stack;
     GtkWidget   *workspace_list;
 
@@ -123,7 +119,6 @@ palette_item_new(PaletteItemKind kind, const char *name, const char *detail)
     item->workspace_idx = -1;
     item->pane_notebook_page = -1;
     item->pane_notebook = NULL;
-    item->browser_tab_idx = -1;
     return item;
 }
 
@@ -220,26 +215,6 @@ palette_gather_items(CommandPalette *self)
         }
     }
 
-    /* Browser tabs */
-    if (self->browser_notebook) {
-        int n = gtk_notebook_get_n_pages(GTK_NOTEBOOK(self->browser_notebook));
-        for (int bi = 0; bi < n; bi++) {
-            GtkWidget *child = gtk_notebook_get_nth_page(
-                GTK_NOTEBOOK(self->browser_notebook), bi);
-            const char *title = NULL;
-            const char *url = NULL;
-            if (BROWSER_IS_TAB(child)) {
-                title = browser_tab_get_title(BROWSER_TAB(child));
-                url = browser_tab_get_url(BROWSER_TAB(child));
-            }
-            PaletteItem *b_item = palette_item_new(
-                PALETTE_ITEM_BROWSER,
-                (title && *title) ? title : "Browser",
-                url ? url : "");
-            b_item->browser_tab_idx = bi;
-            g_ptr_array_add(self->items, b_item);
-        }
-    }
 }
 
 /* ── Populate / filter the list box ───────────────────────────── */
@@ -254,7 +229,7 @@ create_row_widget(PaletteItem *item)
     switch (item->kind) {
     case PALETTE_ITEM_WORKSPACE: kind_label = "WS"; kind_class = "palette-badge-ws"; break;
     case PALETTE_ITEM_TERMINAL:  kind_label = "TTY"; kind_class = "palette-badge-tty"; break;
-    case PALETTE_ITEM_BROWSER:   kind_label = "WEB"; kind_class = "palette-badge-web"; break;
+    default:                     kind_label = "?";  kind_class = "palette-badge-ws"; break;
     }
 
     GtkWidget *hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
@@ -356,12 +331,6 @@ palette_activate_item(CommandPalette *self, PaletteItem *item)
             item->pane_notebook, item->pane_notebook_page));
         if (page)
             ghostty_terminal_focus(GHOSTTY_TERMINAL(page));
-    }
-
-    if (item->kind == PALETTE_ITEM_BROWSER && item->browser_tab_idx >= 0) {
-        gtk_notebook_set_current_page(
-            GTK_NOTEBOOK(self->browser_notebook), item->browser_tab_idx);
-        gtk_widget_set_visible(self->browser_notebook, TRUE);
     }
 
     /* Close the palette */
@@ -603,7 +572,6 @@ static void
 command_palette_init(CommandPalette *self)
 {
     self->items = NULL;
-    self->browser_notebook = NULL;
     self->terminal_stack = NULL;
     self->workspace_list = NULL;
 
@@ -687,12 +655,10 @@ command_palette_init(CommandPalette *self)
 /* ── Public API ───────────────────────────────────────────────── */
 
 GtkWidget *
-command_palette_new(GtkWidget *browser_notebook,
-                    GtkWidget *terminal_stack,
+command_palette_new(GtkWidget *terminal_stack,
                     GtkWidget *workspace_list)
 {
     CommandPalette *self = g_object_new(COMMAND_TYPE_PALETTE, NULL);
-    self->browser_notebook = browser_notebook;
     self->terminal_stack = terminal_stack;
     self->workspace_list = workspace_list;
     return GTK_WIDGET(self);

@@ -5,7 +5,7 @@
  * PRETTYMUX_SOCKET env var).
  *
  * Usage:
- *   prettymux-open <url>                          Open URL in browser tab
+ *   prettymux-open <url>                          Hand URL to system default handler
  *   prettymux-open --action <name> [--non-interactive]
  *                                                   Run an action (e.g. split.horizontal)
  *   prettymux-open --exec <cmd>                   Execute command in focused terminal
@@ -110,12 +110,10 @@ usage(void)
         "  newtab          pane.tab.new\n"
         "  tabnext         tab.next\n"
         "  tabprev         tab.prev\n"
-        "  browser         browser.toggle\n"
         "  palette         search.show\n"
         "  shortcuts       shortcuts.show\n"
         "  history         history.show\n"
         "  notes           notes.toggle\n"
-        "  pip             pip.toggle\n"
         "  theme           theme.cycle\n"
         "  fullscreen      (F11)\n"
         "  broadcast       broadcast.toggle\n"
@@ -597,12 +595,10 @@ resolve_alias(const char *name)
         {"newtab",     "pane.tab.new"},
         {"tabnext",    "tab.next"},
         {"tabprev",    "tab.prev"},
-        {"browser",    "browser.toggle"},
         {"palette",    "search.show"},
         {"shortcuts",  "shortcuts.show"},
         {"history",    "history.show"},
         {"notes",      "notes.toggle"},
-        {"pip",        "pip.toggle"},
         {"theme",      "theme.cycle"},
         {"broadcast",  "broadcast.toggle"},
         {"search",     "terminal.search"},
@@ -1232,11 +1228,12 @@ main(int argc, char *argv[])
         return send_command(msg);
     }
 
-    /* Default: treat argument as URL */
+    /* Default: hand URLs to the system default handler. */
     {
         char *escaped = json_escape(cmd_argv[0]);
         char msg[4096];
-        snprintf(msg, sizeof(msg), "{\"command\":\"browser.open\",\"url\":\"%s\"}", escaped);
+        snprintf(msg, sizeof(msg),
+                 "{\"command\":\"open.url\",\"url\":\"%s\"}", escaped);
         free(escaped);
         return send_command(msg);
     }

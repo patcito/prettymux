@@ -10,7 +10,6 @@ typedef struct {
     char *ghostty_theme;
     char *toast_position;
     gboolean focus_on_hover;
-    gboolean open_links_in_browser;
     WorkspaceLayoutMode default_layout_mode;
     char *gtk_renderer_mode;
     char *gtk_renderer_probe_result;
@@ -24,7 +23,6 @@ static AppSettingsState app_settings = {
     .ghostty_theme = NULL,
     .toast_position = NULL,
     .focus_on_hover = TRUE,
-    .open_links_in_browser = TRUE,
     .default_layout_mode = WORKSPACE_LAYOUT_STRIP,
     .gtk_renderer_mode = NULL,
     .gtk_renderer_probe_result = NULL,
@@ -222,9 +220,6 @@ app_settings_load(void)
         if (g_key_file_has_key(kf, "ui", "focus_on_hover", NULL))
             app_settings.focus_on_hover =
                 g_key_file_get_boolean(kf, "ui", "focus_on_hover", NULL);
-        if (g_key_file_has_key(kf, "ui", "open_links_in_browser", NULL))
-            app_settings.open_links_in_browser =
-                g_key_file_get_boolean(kf, "ui", "open_links_in_browser", NULL);
         if (g_key_file_has_key(kf, "ui", "default_layout_mode", NULL)) {
             char *mode =
                 g_key_file_get_string(kf, "ui", "default_layout_mode", NULL);
@@ -288,8 +283,6 @@ app_settings_save(void)
                               : "top");
     g_key_file_set_boolean(kf, "ui", "focus_on_hover",
                            app_settings.focus_on_hover);
-    g_key_file_set_boolean(kf, "ui", "open_links_in_browser",
-                           app_settings.open_links_in_browser);
     g_key_file_set_string(kf, "ui", "default_layout_mode",
                           app_settings.default_layout_mode ==
                                   WORKSPACE_LAYOUT_STRIP
@@ -397,20 +390,6 @@ app_settings_set_focus_on_hover(gboolean enabled)
 {
     app_settings_load();
     app_settings.focus_on_hover = enabled != FALSE;
-}
-
-gboolean
-app_settings_get_open_links_in_browser(void)
-{
-    app_settings_load();
-    return app_settings.open_links_in_browser;
-}
-
-void
-app_settings_set_open_links_in_browser(gboolean enabled)
-{
-    app_settings_load();
-    app_settings.open_links_in_browser = enabled != FALSE;
 }
 
 WorkspaceLayoutMode

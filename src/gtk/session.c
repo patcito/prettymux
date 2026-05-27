@@ -2,7 +2,6 @@
 #include "theme.h"
 #include "workspace.h"
 #include "workspace_strip.h"
-#include "browser_tab.h"
 #include "ghostty_terminal.h"
 #include "project_icon_cache.h"
 #include <json-glib/json-glib.h>
@@ -16,7 +15,6 @@
 const char *app_state_get_instance_id(void);
 
 static GtkWindow *session_window = NULL;
-static GtkWidget *session_browser_notebook = NULL;
 static GtkWidget *session_terminal_stack = NULL;
 static GtkWidget *session_workspace_list = NULL;
 static guint session_save_source_id = 0;
@@ -162,9 +160,8 @@ static gboolean session_save_idle_cb(gpointer data) {
     (void)data;
     session_save_source_id = 0;
 
-    if (session_window && session_browser_notebook &&
-        session_terminal_stack && session_workspace_list) {
-        session_save(session_window, session_browser_notebook,
+    if (session_window && session_terminal_stack && session_workspace_list) {
+        session_save(session_window,
                      session_terminal_stack, session_workspace_list);
     }
 
@@ -174,8 +171,6 @@ static gboolean session_save_idle_cb(gpointer data) {
 typedef struct {
     GtkPaned *outer_paned;
     int outer_position;
-    GtkPaned *main_paned;
-    int main_position;
 } SessionPanedRestoreData;
 
 typedef struct {
@@ -965,22 +960,21 @@ session_finish_restore_cb(gpointer data)
 }
 
 static GtkPaned *
-session_main_paned(GtkWidget *browser_notebook)
+session_outer_paned(GtkWidget *terminal_stack)
 {
-    GtkWidget *parent = browser_notebook ? gtk_widget_get_parent(browser_notebook)
-                                         : NULL;
-
-    return GTK_IS_PANED(parent) ? GTK_PANED(parent) : NULL;
-}
-
-static GtkPaned *
-session_outer_paned(GtkWidget *browser_notebook)
-{
-    GtkPaned *main_paned = session_main_paned(browser_notebook);
-    GtkWidget *parent = main_paned ? gtk_widget_get_parent(GTK_WIDGET(main_paned))
-                                   : NULL;
-
-    return GTK_IS_PANED(parent) ? GTK_PANED(parent) : NULL;
+    /* terminal_stack is inside terminal_box, inside main_paned (left
+     * child of outer_paned). Walk up until we find a paned whose
+     * parent is *not* a paned — that's outer_paned. */
+    GtkWidget *w = terminal_stack;
+    while (w) {
+        if (GTK_IS_PANED(w)) {
+            GtkWidget *parent = gtk_widget_get_parent(w);
+            if (!GTK_IS_PANED(parent))
+                return GTK_PANED(w);
+        }
+        w = gtk_widget_get_parent(w);
+    }
+    return NULL;
 }
 
 static gboolean
@@ -990,13 +984,9 @@ session_restore_paned_positions_idle_cb(gpointer data)
 
     if (restore->outer_paned && GTK_IS_PANED(restore->outer_paned))
         gtk_paned_set_position(restore->outer_paned, restore->outer_position);
-    if (restore->main_paned && GTK_IS_PANED(restore->main_paned))
-        gtk_paned_set_position(restore->main_paned, restore->main_position);
 
     if (restore->outer_paned)
         g_object_unref(restore->outer_paned);
-    if (restore->main_paned)
-        g_object_unref(restore->main_paned);
     g_free(restore);
     return G_SOURCE_REMOVE;
 }
@@ -1221,11 +1211,10 @@ session_restore_workspace_layout_node(Workspace *ws,
     return FALSE;
 }
 
-void session_set_context(GtkWindow *window, GtkWidget *browser_notebook,
+void session_set_context(GtkWindow *window,
                          GtkWidget *terminal_stack, GtkWidget *workspace_list)
 {
     session_window = window;
-    session_browser_notebook = browser_notebook;
     session_terminal_stack = terminal_stack;
     session_workspace_list = workspace_list;
     session_shutting_down = FALSE;
@@ -1245,7 +1234,7 @@ void session_queue_save(void)
     if (session_shutting_down || session_restoring)
         return;
 
-    if (!session_window || !session_browser_notebook ||
+    if (!session_window ||
         !session_terminal_stack || !session_workspace_list)
         return;
 
@@ -1258,11 +1247,9 @@ void session_queue_save(void)
 void
 session_save_for_instance(const char *instance_id,
                           GtkWindow *window,
-                          GtkWidget *browser_notebook,
                           GtkWidget *terminal_stack,
                           GtkWidget *workspace_list)
 {
-    (void)terminal_stack;
     (void)workspace_list;
 
     JsonBuilder *b = json_builder_new();
@@ -1287,57 +1274,10 @@ session_save_for_instance(const char *instance_id,
     json_builder_set_member_name(b, "theme");
     json_builder_add_string_value(b, theme_get_current()->name);
 
-    /* Browser visible */
-    json_builder_set_member_name(b, "browserVisible");
-    json_builder_add_boolean_value(b, gtk_widget_get_visible(browser_notebook));
-
-    GtkPaned *outer_paned = session_outer_paned(browser_notebook);
-    GtkPaned *main_paned = session_main_paned(browser_notebook);
-
+    GtkPaned *outer_paned = session_outer_paned(terminal_stack);
     json_builder_set_member_name(b, "outerPanedPos");
     json_builder_add_int_value(b,
         outer_paned ? gtk_paned_get_position(outer_paned) : 200);
-    json_builder_set_member_name(b, "mainPanedPos");
-    json_builder_add_int_value(b,
-        main_paned ? gtk_paned_get_position(main_paned) : 700);
-
-    /* Browser tabs */
-    json_builder_set_member_name(b, "browserTabs");
-    json_builder_begin_array(b);
-    {
-        int n = gtk_notebook_get_n_pages(GTK_NOTEBOOK(browser_notebook));
-        int i;
-        for (i = 0; i < n; i++) {
-            GtkWidget *child = gtk_notebook_get_nth_page(
-                GTK_NOTEBOOK(browser_notebook), i);
-            if (BROWSER_IS_TAB(child)) {
-                json_builder_begin_object(b);
-                json_builder_set_member_name(b, "url");
-                const char *url = browser_tab_get_url(BROWSER_TAB(child));
-                json_builder_add_string_value(b, url ? url : "about:blank");
-                json_builder_set_member_name(b, "title");
-                const char *title = browser_tab_get_title(BROWSER_TAB(child));
-                json_builder_add_string_value(b, title ? title : "");
-                json_builder_end_object(b);
-            }
-        }
-    }
-    json_builder_end_array(b);
-
-    /* URL history */
-    json_builder_set_member_name(b, "urlHistory");
-    json_builder_begin_array(b);
-    {
-        GPtrArray *history = browser_tab_get_url_history();
-        if (history) {
-            guint i;
-            for (i = 0; i < history->len; i++) {
-                const char *entry = g_ptr_array_index(history, i);
-                json_builder_add_string_value(b, entry);
-            }
-        }
-    }
-    json_builder_end_array(b);
 
     /* Project icon cache */
     json_builder_set_member_name(b, "logoCache");
@@ -1476,21 +1416,19 @@ session_save_for_instance(const char *instance_id,
 }
 
 void
-session_save(GtkWindow *window, GtkWidget *browser_notebook,
+session_save(GtkWindow *window,
              GtkWidget *terminal_stack, GtkWidget *workspace_list)
 {
     session_save_for_instance(session_current_instance_id(), window,
-                              browser_notebook, terminal_stack, workspace_list);
+                              terminal_stack, workspace_list);
 }
 
 void
 session_restore_for_instance(const char *instance_id,
                              GtkWindow *window,
-                             GtkWidget *browser_notebook,
                              GtkWidget *terminal_stack,
                              GtkWidget *workspace_list,
-                             ghostty_app_t ghostty_app,
-                             SessionAddBrowserTabFunc add_browser_tab_func)
+                             ghostty_app_t ghostty_app)
 {
     char *path = session_get_restore_path_for_instance(instance_id);
     if (!g_file_test(path, G_FILE_TEST_EXISTS)) {
@@ -1534,46 +1472,8 @@ session_restore_for_instance(const char *instance_id,
         obj, "theme", "Dark");
     theme_set_by_name(theme_name);
 
-    /* Browser visibility */
-    gboolean browser_visible = json_object_get_boolean_member_with_default(
-        obj, "browserVisible", TRUE);
-    gtk_widget_set_visible(browser_notebook, browser_visible);
-
     int outer_paned_pos = (int)json_object_get_int_member_with_default(
         obj, "outerPanedPos", 200);
-    int main_paned_pos = (int)json_object_get_int_member_with_default(
-        obj, "mainPanedPos", 700);
-
-    /* URL history */
-    if (json_object_has_member(obj, "urlHistory")) {
-        JsonArray *url_arr = json_object_get_array_member(obj, "urlHistory");
-        guint url_len = json_array_get_length(url_arr);
-        GPtrArray *history = g_ptr_array_new_with_free_func(g_free);
-        guint ui;
-        for (ui = 0; ui < url_len; ui++) {
-            const char *entry = json_array_get_string_element(url_arr, ui);
-            if (entry && entry[0])
-                g_ptr_array_add(history, g_strdup(entry));
-        }
-        browser_tab_set_url_history(history);
-    }
-
-    /* Restore browser tabs */
-    if (json_object_has_member(obj, "browserTabs") && add_browser_tab_func) {
-        JsonArray *bt_arr = json_object_get_array_member(obj, "browserTabs");
-        guint bt_len = json_array_get_length(bt_arr);
-        guint bi;
-        for (bi = 0; bi < bt_len; bi++) {
-            JsonNode *bt_node = json_array_get_element(bt_arr, bi);
-            if (!bt_node || !JSON_NODE_HOLDS_OBJECT(bt_node))
-                continue;
-            JsonObject *bt_obj = json_node_get_object(bt_node);
-            const char *url = json_object_get_string_member_with_default(
-                bt_obj, "url", "");
-            if (url && url[0])
-                add_browser_tab_func(url);
-        }
-    }
 
     if (json_object_has_member(obj, "logoCache")) {
         JsonArray *logo_arr = json_object_get_array_member(obj, "logoCache");
@@ -1842,15 +1742,11 @@ session_restore_for_instance(const char *instance_id,
 
     {
         SessionPanedRestoreData *restore = g_new0(SessionPanedRestoreData, 1);
-        restore->outer_paned = session_outer_paned(browser_notebook);
+        restore->outer_paned = session_outer_paned(terminal_stack);
         restore->outer_position = outer_paned_pos;
-        restore->main_paned = session_main_paned(browser_notebook);
-        restore->main_position = main_paned_pos;
 
         if (restore->outer_paned)
             g_object_ref(restore->outer_paned);
-        if (restore->main_paned)
-            g_object_ref(restore->main_paned);
 
         g_idle_add(session_restore_paned_positions_idle_cb, restore);
     }
@@ -1862,13 +1758,11 @@ session_restore_for_instance(const char *instance_id,
 }
 
 void
-session_restore(GtkWindow *window, GtkWidget *browser_notebook,
+session_restore(GtkWindow *window,
                 GtkWidget *terminal_stack, GtkWidget *workspace_list,
-                ghostty_app_t ghostty_app,
-                SessionAddBrowserTabFunc add_browser_tab_func)
+                ghostty_app_t ghostty_app)
 {
     session_restore_for_instance(session_current_instance_id(), window,
-                                 browser_notebook, terminal_stack,
-                                 workspace_list, ghostty_app,
-                                 add_browser_tab_func);
+                                 terminal_stack,
+                                 workspace_list, ghostty_app);
 }

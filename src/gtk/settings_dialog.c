@@ -16,7 +16,6 @@ typedef struct {
     GtkWidget *theme_dropdown;
     GtkWidget *toast_position_dropdown;
     GtkWidget *focus_on_hover_switch;
-    GtkWidget *open_links_in_browser_switch;
     GtkWidget *layout_mode_dropdown;
     GtkWidget *gtk_renderer_dropdown;
     GtkWidget *font_spin;
@@ -473,8 +472,6 @@ on_apply_clicked(GtkButton *button, gpointer user_data)
         toast_position_selected == 1 ? "bottom" : "top");
     app_settings_set_focus_on_hover(
         gtk_switch_get_active(GTK_SWITCH(state->focus_on_hover_switch)));
-    app_settings_set_open_links_in_browser(
-        gtk_switch_get_active(GTK_SWITCH(state->open_links_in_browser_switch)));
     previous_default_layout_mode = app_settings_get_default_layout_mode();
     layout_mode_selected =
         gtk_drop_down_get_selected(GTK_DROP_DOWN(state->layout_mode_dropdown));
@@ -672,13 +669,6 @@ settings_dialog_present(GtkWindow *parent,
     gtk_box_append(GTK_BOX(content),
                    settings_row("Focus panes on hover",
                                 state->focus_on_hover_switch));
-
-    state->open_links_in_browser_switch = gtk_switch_new();
-    gtk_switch_set_active(GTK_SWITCH(state->open_links_in_browser_switch),
-                          app_settings_get_open_links_in_browser());
-    gtk_box_append(GTK_BOX(content),
-                   settings_row("Open links in PrettyMux browser",
-                                state->open_links_in_browser_switch));
 
     state->gtk_renderer_dropdown = gtk_drop_down_new_from_strings(gtk_renderer_modes);
     gtk_drop_down_set_selected(GTK_DROP_DOWN(state->gtk_renderer_dropdown),

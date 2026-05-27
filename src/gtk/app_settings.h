@@ -20,8 +20,6 @@ const char *app_settings_get_toast_position(void);
 void app_settings_set_toast_position(const char *position);
 gboolean app_settings_get_focus_on_hover(void);
 void app_settings_set_focus_on_hover(gboolean enabled);
-gboolean app_settings_get_open_links_in_browser(void);
-void app_settings_set_open_links_in_browser(gboolean enabled);
 WorkspaceLayoutMode app_settings_get_default_layout_mode(void);
 void app_settings_set_default_layout_mode(WorkspaceLayoutMode mode);
 

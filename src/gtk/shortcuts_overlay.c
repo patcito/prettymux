@@ -484,10 +484,9 @@ static const Category categories[] = {
     {"WORKSPACES",  "workspace."},
     {"TERMINAL",    "pane."},
     {"SPLITS",      "split."},
-    {"BROWSER",     "browser."},
     {"TOOLS",       NULL},  /* catch-all */
 };
-#define N_CATEGORIES 5
+#define N_CATEGORIES 4
 
 static int
 categorize(const char *action)
@@ -495,9 +494,7 @@ categorize(const char *action)
     if (g_str_has_prefix(action, "workspace.")) return 0;
     if (g_str_has_prefix(action, "pane.") || strcmp(action, "broadcast.toggle") == 0) return 1;
     if (g_str_has_prefix(action, "split.")) return 2;
-    if (g_str_has_prefix(action, "browser.") || g_str_has_prefix(action, "devtools.") ||
-        strcmp(action, "pip.toggle") == 0) return 3;
-    return 4; /* tools: search, shortcuts, history, theme, notes, terminal, copy, paste */
+    return 3; /* tools: search, shortcuts, history, theme, notes, terminal, copy, paste */
 }
 
 /* ── Search filter for shortcuts ───────────────────────────────── */
@@ -654,8 +651,8 @@ shortcuts_overlay_toggle(GtkOverlay *overlay)
     gtk_widget_set_hexpand(col3, TRUE);
     gtk_box_append(GTK_BOX(columns), col3);
 
-    /* Column targets: [col1=workspaces+terminal, col2=splits+browser, col3=tools] */
-    GtkWidget *col_targets[] = { col1, col1, col2, col2, col3 };
+    /* Column targets: [col1=workspaces+terminal, col2=splits, col3=tools] */
+    GtkWidget *col_targets[] = { col1, col1, col2, col3 };
 
     /* Add section headers */
     gboolean section_added[N_CATEGORIES] = {0};

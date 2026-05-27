@@ -413,8 +413,8 @@ show_welcome_dialog(GtkWindow *parent)
     gtk_box_append(GTK_BOX(box), title);
 
     GtkWidget *desc = gtk_label_new(
-        "GPU-accelerated terminal multiplexer with\n"
-        "ghostty + WebKit in one window.\n\n"
+        "GPU-accelerated terminal multiplexer\n"
+        "built on ghostty.\n\n"
         "Press Ctrl+Shift+K to see all shortcuts.\n"
         "Visit prettymux-web.vercel.app for docs.");
     gtk_label_set_wrap(GTK_LABEL(desc), TRUE);

@@ -68,11 +68,8 @@ install_rpath = ''
 
 if is_linux
   browser_sources += files(
-    'browser_tab.c',
     'socket_server.c',
-    'pip_window.c',
   )
-  platform_deps += dependency('webkitgtk-6.0')
   platform_link_args += [
     ghostty_lib_dir / 'libghostty.so',
   ]
@@ -109,9 +106,7 @@ elif is_macos
   endif
 
   browser_sources += files(
-    'browser_tab_macos.m',
     'socket_server.c',
-    'pip_window_stub.c',
   )
   platform_link_args += [
     ghostty_macos_lib,
@@ -121,15 +116,9 @@ elif is_macos
     '-framework', 'IOSurface',
     '-framework', 'Metal',
     '-framework', 'QuartzCore',
-    '-framework', 'WebKit',
     '-lc++',
   ]
 elif is_windows
-  webview2_sdk_dir = get_option('webview2_sdk_dir')
-  if webview2_sdk_dir == ''
-    error('Set WEBVIEW2_SDK_DIR to the unpacked Microsoft.Web.WebView2 SDK directory when building on Windows.')
-  endif
-
   ghostty_windows_lib = ''
   foreach lib_candidate : [
     ghostty_lib_dir / 'libghostty.dll.a',
@@ -147,11 +136,8 @@ elif is_windows
   endif
 
   browser_sources += files(
-    'browser_tab_windows.c',
     'socket_server_stub.c',
-    'pip_window_stub.c',
   )
-  extra_include_dirs += [include_directories(webview2_sdk_dir / 'build' / 'native' / 'include')]
   platform_link_args += [
     ghostty_windows_lib,
     '-lole32',

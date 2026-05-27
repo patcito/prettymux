@@ -1,5 +1,4 @@
 #include "session.h"
-#include "browser_tab.h"
 #include "ghostty_terminal.h"
 #include "project_icon_cache.h"
 #include "theme.h"
@@ -23,7 +22,6 @@ static const Theme test_theme = {
 
 typedef struct {
     GtkWindow *window;
-    GtkWidget *browser_notebook;
     GtkWidget *terminal_stack;
     GtkWidget *workspace_list;
 } SessionTestUi;
@@ -91,26 +89,19 @@ test_ui_new(void)
 {
     SessionTestUi ui = {0};
     GtkWidget *outer;
-    GtkWidget *main_paned;
 
     ui.window = GTK_WINDOW(gtk_window_new());
     g_object_ref_sink(ui.window);
-    ui.browser_notebook = gtk_notebook_new();
     ui.terminal_stack = gtk_stack_new();
     ui.workspace_list = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 
-    main_paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
-    gtk_paned_set_start_child(GTK_PANED(main_paned), ui.browser_notebook);
-    gtk_paned_set_end_child(GTK_PANED(main_paned), ui.terminal_stack);
-
     outer = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
     gtk_paned_set_start_child(GTK_PANED(outer), ui.workspace_list);
-    gtk_paned_set_end_child(GTK_PANED(outer), main_paned);
+    gtk_paned_set_end_child(GTK_PANED(outer), ui.terminal_stack);
     gtk_window_set_child(ui.window, outer);
 
     gtk_window_set_default_size(ui.window, 1280, 720);
     gtk_paned_set_position(GTK_PANED(outer), 220);
-    gtk_paned_set_position(GTK_PANED(main_paned), 860);
 
     return ui;
 }
@@ -220,7 +211,7 @@ test_workspace_free(Workspace *ws)
     g_free(ws);
 }
 
-/* ---- app/theme/browser/icon stubs ---- */
+/* ---- app/theme/icon stubs ---- */
 
 const Theme *
 theme_get_current(void)
@@ -232,39 +223,6 @@ void
 theme_set_by_name(const char *name)
 {
     (void)name;
-}
-
-GType
-browser_tab_get_type(void)
-{
-    return GTK_TYPE_BOX;
-}
-
-const char *
-browser_tab_get_url(BrowserTab *self)
-{
-    (void)self;
-    return "about:blank";
-}
-
-const char *
-browser_tab_get_title(BrowserTab *self)
-{
-    (void)self;
-    return "";
-}
-
-GPtrArray *
-browser_tab_get_url_history(void)
-{
-    return NULL;
-}
-
-void
-browser_tab_set_url_history(GPtrArray *history)
-{
-    if (history)
-        g_ptr_array_unref(history);
 }
 
 void
@@ -631,7 +589,7 @@ test_save_and_restore_strip_round_trip(void)
     ((WorkspaceColumn *)g_ptr_array_index(saved_state->columns, 2))->target_width = 960;
     ((WorkspaceColumn *)g_ptr_array_index(saved_state->columns, 2))->maximized = TRUE;
 
-    session_save(ui.window, ui.browser_notebook, ui.terminal_stack, ui.workspace_list);
+    session_save(ui.window, ui.terminal_stack, ui.workspace_list);
 
     saved_root = test_load_saved_session_for_instance(NULL);
     saved_workspaces = json_object_get_array_member(saved_root, "workspaces");
@@ -660,10 +618,7 @@ test_save_and_restore_strip_round_trip(void)
                     test_workspace_new(WORKSPACE_LAYOUT_CLASSIC, 1, "Bootstrap"));
 
     session_restore(ui.window,
-                    ui.browser_notebook,
-                    ui.terminal_stack,
-                    ui.workspace_list,
-                    NULL,
+                    ui.terminal_stack, ui.workspace_list,
                     NULL);
 
     g_assert_cmpuint(workspaces->len, ==, 1);
@@ -709,7 +664,7 @@ test_save_and_restore_classic_keeps_schema_safe(void)
     g_ptr_array_add(workspaces,
                     test_workspace_new(WORKSPACE_LAYOUT_CLASSIC, 1, "Classic WS"));
 
-    session_save(ui.window, ui.browser_notebook, ui.terminal_stack, ui.workspace_list);
+    session_save(ui.window, ui.terminal_stack, ui.workspace_list);
 
     saved_root = test_load_saved_session_for_instance(NULL);
     saved_workspaces = json_object_get_array_member(saved_root, "workspaces");
@@ -725,10 +680,7 @@ test_save_and_restore_classic_keeps_schema_safe(void)
                     test_workspace_new(WORKSPACE_LAYOUT_STRIP, 2, "Bootstrap"));
 
     session_restore(ui.window,
-                    ui.browser_notebook,
-                    ui.terminal_stack,
-                    ui.workspace_list,
-                    NULL,
+                    ui.terminal_stack, ui.workspace_list,
                     NULL);
 
     g_assert_cmpuint(workspaces->len, ==, 1);
@@ -802,7 +754,7 @@ test_save_and_restore_strip_with_stacked_column_round_trip(void)
 
     saved_state->focused_col = 1;
 
-    session_save(ui.window, ui.browser_notebook, ui.terminal_stack, ui.workspace_list);
+    session_save(ui.window, ui.terminal_stack, ui.workspace_list);
 
     saved_root = test_load_saved_session_for_instance(NULL);
     saved_workspaces = json_object_get_array_member(saved_root, "workspaces");
@@ -826,10 +778,7 @@ test_save_and_restore_strip_with_stacked_column_round_trip(void)
                     test_workspace_new(WORKSPACE_LAYOUT_CLASSIC, 1, "Bootstrap"));
 
     session_restore(ui.window,
-                    ui.browser_notebook,
-                    ui.terminal_stack,
-                    ui.workspace_list,
-                    NULL,
+                    ui.terminal_stack, ui.workspace_list,
                     NULL);
 
     restored_ws = g_ptr_array_index(workspaces, 0);
@@ -893,13 +842,13 @@ test_session_save_restore_isolated_per_instance(void)
     test_reset_workspaces();
     g_ptr_array_add(workspaces,
                     test_workspace_new(WORKSPACE_LAYOUT_CLASSIC, 1, "Alpha Workspace"));
-    session_save_for_instance(instance_alpha, ui.window, ui.browser_notebook,
+    session_save_for_instance(instance_alpha, ui.window,
                               ui.terminal_stack, ui.workspace_list);
 
     test_reset_workspaces();
     g_ptr_array_add(workspaces,
                     test_workspace_new(WORKSPACE_LAYOUT_CLASSIC, 1, "Beta Workspace"));
-    session_save_for_instance(instance_beta, ui.window, ui.browser_notebook,
+    session_save_for_instance(instance_beta, ui.window,
                               ui.terminal_stack, ui.workspace_list);
 
     g_assert_true(session_exists_for_instance(instance_alpha));
@@ -922,8 +871,8 @@ test_session_save_restore_isolated_per_instance(void)
     test_reset_workspaces();
     g_ptr_array_add(workspaces,
                     test_workspace_new(WORKSPACE_LAYOUT_CLASSIC, 1, "Bootstrap"));
-    session_restore_for_instance(instance_alpha, ui.window, ui.browser_notebook,
-                                 ui.terminal_stack, ui.workspace_list, NULL, NULL);
+    session_restore_for_instance(instance_alpha, ui.window,
+                                 ui.terminal_stack, ui.workspace_list, NULL);
     g_assert_cmpuint(workspaces->len, ==, 1);
     restored_ws = test_first_workspace();
     g_assert_nonnull(restored_ws);
@@ -932,8 +881,8 @@ test_session_save_restore_isolated_per_instance(void)
     test_reset_workspaces();
     g_ptr_array_add(workspaces,
                     test_workspace_new(WORKSPACE_LAYOUT_CLASSIC, 1, "Bootstrap"));
-    session_restore_for_instance(instance_beta, ui.window, ui.browser_notebook,
-                                 ui.terminal_stack, ui.workspace_list, NULL, NULL);
+    session_restore_for_instance(instance_beta, ui.window,
+                                 ui.terminal_stack, ui.workspace_list, NULL);
     g_assert_cmpuint(workspaces->len, ==, 1);
     restored_ws = test_first_workspace();
     g_assert_nonnull(restored_ws);
@@ -957,7 +906,7 @@ test_session_same_instance_path_survives_restart(void)
     test_reset_workspaces();
     g_ptr_array_add(workspaces,
                     test_workspace_new(WORKSPACE_LAYOUT_CLASSIC, 1, "Before Restart"));
-    session_save_for_instance(instance_id, ui.window, ui.browser_notebook,
+    session_save_for_instance(instance_id, ui.window,
                               ui.terminal_stack, ui.workspace_list);
 
     first_path = session_get_instance_session_path(instance_id);
@@ -966,22 +915,22 @@ test_session_same_instance_path_survives_restart(void)
     test_reset_workspaces();
     g_ptr_array_add(workspaces,
                     test_workspace_new(WORKSPACE_LAYOUT_CLASSIC, 1, "Bootstrap"));
-    session_restore_for_instance(instance_id, ui.window, ui.browser_notebook,
-                                 ui.terminal_stack, ui.workspace_list, NULL, NULL);
+    session_restore_for_instance(instance_id, ui.window,
+                                 ui.terminal_stack, ui.workspace_list, NULL);
     restored_ws = test_first_workspace();
     g_assert_nonnull(restored_ws);
     g_assert_cmpstr(restored_ws->name, ==, "Before Restart");
 
     snprintf(restored_ws->name, sizeof(restored_ws->name), "%s",
              "After Restart");
-    session_save_for_instance(instance_id, ui.window, ui.browser_notebook,
+    session_save_for_instance(instance_id, ui.window,
                               ui.terminal_stack, ui.workspace_list);
 
     test_reset_workspaces();
     g_ptr_array_add(workspaces,
                     test_workspace_new(WORKSPACE_LAYOUT_CLASSIC, 1, "Bootstrap"));
-    session_restore_for_instance(instance_id, ui.window, ui.browser_notebook,
-                                 ui.terminal_stack, ui.workspace_list, NULL, NULL);
+    session_restore_for_instance(instance_id, ui.window,
+                                 ui.terminal_stack, ui.workspace_list, NULL);
     restored_ws = test_first_workspace();
     g_assert_nonnull(restored_ws);
     g_assert_cmpstr(restored_ws->name, ==, "After Restart");
@@ -1013,7 +962,7 @@ test_non_default_restore_does_not_fallback_to_default_session(void)
     test_reset_workspaces();
     g_ptr_array_add(workspaces,
                     test_workspace_new(WORKSPACE_LAYOUT_CLASSIC, 1, "Default Session"));
-    session_save_for_instance(NULL, ui.window, ui.browser_notebook,
+    session_save_for_instance(NULL, ui.window,
                               ui.terminal_stack, ui.workspace_list);
 
     default_path = session_get_instance_session_path(NULL);
@@ -1030,8 +979,8 @@ test_non_default_restore_does_not_fallback_to_default_session(void)
     test_reset_workspaces();
     g_ptr_array_add(workspaces,
                     test_workspace_new(WORKSPACE_LAYOUT_CLASSIC, 1, "Bootstrap"));
-    session_restore_for_instance(instance_id, ui.window, ui.browser_notebook,
-                                 ui.terminal_stack, ui.workspace_list, NULL, NULL);
+    session_restore_for_instance(instance_id, ui.window,
+                                 ui.terminal_stack, ui.workspace_list, NULL);
     restored_ws = test_first_workspace();
     g_assert_nonnull(restored_ws);
     g_assert_cmpstr(restored_ws->name, ==, "Bootstrap");
@@ -1059,7 +1008,7 @@ test_default_restore_falls_back_to_legacy_session(void)
     g_ptr_array_add(workspaces,
                     test_workspace_new(WORKSPACE_LAYOUT_CLASSIC, 1,
                                        "Legacy Default Session"));
-    session_save_for_instance(NULL, ui.window, ui.browser_notebook,
+    session_save_for_instance(NULL, ui.window,
                               ui.terminal_stack, ui.workspace_list);
 
     default_path = session_get_instance_session_path(NULL);
@@ -1072,8 +1021,8 @@ test_default_restore_falls_back_to_legacy_session(void)
     test_reset_workspaces();
     g_ptr_array_add(workspaces,
                     test_workspace_new(WORKSPACE_LAYOUT_CLASSIC, 1, "Bootstrap"));
-    session_restore_for_instance(NULL, ui.window, ui.browser_notebook,
-                                 ui.terminal_stack, ui.workspace_list, NULL, NULL);
+    session_restore_for_instance(NULL, ui.window,
+                                 ui.terminal_stack, ui.workspace_list, NULL);
     restored_ws = test_first_workspace();
     g_assert_nonnull(restored_ws);
     g_assert_cmpstr(restored_ws->name, ==, "Legacy Default Session");

@@ -2,8 +2,8 @@
  * command_palette.h - Search overlay / command palette widget
  *
  * A GtkWidget overlay that shows a search entry + filtered list of
- * workspaces, terminal tabs, and browser tabs.  Arrow keys navigate,
- * Enter activates, Escape closes.
+ * workspaces and terminal tabs.  Arrow keys navigate, Enter activates,
+ * Escape closes.
  */
 #pragma once
 
@@ -16,15 +16,13 @@ G_DECLARE_FINAL_TYPE(CommandPalette, command_palette, COMMAND, PALETTE, GtkWidge
 
 /*
  * command_palette_new:
- * @browser_notebook: the browser GtkNotebook (to enumerate browser tabs)
  * @terminal_stack:   the GtkStack containing workspace containers
  * @workspace_list:   the sidebar GtkListBox for workspace switching
  *
  * Creates a new command palette overlay.  The caller should add it to
  * a GtkOverlay on the main window.
  */
-GtkWidget *command_palette_new(GtkWidget *browser_notebook,
-                               GtkWidget *terminal_stack,
+GtkWidget *command_palette_new(GtkWidget *terminal_stack,
                                GtkWidget *workspace_list);
 
 /*

@@ -1,6 +1,6 @@
 #define _GNU_SOURCE
-// PrettyMux — GTK4 + WebKitGTK + ghostty (OpenGL)
-// GPU-accelerated terminal multiplexer with integrated browser
+// PrettyMux — GTK4 + ghostty (OpenGL)
+// GPU-accelerated terminal multiplexer
 
 #include <adwaita.h>
 #include <gio/gio.h>
@@ -20,7 +20,6 @@
 
 #include "ghostty.h"
 #include "ghostty_terminal.h"
-#include "browser_tab.h"
 #include "app_settings.h"
 #include "hover_focus.h"
 #include "theme.h"
@@ -34,7 +33,6 @@
 #include "shortcuts_overlay.h"
 #include "settings_dialog.h"
 #include "pane_move_overlay.h"
-#include "pip_window.h"
 #include "resize_overlay.h"
 #include "prettymux_agent_cli.h"
 #include "app_actions.h"
@@ -487,7 +485,7 @@ static void write_clipboard_cb(void *ud, ghostty_clipboard_e c, const ghostty_cl
 
 static gboolean autosave_tick(gpointer d) {
     (void)d;
-    session_save(g_main_window, ui.browser_notebook, ui.terminal_stack, ui.workspace_list);
+    session_save(g_main_window, ui.terminal_stack, ui.workspace_list);
     return G_SOURCE_CONTINUE;
 }
 
@@ -849,29 +847,21 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
 
     gtk_paned_set_start_child(GTK_PANED(ui.main_paned), ui.terminal_box);
 
-    app_actions_build_browser();
-    gtk_paned_set_end_child(GTK_PANED(ui.main_paned), ui.browser_notebook);
-
     gtk_paned_set_position(GTK_PANED(ui.outer_paned), 200);
-    gtk_paned_set_position(GTK_PANED(ui.main_paned), 700);
 
     // Resize overlay — show dimensions when paned handles are dragged
     resize_overlay_init(GTK_OVERLAY(ui.overlay));
     resize_overlay_connect_paned(GTK_PANED(ui.outer_paned));
-    resize_overlay_connect_paned(GTK_PANED(ui.main_paned));
     g_signal_connect(ui.outer_paned, "notify::position",
-                     G_CALLBACK(on_paned_position_notify), NULL);
-    g_signal_connect(ui.main_paned, "notify::position",
                      G_CALLBACK(on_paned_position_notify), NULL);
 
     // Command palette (overlay)
-    ui.command_palette = command_palette_new(ui.browser_notebook,
-                                             ui.terminal_stack,
+    ui.command_palette = command_palette_new(ui.terminal_stack,
                                              ui.workspace_list);
     gtk_widget_set_visible(ui.command_palette, FALSE);
     gtk_overlay_add_overlay(GTK_OVERLAY(ui.overlay), ui.command_palette);
 
-    session_set_context(GTK_WINDOW(window), ui.browser_notebook,
+    session_set_context(GTK_WINDOW(window),
                         ui.terminal_stack, ui.workspace_list);
 
     // Save on close
@@ -894,15 +884,10 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
 
     if (session_exists_for_instance(app_state_get_instance_id())) {
         session_restore_for_instance(app_state_get_instance_id(),
-                                     GTK_WINDOW(window), ui.browser_notebook,
+                                     GTK_WINDOW(window),
                                      ui.terminal_stack, ui.workspace_list,
-                                     g_ghostty_app,
-                                     app_actions_add_browser_tab);
+                                     g_ghostty_app);
         apply_theme_to_ghostty_scheme();
-    }
-    // Always ensure at least one browser tab exists
-    if (gtk_notebook_get_n_pages(GTK_NOTEBOOK(ui.browser_notebook)) == 0) {
-        app_actions_add_browser_tab("https://prettymux-web.vercel.app/?prettymux=t");
     }
 
     // Auto-save
@@ -926,11 +911,6 @@ int main(int argc, char *argv[]) {
         prettymux_agent_cli_maybe_run(argc, argv, &cli_exit))
         return cli_exit;
 
-    // WebKitGTK's bubblewrap sandbox requires dbus-proxy which may not
-    // be available in all environments. Disable it for now.
-#ifndef G_OS_WIN32
-    g_setenv("WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS", "1", FALSE);
-#endif
     apply_graphics_startup_workarounds();
     g_set_prgname("prettymux");
     if (!g_renderer_probe_target)

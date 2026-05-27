@@ -13,7 +13,6 @@ typedef struct {
     GtkWidget *main_paned;
     GtkWidget *terminal_box;
     GtkWidget *terminal_stack;
-    GtkWidget *browser_notebook;
     GtkWidget *overlay;
     GtkWidget *command_palette;
     GtkWidget *bell_button;

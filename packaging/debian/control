@@ -7,7 +7,6 @@ Build-Depends: debhelper (>= 12),
                ninja-build,
                libgtk-4-dev,
                libadwaita-1-dev,
-               libwebkitgtk-6.0-dev,
                libjson-glib-dev,
                g++
 Standards-Version: 4.6.0
@@ -18,7 +17,6 @@ Architecture: amd64
 Depends: ${shlibs:Depends}, ${misc:Depends},
          libgtk-4-1,
          libadwaita-1-0,
-         libwebkitgtk-6.0-4,
          libjson-glib-1.0-0
 Description: GPU-accelerated terminal multiplexer
  PrettyMux is a GPU-accelerated terminal multiplexer built on

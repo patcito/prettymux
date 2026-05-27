@@ -2,9 +2,7 @@
 
 #include <gtk/gtk.h>
 
-void app_actions_add_browser_tab(const char *url);
 void app_actions_open_url_in_preferred_target(const char *url);
-void app_actions_build_browser(void);
 void app_actions_handle(const char *action);
 gboolean app_actions_handle_for_socket(const char *action,
                                        gboolean non_interactive,

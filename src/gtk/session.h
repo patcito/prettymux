@@ -3,33 +3,26 @@
 #include <gtk/gtk.h>
 #include "ghostty.h"
 
-/* Callback for adding a browser tab during session restore.
- * Allows the caller (main.c) to wire up signal handlers. */
-typedef void (*SessionAddBrowserTabFunc)(const char *url);
-
 char *session_get_instance_session_path(const char *instance_id);
 gboolean session_exists_for_instance(const char *instance_id);
 void session_save_for_instance(const char *instance_id,
-                               GtkWindow *window, GtkWidget *browser_notebook,
+                               GtkWindow *window,
                                GtkWidget *terminal_stack,
                                GtkWidget *workspace_list);
 void session_restore_for_instance(const char *instance_id,
                                   GtkWindow *window,
-                                  GtkWidget *browser_notebook,
                                   GtkWidget *terminal_stack,
                                   GtkWidget *workspace_list,
-                                  ghostty_app_t ghostty_app,
-                                  SessionAddBrowserTabFunc add_browser_tab_func);
-void session_set_context(GtkWindow *window, GtkWidget *browser_notebook,
+                                  ghostty_app_t ghostty_app);
+void session_set_context(GtkWindow *window,
                          GtkWidget *terminal_stack, GtkWidget *workspace_list);
 void session_begin_shutdown(void);
 void session_queue_save(void);
-void session_save(GtkWindow *window, GtkWidget *browser_notebook,
+void session_save(GtkWindow *window,
                   GtkWidget *terminal_stack, GtkWidget *workspace_list);
-void session_restore(GtkWindow *window, GtkWidget *browser_notebook,
+void session_restore(GtkWindow *window,
                      GtkWidget *terminal_stack, GtkWidget *workspace_list,
-                     ghostty_app_t ghostty_app,
-                     SessionAddBrowserTabFunc add_browser_tab_func);
+                     ghostty_app_t ghostty_app);
 gboolean session_exists(void);
 
 #ifdef PRETTYMUX_TEST_HOOKS
