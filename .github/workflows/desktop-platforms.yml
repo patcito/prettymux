@@ -64,21 +64,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: Download WebView2 SDK
-        shell: bash
-        run: |
-          curl -fsSLo webview2.nupkg https://www.nuget.org/api/v2/package/Microsoft.Web.WebView2/1.0.2903.40
-          python - <<'PY'
-          import pathlib
-          import zipfile
-
-          out = pathlib.Path('webview2')
-          with zipfile.ZipFile('webview2.nupkg') as zf:
-              for name in zf.namelist():
-                  if name.startswith('build/native/'):
-                      zf.extract(name, out)
-          PY
-
       - name: Create MinGW ghostty import library
         shell: msys2 {0}
         run: |
@@ -93,8 +78,7 @@ jobs:
         run: |
           cd src/gtk
           meson setup builddir \
-            -Dghostty_dir="${{ github.workspace }}/ghostty" \
-            -Dwebview2_sdk_dir="${{ github.workspace }}/webview2"
+            -Dghostty_dir="${{ github.workspace }}/ghostty"
           ninja -C builddir
 
       - name: Package artifacts
@@ -103,7 +87,6 @@ jobs:
           mkdir -p dist
           cp src/gtk/builddir/prettymux.exe dist/
           cp ghostty/zig-out/lib/ghostty.dll dist/ || true
-          cp webview2/build/native/x64/WebView2Loader.dll dist/ || true
 
           copy_runtime_deps() {
             declare -A seen
@@ -124,7 +107,7 @@ jobs:
             done
           }
 
-          copy_runtime_deps dist/prettymux.exe dist/ghostty.dll dist/WebView2Loader.dll
+          copy_runtime_deps dist/prettymux.exe dist/ghostty.dll
           powershell -NoLogo -NoProfile -Command "Compress-Archive -Path dist/* -DestinationPath prettymux-windows-x64.zip"
 
       - name: Install WiX
