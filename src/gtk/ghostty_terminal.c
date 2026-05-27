@@ -961,8 +961,8 @@ on_scroll(GtkEventControllerScroll *controller,
      * GTK scroll deltas already reflect the desktop's configured scroll
      * direction, so we invert before passing them into Ghostty's embedded
      * surface API, which expects negative=down/left and positive=up/right.
-     * This makes terminal scrolling line up with the browser and with
-     * natural-scrolling settings under GNOME, Hyprland, and X11 GTK setups.
+     * This makes terminal scrolling line up with natural-scrolling
+     * settings under GNOME, Hyprland, and X11 GTK setups.
      */
     ghostty_surface_mouse_scroll(self->surface, -dx, -dy,
                                  (ghostty_input_scroll_mods_t)translate_mods(state));

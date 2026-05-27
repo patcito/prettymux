@@ -198,7 +198,6 @@ static void
 migrate_shortcut_updates_if_needed(void)
 {
     gboolean changed = FALSE;
-    ShortcutDef *browser_focus = runtime_shortcut_mutable("browser.focus_url");
 
     for (int i = 1; i <= 9; i++) {
         char action[32];
@@ -215,14 +214,6 @@ migrate_shortcut_updates_if_needed(void)
             workspace_focus->mods = GDK_CONTROL_MASK | GDK_SHIFT_MASK;
             changed = TRUE;
         }
-    }
-
-    if (browser_focus &&
-        normalize_keyval(browser_focus->keyval) == GDK_KEY_l &&
-        normalize_mods(browser_focus->mods) == GDK_CONTROL_MASK) {
-        browser_focus->keyval = GDK_KEY_l;
-        browser_focus->mods = GDK_CONTROL_MASK | GDK_SHIFT_MASK;
-        changed = TRUE;
     }
 
     if (changed)

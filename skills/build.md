@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- GTK4, libadwaita, WebKitGTK 6.0, json-glib
+- GTK4, libadwaita, json-glib
 - Meson + Ninja
 - C17 compiler
 - Ghostty fork from `patcito/ghostty` on branch `linux-embedded-platform`
@@ -14,7 +14,6 @@
 sudo apt-get install -y \
   libgtk-4-dev \
   libadwaita-1-dev \
-  libwebkitgtk-6.0-dev \
   libjson-glib-dev \
   meson \
   ninja-build
@@ -26,7 +25,6 @@ sudo apt-get install -y \
 sudo dnf install -y \
   gtk4-devel \
   libadwaita-devel \
-  webkitgtk6.0-devel \
   json-glib-devel \
   meson \
   ninja-build
@@ -38,7 +36,6 @@ sudo dnf install -y \
 sudo pacman -S \
   gtk4 \
   libadwaita \
-  webkit2gtk-6.0 \
   json-glib \
   meson \
   ninja

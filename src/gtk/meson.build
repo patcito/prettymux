@@ -59,7 +59,7 @@ sources = files(
   glad_dir / 'src' / 'gl.c',
 )
 
-browser_sources = []
+platform_sources = []
 platform_deps = []
 platform_link_args = []
 extra_include_dirs = [ghostty_inc]
@@ -67,7 +67,7 @@ build_rpath = ''
 install_rpath = ''
 
 if is_linux
-  browser_sources += files(
+  platform_sources += files(
     'socket_server.c',
   )
   platform_link_args += [
@@ -105,7 +105,7 @@ elif is_macos
     error('Ghostty macOS library not found in ' + ghostty_dir)
   endif
 
-  browser_sources += files(
+  platform_sources += files(
     'socket_server.c',
   )
   platform_link_args += [
@@ -135,7 +135,7 @@ elif is_windows
     error('Ghostty Windows import library not found in ' + ghostty_lib_dir)
   endif
 
-  browser_sources += files(
+  platform_sources += files(
     'socket_server_stub.c',
   )
   platform_link_args += [
@@ -149,7 +149,7 @@ else
   error('Unsupported host platform: ' + host_system)
 endif
 
-executable('prettymux', sources + browser_sources,
+executable('prettymux', sources + platform_sources,
   dependencies: [gtk4, adw, json_glib] + platform_deps,
   include_directories: extra_include_dirs,
   c_args: [

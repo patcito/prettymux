@@ -1,6 +1,6 @@
 # prettymux
 
-prettymux is a native Linux terminal multiplexer built with GTK4, libadwaita, WebKit, and Ghostty. It combines vertical tabs, split panes, workspaces, a built-in browser, and agent-friendly notifications in one GPU-accelerated window.
+prettymux is a native Linux terminal multiplexer built with GTK4, libadwaita, and Ghostty. It combines vertical tabs, split panes, workspaces, and agent-friendly notifications in one GPU-accelerated window.
 
 Website: https://prettymux.com/
 
@@ -89,10 +89,6 @@ Start-Process msiexec.exe -Wait -ArgumentList '/i', 'PrettyMux-Installer-x64.msi
 ### Terminal Splitting and Workspace Tabs
 
 ![Terminal Splitting and Workspace Tabs](https://prettymux.com/screenshots/terminal-splitting.jpg)
-
-### Browser Integration
-
-![Browser Integration](https://prettymux.com/screenshots/browser-integration.jpg)
 
 ### Search Palette
 

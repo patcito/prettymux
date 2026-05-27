@@ -201,11 +201,6 @@ theme_apply(void)
         "}"
         ".sidebar-progress { font-family: monospace; }"
         ".sidebar-badge { color: %s; font-size: 0.65em; margin-start: 4px; }"
-        ".browser-bar { background-color: %s; border-bottom: 1px solid %s; padding: 4px; }"
-        ".browser-bar button { background: %s; color: %s; border: none; padding: 2px 8px;"
-        "  border-radius: 4px; min-width: 24px; min-height: 24px; }"
-        ".browser-bar entry { background: %s; color: %s; border: 1px solid %s;"
-        "  border-radius: 4px; padding: 4px 8px; }"
         "paned > separator {"
         "  background-color: alpha(%s, 0.26);"
         "  min-width: 8px;"
@@ -280,9 +275,6 @@ theme_apply(void)
         t->highlight,
         t->accent,
         t->subtext, t->muted, t->green,
-        t->surface, t->overlay,
-        t->muted, t->fg,
-        t->bg, t->fg, t->overlay,
         t->highlight,
         t->accent,
         t->surface,

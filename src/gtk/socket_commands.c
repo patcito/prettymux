@@ -237,7 +237,7 @@ socket_commands_on_socket_command(const char  *command,
             }
         }
         json_builder_end_array(response);
-    } else if (strcmp(command, "browser.open") == 0) {
+    } else if (strcmp(command, "open.url") == 0) {
         const char *url = json_object_get_string_member_with_default(msg, "url", "");
         if (url && url[0]) {
             app_actions_open_url_in_preferred_target(url);
@@ -1156,7 +1156,7 @@ socket_commands_on_socket_command(const char  *command,
         json_builder_begin_array(response);
         for (int i = 0; default_shortcuts[i].action != NULL; i++)
             json_builder_add_string_value(response, default_shortcuts[i].action);
-        json_builder_add_string_value(response, "browser.open");
+        json_builder_add_string_value(response, "open.url");
         json_builder_add_string_value(response, "workspace.new");
         json_builder_add_string_value(response, "workspace.list");
         json_builder_add_string_value(response, "workspace.switch");

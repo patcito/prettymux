@@ -20,5 +20,4 @@ Depends: ${shlibs:Depends}, ${misc:Depends},
          libjson-glib-1.0-0
 Description: GPU-accelerated terminal multiplexer
  PrettyMux is a GPU-accelerated terminal multiplexer built on
- libghostty with an embedded browser, workspace management,
- and shell integration.
+ libghostty with workspace management and shell integration.

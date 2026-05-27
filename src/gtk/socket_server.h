@@ -5,7 +5,7 @@
  * child processes (e.g. shell integration scripts, prettymux-open CLI).
  *
  * Supported commands:
- *   {"command": "browser.open", "url": "https://..."}
+ *   {"command": "open.url", "url": "https://..."}
  *   {"command": "workspace.new", "name": "optional-name"}
  *   {"command": "workspace.list"}
  *   {"command": "workspace.switch", "index": 0}
