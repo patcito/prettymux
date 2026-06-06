@@ -73,6 +73,12 @@ workspace_strip_toggle_zoom(Workspace *ws)
 }
 
 void
+workspace_strip_toggle_half_maximize_column(Workspace *ws)
+{
+    (void)ws;
+}
+
+void
 workspace_strip_add_notebook_column(Workspace *ws, GtkWidget *notebook)
 {
     (void)ws;

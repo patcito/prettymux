@@ -192,6 +192,23 @@ workspace_layout_toggle_zoom_current(Workspace *ws)
     }
 }
 
+void
+workspace_layout_toggle_half_zoom_current(Workspace *ws)
+{
+    if (!ws)
+        return;
+
+    switch (ws->layout_mode) {
+    case WORKSPACE_LAYOUT_STRIP:
+        workspace_strip_toggle_half_maximize_column(ws);
+        break;
+    case WORKSPACE_LAYOUT_CLASSIC:
+    default:
+        /* Half-width is a strip-layout (column) concept; no-op in classic. */
+        break;
+    }
+}
+
 gboolean
 workspace_layout_is_zoomed(Workspace *ws)
 {

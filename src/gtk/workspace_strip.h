@@ -10,7 +10,8 @@ typedef struct {
     int        focused_pane;  /* Index within panes of the focused pane */
     int        target_width;
     double     current_width;
-    gboolean   maximized;
+    gboolean   maximized;       /* full viewport width */
+    gboolean   half_maximized;  /* half viewport width (mutually exclusive with maximized) */
 } WorkspaceColumn;
 
 typedef enum {
@@ -51,6 +52,7 @@ gboolean   workspace_strip_insert_column_after_active(Workspace *ws,
                                                       GtkWidget *notebook);
 gboolean   workspace_strip_remove_active_column(Workspace *ws);
 void       workspace_strip_toggle_maximize_column(Workspace *ws);
+void       workspace_strip_toggle_half_maximize_column(Workspace *ws);
 void       workspace_strip_toggle_zoom(Workspace *ws);
 void       workspace_strip_add_notebook_column(Workspace *ws,
                                                GtkWidget *notebook);

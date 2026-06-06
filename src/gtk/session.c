@@ -437,6 +437,7 @@ session_strip_rebuild_columns_from_saved_state(Workspace *ws,
         int focused_pane = 0;
         int width = SESSION_STRIP_DEFAULT_COL_WIDTH;
         gboolean maximized = FALSE;
+        gboolean half_maximized = FALSE;
 
         if (!column_node || !JSON_NODE_HOLDS_OBJECT(column_node))
             continue;
@@ -514,6 +515,8 @@ session_strip_rebuild_columns_from_saved_state(Workspace *ws,
         maximized = json_object_get_boolean_member_with_default(column_obj,
                                                                 "maximized",
                                                                 FALSE);
+        half_maximized = json_object_get_boolean_member_with_default(
+            column_obj, "halfMaximized", FALSE);
 
         col = g_new0(WorkspaceColumn, 1);
         col->panes = g_ptr_array_ref(col_panes);
@@ -521,6 +524,7 @@ session_strip_rebuild_columns_from_saved_state(Workspace *ws,
         col->target_width = width;
         col->current_width = (double)width;
         col->maximized = maximized;
+        col->half_maximized = half_maximized;
         if (state->column_box)
             col->notebook = session_strip_build_column_root(col->panes);
         else
@@ -647,6 +651,7 @@ session_save_workspace_strip_state(JsonBuilder *builder, Workspace *ws)
             const char *column_focused_pane_id = "";
             int width = SESSION_STRIP_DEFAULT_COL_WIDTH;
             gboolean maximized = FALSE;
+            gboolean half_maximized = FALSE;
             int focused_pane = 0;
 
             if (!col)
@@ -662,6 +667,7 @@ session_save_workspace_strip_state(JsonBuilder *builder, Workspace *ws)
             if (col->target_width > 0)
                 width = col->target_width;
             maximized = col->maximized;
+            half_maximized = col->half_maximized;
 
             if (maximized && maximized_col < 0) {
                 maximized_col = (int)i;
@@ -711,6 +717,8 @@ session_save_workspace_strip_state(JsonBuilder *builder, Workspace *ws)
             json_builder_add_int_value(builder, width);
             json_builder_set_member_name(builder, "maximized");
             json_builder_add_boolean_value(builder, maximized);
+            json_builder_set_member_name(builder, "halfMaximized");
+            json_builder_add_boolean_value(builder, half_maximized);
             json_builder_end_object(builder);
         }
     } else if (ws->pane_notebooks) {
@@ -733,6 +741,8 @@ session_save_workspace_strip_state(JsonBuilder *builder, Workspace *ws)
             json_builder_set_member_name(builder, "width");
             json_builder_add_int_value(builder, width);
             json_builder_set_member_name(builder, "maximized");
+            json_builder_add_boolean_value(builder, FALSE);
+            json_builder_set_member_name(builder, "halfMaximized");
             json_builder_add_boolean_value(builder, FALSE);
             json_builder_end_object(builder);
         }
@@ -793,6 +803,7 @@ session_restore_workspace_strip_state(Workspace *ws, JsonObject *ws_obj)
             col->target_width = SESSION_STRIP_DEFAULT_COL_WIDTH;
         col->current_width = (double)col->target_width;
         col->maximized = FALSE;
+        col->half_maximized = FALSE;
     }
 
     if (json_object_has_member(strip_obj, "columns")) {
@@ -842,6 +853,10 @@ session_restore_workspace_strip_state(Workspace *ws, JsonObject *ws_obj)
                 if (maximized)
                     any_column_maximized = TRUE;
             }
+
+            if (json_object_has_member(column_obj, "halfMaximized"))
+                col->half_maximized = json_object_get_boolean_member_with_default(
+                    column_obj, "halfMaximized", FALSE);
 
             if (json_object_has_member(column_obj, "focusedPaneId")) {
                 const char *focused_pane_id =

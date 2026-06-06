@@ -539,6 +539,10 @@ app_actions_handle(const char *action)
         Workspace *ws = workspace_get_current();
         if (ws)
             workspace_layout_toggle_zoom_current(ws);
+    } else if (strcmp(action, "pane.zoom.half") == 0) {
+        Workspace *ws = workspace_get_current();
+        if (ws)
+            workspace_layout_toggle_half_zoom_current(ws);
     } else if (strcmp(action, "notes.toggle") == 0) {
         Workspace *ws = workspace_get_current();
         if (ws && ui.terminal_box)

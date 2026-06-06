@@ -524,6 +524,8 @@ workspace_strip_apply_layout(Workspace *ws)
         WorkspaceColumn *col = g_ptr_array_index(state->columns, i);
         if (col->maximized)
             col->target_width = viewport_width;
+        else if (col->half_maximized)
+            col->target_width = viewport_width / 2;
         else if (col->target_width <= 0)
             col->target_width = STRIP_DEFAULT_COL_WIDTH;
         if (col->current_width <= 0)
@@ -777,6 +779,7 @@ workspace_strip_toggle_maximize_column(Workspace *ws)
     WorkspaceColumn *col = g_ptr_array_index(state->columns,
                                               state->focused_col);
     col->maximized = !col->maximized;
+    col->half_maximized = FALSE; /* full and half are mutually exclusive */
 
     int viewport_width = 0;
     if (state->scroll_container)
@@ -786,6 +789,39 @@ workspace_strip_toggle_maximize_column(Workspace *ws)
 
     if (col->maximized)
         col->target_width = viewport_width;
+    else
+        col->target_width = STRIP_DEFAULT_COL_WIDTH;
+
+    workspace_strip_set_anim_profile(state, WORKSPACE_STRIP_ANIM_MAXIMIZE);
+    workspace_strip_pan_to_focused_column(ws);
+    ensure_tick_running(ws);
+}
+
+void
+workspace_strip_toggle_half_maximize_column(Workspace *ws)
+{
+    if (!ws || !ws->strip_state)
+        return;
+
+    WorkspaceStripState *state = ws->strip_state;
+    if (state->focused_col < 0 ||
+        state->focused_col >= (int)state->columns->len)
+        return;
+
+    WorkspaceColumn *col = g_ptr_array_index(state->columns,
+                                              state->focused_col);
+    gboolean want_half = !col->half_maximized;
+    col->half_maximized = want_half;
+    col->maximized = FALSE; /* full and half are mutually exclusive */
+
+    int viewport_width = 0;
+    if (state->scroll_container)
+        viewport_width = gtk_widget_get_width(state->scroll_container);
+    if (viewport_width <= 0)
+        viewport_width = STRIP_DEFAULT_COL_WIDTH;
+
+    if (want_half)
+        col->target_width = viewport_width / 2;
     else
         col->target_width = STRIP_DEFAULT_COL_WIDTH;
 

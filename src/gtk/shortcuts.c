@@ -30,6 +30,7 @@ const ShortcutDef default_shortcuts[] = {
     {"tab.close",         GDK_KEY_w,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Close tab"},
     {"pane.close",        GDK_KEY_x,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Close pane"},
     {"pane.zoom",         GDK_KEY_z,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Zoom pane / maximize column"},
+    {"pane.zoom.half",    GDK_KEY_m,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Half-width column"},
     {"terminal.search",   GDK_KEY_f,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Terminal search"},
     {"broadcast.toggle",  GDK_KEY_e,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Broadcast mode"},
     {"notes.toggle",      GDK_KEY_q,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Quick notes"},
