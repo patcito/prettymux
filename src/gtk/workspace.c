@@ -5560,6 +5560,7 @@ workspace_tab_next_for_layout(Workspace *ws)
 {
     if (!ws)
         return FALSE;
+    hover_focus_suppress_until_motion();
     return workspace_focus_adjacent_tab(ws, TRUE);
 }
 
@@ -5568,6 +5569,7 @@ workspace_tab_prev_for_layout(Workspace *ws)
 {
     if (!ws)
         return FALSE;
+    hover_focus_suppress_until_motion();
     return workspace_focus_adjacent_tab(ws, FALSE);
 }
 

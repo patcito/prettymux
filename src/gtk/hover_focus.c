@@ -30,6 +30,16 @@ hover_focus_note_pointer_motion(void)
     hover_blocked_until_motion = FALSE;
 }
 
+/* Used by keyboard/IPC pane and tab navigation: after the user explicitly
+ * picks a pane, ignore the pointer's current position (and any synthesized
+ * crossing events from the relayout) until the mouse is physically moved,
+ * so hover-focus can't override the keyboard-chosen target. */
+void
+hover_focus_suppress_until_motion(void)
+{
+    hover_blocked_until_motion = TRUE;
+}
+
 gboolean
 hover_focus_should_enter(void)
 {

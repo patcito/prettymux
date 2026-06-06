@@ -68,6 +68,11 @@ hover_focus_note_pointer_motion(void)
 }
 
 void
+hover_focus_suppress_until_motion(void)
+{
+}
+
+void
 port_scanner_set_active_workspace(int workspace_idx)
 {
     (void)workspace_idx;

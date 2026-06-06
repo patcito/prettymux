@@ -11,6 +11,7 @@
 #include "command_palette.h"
 #include "ghostty.h"
 #include "ghostty_terminal.h"
+#include "hover_focus.h"
 #include "notifications.h"
 #include "pane_move_overlay.h"
 #include "session.h"
@@ -288,6 +289,11 @@ focus_direction_for_layout_with_error(Workspace *ws,
 {
     if (!ws)
         return set_action_error(error_out, "no active workspace");
+
+    /* Keyboard/IPC pane navigation wins over hover-focus until the mouse
+     * actually moves, so the keyboard-chosen pane isn't overridden by the
+     * pane the pointer happens to sit over. */
+    hover_focus_suppress_until_motion();
 
     if (workspace_get_layout_mode(ws) != WORKSPACE_LAYOUT_STRIP) {
         workspace_navigate_pane(ws, dx, dy);
