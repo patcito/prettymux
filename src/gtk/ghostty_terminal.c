@@ -371,7 +371,19 @@ on_gl_realize(GtkGLArea *area, gpointer user_data)
     GhosttyTerminal *self = GHOSTTY_TERMINAL(user_data);
 
     gtk_gl_area_make_current(area);
-    if (gtk_gl_area_get_error(area) != NULL) {
+    const GError *gl_error = gtk_gl_area_get_error(area);
+    if (gl_error != NULL) {
+        /* GTK could not create an OpenGL context for this GtkGLArea, so the
+         * terminal surface can't be created and the pane stays blank (GTK
+         * paints its own "no GL context" notice). This is almost always a
+         * GTK4/driver/environment problem rather than a prettymux bug — it
+         * also reproduces under LIBGL_ALWAYS_SOFTWARE=1. Log the real error
+         * (run with GDK_DEBUG=opengl for more) instead of failing silently. */
+        g_warning("prettymux: GtkGLArea failed to create an OpenGL context: %s "
+                  "(%s:%d). The terminal pane cannot render; this is usually a "
+                  "GTK4/GL driver issue. Try GDK_DEBUG=opengl for details.",
+                  gl_error->message,
+                  g_quark_to_string(gl_error->domain), gl_error->code);
         return;
     }
     if (!g_ghostty_app) {
