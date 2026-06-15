@@ -426,7 +426,7 @@ session_strip_rebuild_columns_from_saved_state(Workspace *ws,
     g_autoptr(GHashTable) seen_panes = NULL;
     g_autoptr(GPtrArray) rebuilt_columns = NULL;
 
-    if (!ws || !strip_obj || !json_object_has_member(strip_obj, "columns"))
+    if (!ws || !strip_obj || !session_object_has_array(strip_obj, "columns"))
         return;
 
     state = ws->strip_state;
@@ -458,7 +458,7 @@ session_strip_rebuild_columns_from_saved_state(Workspace *ws,
         column_obj = json_node_get_object(column_node);
         col_panes = g_ptr_array_new();
 
-        if (json_object_has_member(column_obj, "paneIds")) {
+        if (session_object_has_array(column_obj, "paneIds")) {
             JsonArray *pane_ids_arr =
                 json_object_get_array_member(column_obj, "paneIds");
             guint pane_ids_len = pane_ids_arr ? json_array_get_length(pane_ids_arr)
