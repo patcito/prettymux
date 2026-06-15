@@ -1053,6 +1053,70 @@ test_workspace_move_to_instance_command_reports_backend_error(void)
     json_object_unref(msg);
 }
 
+static void
+test_open_url_requires_url(void)
+{
+    JsonObject *msg;
+    JsonNode *root;
+    JsonObject *obj;
+
+    /* With a url -> ok. */
+    msg = json_object_new();
+    json_object_set_string_member(msg, "url", "https://example.com");
+    root = invoke_socket_command("open.url", msg);
+    obj = json_node_get_object_or_fail(root);
+    assert_status_and_message(obj, "ok", NULL);
+    json_node_free(root);
+    json_object_unref(msg);
+
+    /* Missing url -> error with the documented message. */
+    msg = json_object_new();
+    root = invoke_socket_command("open.url", msg);
+    obj = json_node_get_object_or_fail(root);
+    assert_status_and_message(obj, "error", "missing url");
+    json_node_free(root);
+    json_object_unref(msg);
+}
+
+static void
+test_workspace_status_set_requires_entry_id(void)
+{
+    JsonObject *msg;
+    JsonNode *root;
+    JsonObject *obj;
+
+    workspace_test_reset_state();
+    workspace_test_add("Only");
+
+    /* Valid workspace but no entryId -> "missing entryId" (not a workspace
+     * error), confirming the entryId check is reached. */
+    msg = json_object_new();
+    json_object_set_int_member(msg, "workspace", 0);
+    json_object_set_string_member(msg, "summary", "no id provided");
+    root = invoke_socket_command("workspace.status.set", msg);
+    obj = json_node_get_object_or_fail(root);
+    assert_status_and_message(obj, "error", "missing entryId");
+    json_node_free(root);
+    json_object_unref(msg);
+}
+
+static void
+test_terminal_register_ok(void)
+{
+    JsonObject *msg;
+    JsonNode *root;
+    JsonObject *obj;
+
+    msg = json_object_new();
+    json_object_set_string_member(msg, "terminalId", "term-123");
+    json_object_set_int_member(msg, "sessionId", 4321);
+    root = invoke_socket_command("terminal.register", msg);
+    obj = json_node_get_object_or_fail(root);
+    assert_status_and_message(obj, "ok", NULL);
+    json_node_free(root);
+    json_object_unref(msg);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1074,6 +1138,12 @@ main(int argc, char **argv)
                     test_workspace_move_to_instance_command_uses_backend);
     g_test_add_func("/socket-commands/workspace/move-to-instance-error",
                     test_workspace_move_to_instance_command_reports_backend_error);
+    g_test_add_func("/socket-commands/open-url/requires-url",
+                    test_open_url_requires_url);
+    g_test_add_func("/socket-commands/status/set-requires-entry-id",
+                    test_workspace_status_set_requires_entry_id);
+    g_test_add_func("/socket-commands/terminal/register-ok",
+                    test_terminal_register_ok);
 
     return g_test_run();
 }
