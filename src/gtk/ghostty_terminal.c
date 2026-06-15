@@ -1164,7 +1164,14 @@ ghostty_terminal_init(GhosttyTerminal *self)
 
     self->gl_area = GTK_GL_AREA(gtk_gl_area_new());
     gtk_gl_area_set_auto_render(self->gl_area, FALSE);
+    /* Force desktop GL (ghostty's renderer needs it, not GLES). On GTK 4.12+
+     * set_use_es is deprecated in favour of set_allowed_apis; keep the old
+     * call for older GTK (e.g. Debian bookworm ships 4.8). */
+#if GTK_CHECK_VERSION(4, 12, 0)
+    gtk_gl_area_set_allowed_apis(self->gl_area, GDK_GL_API_GL);
+#else
     gtk_gl_area_set_use_es(self->gl_area, FALSE);
+#endif
     gtk_gl_area_set_required_version(self->gl_area, 4, 3);
     gtk_widget_set_hexpand(GTK_WIDGET(self->gl_area), TRUE);
     gtk_widget_set_vexpand(GTK_WIDGET(self->gl_area), TRUE);

@@ -74,7 +74,11 @@ on_renderer_probe_activate(GtkApplication *app, gpointer user_data)
     GtkWidget *gl_area = gtk_gl_area_new();
 
     gtk_window_set_default_size(GTK_WINDOW(window), 160, 120);
+#if GTK_CHECK_VERSION(4, 12, 0)
+    gtk_gl_area_set_allowed_apis(GTK_GL_AREA(gl_area), GDK_GL_API_GL);
+#else
     gtk_gl_area_set_use_es(GTK_GL_AREA(gl_area), FALSE);
+#endif
     gtk_window_set_child(GTK_WINDOW(window), gl_area);
     gtk_window_present(GTK_WINDOW(window));
     g_timeout_add(300, renderer_probe_quit_cb, g_object_ref(app));
