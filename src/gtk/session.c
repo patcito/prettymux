@@ -14,6 +14,20 @@
 
 const char *app_state_get_instance_id(void);
 
+/* TRUE only if `name` exists on `obj` AND is a JSON array. Guards against
+ * corrupt/edited session files where a member exists with the wrong type:
+ * json_object_get_array_member() would return NULL and emit a g_critical. */
+static gboolean
+session_object_has_array(JsonObject *obj, const char *name)
+{
+    JsonNode *node;
+
+    if (!obj || !json_object_has_member(obj, name))
+        return FALSE;
+    node = json_object_get_member(obj, name);
+    return node != NULL && JSON_NODE_HOLDS_ARRAY(node);
+}
+
 static GtkWindow *session_window = NULL;
 static GtkWidget *session_terminal_stack = NULL;
 static GtkWidget *session_workspace_list = NULL;
@@ -806,7 +820,7 @@ session_restore_workspace_strip_state(Workspace *ws, JsonObject *ws_obj)
         col->half_maximized = FALSE;
     }
 
-    if (json_object_has_member(strip_obj, "columns")) {
+    if (session_object_has_array(strip_obj, "columns")) {
         JsonArray *columns_arr = json_object_get_array_member(strip_obj, "columns");
         guint columns_len = json_array_get_length(columns_arr);
 
@@ -1454,7 +1468,11 @@ session_restore_for_instance(const char *instance_id,
     session_restoring = TRUE;
 
     JsonParser *parser = json_parser_new();
-    if (!json_parser_load_from_file(parser, path, NULL)) {
+    GError *parse_error = NULL;
+    if (!json_parser_load_from_file(parser, path, &parse_error)) {
+        g_warning("prettymux: failed to parse session file %s: %s",
+                  path, parse_error ? parse_error->message : "unknown error");
+        g_clear_error(&parse_error);
         session_restoring = FALSE;
         g_object_unref(parser);
         g_free(path);
@@ -1490,7 +1508,7 @@ session_restore_for_instance(const char *instance_id,
     int outer_paned_pos = (int)json_object_get_int_member_with_default(
         obj, "outerPanedPos", 200);
 
-    if (json_object_has_member(obj, "logoCache")) {
+    if (session_object_has_array(obj, "logoCache")) {
         JsonArray *logo_arr = json_object_get_array_member(obj, "logoCache");
         guint logo_len = json_array_get_length(logo_arr);
 
@@ -1514,7 +1532,7 @@ session_restore_for_instance(const char *instance_id,
     }
 
     /* Restore workspaces with full pane structure */
-    if (json_object_has_member(obj, "workspaces") && workspaces) {
+    if (session_object_has_array(obj, "workspaces") && workspaces) {
         JsonArray *ws_arr = json_object_get_array_member(obj, "workspaces");
         guint len = json_array_get_length(ws_arr);
 
@@ -1563,7 +1581,7 @@ session_restore_for_instance(const char *instance_id,
 
             /* Restore panes.  The first pane (with one terminal)
              * was already created by workspace_add. */
-            if (json_object_has_member(ws_obj, "panes")) {
+            if (session_object_has_array(ws_obj, "panes")) {
                 gboolean restored_layout = FALSE;
 
                 if (!strip_mode_active && json_object_has_member(ws_obj, "layout")) {
@@ -1627,7 +1645,7 @@ session_restore_for_instance(const char *instance_id,
 
                     /* Restore tabs.  The first tab in each pane
                      * was already created by the split or workspace_add. */
-                    if (json_object_has_member(pane_obj, "tabs")) {
+                    if (session_object_has_array(pane_obj, "tabs")) {
                         JsonArray *tabs_arr = json_object_get_array_member(
                             pane_obj, "tabs");
                         guint n_tabs = json_array_get_length(tabs_arr);
