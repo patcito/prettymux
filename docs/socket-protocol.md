@@ -19,9 +19,10 @@ surface. The reference client is `prettymux-open` (run `prettymux-open --help`).
 
 ### Targeting an instance
 
-When several instances run, a client picks one via (in order): `--socket <path>`,
-`--instance <id>` / `PRETTYMUX_INSTANCE_ID`, `PRETTYMUX_SOCKET`, else the single
-connectable instance. `prettymux-open --list-instances` enumerates them.
+When several instances run, `prettymux-open` selects one in this order:
+`--socket <path>`, `--instance <id>`, `PRETTYMUX_SOCKET`, `PRETTYMUX_INSTANCE_ID`,
+else the single connectable instance found by scanning the runtime dir.
+`prettymux-open --list-instances` enumerates them.
 
 ### Response envelope
 
@@ -50,7 +51,7 @@ command is shown in parentheses.
 | Command | Fields | Purpose |
 |---|---|---|
 | `open.url` (`<url>`) | `url` | Open a URL with the host's default handler |
-| `exec` (`--exec`) | `command`, `workspace`,`pane`,`tab` | Type a command + Enter into a terminal |
+| `exec` (`--exec`) | `cmd`, `workspace`,`pane`,`tab` | Type a command + Enter into a terminal |
 | `type` (`--type`) | `text`, `workspace`,`pane`,`tab` | Type text into a terminal (no Enter) |
 | `pane.read_text` | `workspace`,`pane`,`tab` | Read the terminal's visible/scrollback text |
 | `action` (`--action`) | `action` (e.g. `split.vertical`), `nonInteractive` | Run any keybinding action by name |
@@ -64,12 +65,12 @@ command is shown in parentheses.
 | `workspace.current` | — | The focused workspace |
 | `workspace.switch` (`--switch-workspace`) | `index` | Focus workspace N |
 | `workspace.edit` (`--edit-workspace`) | `workspace` | Begin inline rename |
-| `workspace.set_layout` (`--set-layout`) | `mode` (`classic`/`strip`), `workspace` (omit = all) | Set layout mode |
+| `workspace.set_layout` (`--set-layout`) | `layout` (`classic`/`strip`), `workspace` (omit = all) | Set layout mode |
 | `workspace.get_layout` (`--get-layout`) | `workspace` | Get layout mode |
 | `workspace.get_strip_state` (`--get-strip-state`) | `workspace` | Strip columns/focus/maximize state |
 | `workspace.equalize_splits` | `workspace` | Even out split sizes |
-| `workspace.import` | (serialized workspace) | Load a workspace from JSON |
-| `workspace.move_to_instance` (`--move-workspace`) | `toInstance`, `workspace` | Hand a workspace to another instance |
+| `workspace.import` | `workspacePayload` (serialized workspace JSON) | Load a workspace from JSON |
+| `workspace.move_to_instance` (`--move-workspace`) | `targetInstanceId`, `workspace` | Hand a workspace to another instance |
 
 ### Panes & tabs
 | Command | Fields | Purpose |
@@ -79,9 +80,9 @@ command is shown in parentheses.
 | `pane.focus` | `workspace`,`pane` | Focus a pane |
 | `pane.list` | `workspace` | List panes |
 | `pane.resize_percent` | `workspace`,`pane`, percent | Resize a split |
-| `tab.new` (`--new-tab`) | target | New terminal tab |
+| `tab.new` (`--new-tab`) | — | New terminal tab in the focused pane |
 | `tab.select` (`--select-tab`) | `workspace`,`pane`,`tab` | Focus a tab |
-| `tab.rename` | target, `name` | Rename a tab |
+| `tab.rename` | `name` | Rename the focused tab |
 | `tab.edit` (`--edit-tab`) | — | Begin inline rename of the focused tab |
 | `tab.move` (`--move-tab`) | `from*`, `to*` indices | Move a tab between panes |
 | `tabs.list` (`--list-tabs`) | — | List workspaces → panes → tabs |
