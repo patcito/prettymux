@@ -159,6 +159,15 @@ app_state_set_instance_id(const char *instance_id)
 }
 
 #ifndef G_OS_WIN32
+/* Per-user socket directory: $XDG_RUNTIME_DIR when set, else /tmp. Must match
+ * the resolution in socket_server.c / prettymux-open / prettymux_agent_cli. */
+static const char *
+socket_runtime_dir(void)
+{
+    const char *dir = g_getenv("XDG_RUNTIME_DIR");
+    return (dir && dir[0]) ? dir : "/tmp";
+}
+
 static gboolean
 socket_path_is_connectable(const char *path)
 {
@@ -188,8 +197,8 @@ instance_id_has_live_socket(const char *instance_id)
     if (!instance_id || !instance_id[0])
         return FALSE;
 
-    g_snprintf(socket_path, sizeof(socket_path), "/tmp/prettymux-%s.sock",
-               instance_id);
+    g_snprintf(socket_path, sizeof(socket_path), "%s/prettymux-%s.sock",
+               socket_runtime_dir(), instance_id);
     return socket_path_is_connectable(socket_path);
 }
 
@@ -397,7 +406,8 @@ app_state_list_instances(void)
 #else
     g_autoptr(GHashTable) seen = g_hash_table_new_full(g_str_hash, g_str_equal,
                                                        g_free, NULL);
-    DIR *dir = opendir("/tmp");
+    const char *runtime_dir = socket_runtime_dir();
+    DIR *dir = opendir(runtime_dir);
     struct dirent *ent;
 
     if (!dir)
@@ -406,18 +416,18 @@ app_state_list_instances(void)
     while ((ent = readdir(dir)) != NULL) {
         char instance_id[128];
         char socket_path[256];
-        size_t name_len = strlen(ent->d_name);
+        int path_len;
 
         if (!parse_instance_id_from_socket_name(ent->d_name, instance_id,
                                                 sizeof(instance_id)))
             continue;
         if (g_hash_table_contains(seen, instance_id))
             continue;
-        if (name_len + 6 > sizeof(socket_path))
-            continue;
 
-        memcpy(socket_path, "/tmp/", 5);
-        memcpy(socket_path + 5, ent->d_name, name_len + 1);
+        path_len = g_snprintf(socket_path, sizeof(socket_path), "%s/%s",
+                              runtime_dir, ent->d_name);
+        if (path_len < 0 || (size_t)path_len >= sizeof(socket_path))
+            continue; /* path too long for the buffer */
         if (!socket_path_is_connectable(socket_path))
             continue;
 

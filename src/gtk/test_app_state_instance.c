@@ -359,6 +359,9 @@ main(int argc, char **argv)
     g_autofree char *tmp_home = NULL;
 
     g_test_init(&argc, &argv, NULL);
+    /* Pin the socket dir to /tmp (the paths these tests construct) regardless
+     * of the runner's XDG_RUNTIME_DIR; socket path resolution falls back to /tmp. */
+    g_unsetenv("XDG_RUNTIME_DIR");
     tmp_home = g_dir_make_tmp("prettymux-app-state-instance-XXXXXX", NULL);
     g_assert_nonnull(tmp_home);
     g_setenv("HOME", tmp_home, TRUE);

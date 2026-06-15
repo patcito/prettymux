@@ -141,6 +141,9 @@ int
 main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
+    /* Pin the socket dir to /tmp (the paths these tests construct) regardless
+     * of the runner's XDG_RUNTIME_DIR; build_socket_path falls back to /tmp. */
+    g_unsetenv("XDG_RUNTIME_DIR");
 
     g_test_add_func("/prettymux-agent-cli/instance/default-resolution-deterministic",
                     test_default_resolution_prefers_deterministic_instance_order);

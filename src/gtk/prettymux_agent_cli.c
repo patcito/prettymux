@@ -163,6 +163,15 @@ instance_id_is_valid(const char *instance_id)
     return TRUE;
 }
 
+/* Per-user socket directory: $XDG_RUNTIME_DIR when set, else /tmp. Must match
+ * the resolution in the prettymux server (socket_server.c). */
+static const char *
+socket_runtime_dir(void)
+{
+    const char *dir = g_getenv("XDG_RUNTIME_DIR");
+    return (dir && dir[0]) ? dir : "/tmp";
+}
+
 static gboolean
 build_socket_path_for_instance(const char *instance_id,
                                char *out,
@@ -171,7 +180,8 @@ build_socket_path_for_instance(const char *instance_id,
     if (!out || out_size == 0 || !instance_id_is_valid(instance_id))
         return FALSE;
 
-    g_snprintf(out, out_size, "/tmp/prettymux-%s.sock", instance_id);
+    g_snprintf(out, out_size, "%s/prettymux-%s.sock",
+               socket_runtime_dir(), instance_id);
     return TRUE;
 }
 
@@ -287,10 +297,10 @@ find_socket_path(GError **error)
         return NULL;
     }
 
-    dir = opendir("/tmp");
+    dir = opendir(socket_runtime_dir());
     if (!dir) {
         g_set_error(error, g_quark_from_static_string("prettymux-agent-cli"),
-                    errno, "Could not open /tmp");
+                    errno, "Could not open %s", socket_runtime_dir());
         return NULL;
     }
 
@@ -303,7 +313,8 @@ find_socket_path(GError **error)
                                                 sizeof(candidate_instance_id)))
             continue;
 
-        g_snprintf(candidate, sizeof(candidate), "/tmp/%s", ent->d_name);
+        g_snprintf(candidate, sizeof(candidate), "%s/%s",
+                   socket_runtime_dir(), ent->d_name);
         if (!socket_is_connectable(candidate))
             continue;
 

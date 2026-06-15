@@ -166,12 +166,22 @@ instance_id_is_valid(const char *instance_id)
     return 1;
 }
 
+/* Per-user socket directory: $XDG_RUNTIME_DIR when set, else /tmp. Must match
+ * the resolution in the prettymux server (socket_server.c). */
+static const char *
+socket_runtime_dir(void)
+{
+    const char *dir = getenv("XDG_RUNTIME_DIR");
+    return (dir && dir[0]) ? dir : "/tmp";
+}
+
 static int
 build_socket_path_for_instance(const char *instance_id, char *out, size_t out_size)
 {
     if (!out || out_size == 0 || !instance_id_is_valid(instance_id))
         return 0;
-    snprintf(out, out_size, "/tmp/prettymux-%s.sock", instance_id);
+    snprintf(out, out_size, "%s/prettymux-%s.sock",
+             socket_runtime_dir(), instance_id);
     return 1;
 }
 
@@ -638,27 +648,29 @@ list_running_instances(void)
     struct dirent *ent;
     InstanceRecord records[128];
     size_t count = 0;
+    const char *dir = socket_runtime_dir();
 
-    d = opendir("/tmp");
+    d = opendir(dir);
     if (!d) {
-        fprintf(stderr, "prettymux-open: failed to open /tmp: %s\n",
-                strerror(errno));
+        fprintf(stderr, "prettymux-open: failed to open %s: %s\n",
+                dir, strerror(errno));
         return 1;
     }
 
     while ((ent = readdir(d)) != NULL && count < (sizeof(records) / sizeof(records[0]))) {
         char instance_id[128];
-        size_t name_len = strlen(ent->d_name);
+        int n;
 
         if (!parse_instance_id_from_socket_name(ent->d_name,
                                                 instance_id,
                                                 sizeof(instance_id)))
             continue;
-        if (name_len + 6 > sizeof(records[count].socket_path))
-            continue;
 
-        memcpy(records[count].socket_path, "/tmp/", 5);
-        memcpy(records[count].socket_path + 5, ent->d_name, name_len + 1);
+        n = snprintf(records[count].socket_path,
+                     sizeof(records[count].socket_path), "%s/%s",
+                     dir, ent->d_name);
+        if (n < 0 || (size_t)n >= sizeof(records[count].socket_path))
+            continue; /* path too long for the buffer */
         if (!socket_is_connectable(records[count].socket_path))
             continue;
 

@@ -105,8 +105,13 @@ route_server_start(RouteServer *server,
                    const char *instance_id,
                    const char *response_json)
 {
-    g_snprintf(server->path, sizeof(server->path), "/tmp/prettymux-%s.sock",
-               instance_id);
+    /* Match socket_server.c's build_socket_path_for_instance: the route
+     * function under test resolves the socket dir from XDG_RUNTIME_DIR. */
+    const char *rt = g_getenv("XDG_RUNTIME_DIR");
+    if (!rt || !rt[0])
+        rt = "/tmp";
+    g_snprintf(server->path, sizeof(server->path), "%s/prettymux-%s.sock",
+               rt, instance_id);
     server->response_json = response_json;
     server->captured_payload = NULL;
     server->thread = NULL;

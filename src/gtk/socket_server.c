@@ -1,7 +1,8 @@
 /*
  * socket_server.c - Unix domain socket for IPC
  *
- * Creates /tmp/prettymux-<instance-id>.sock, accepts JSON commands.
+ * Creates $XDG_RUNTIME_DIR/prettymux-<instance-id>.sock (falling back to
+ * /tmp when XDG_RUNTIME_DIR is unset), accepts JSON commands.
  * Sends JSON responses back to the client.
  */
 
@@ -52,12 +53,26 @@ instance_id_is_valid(const char *instance_id)
     return TRUE;
 }
 
+/* Per-user socket directory: $XDG_RUNTIME_DIR (mode 0700, owned by the user)
+ * when available, else /tmp. Using XDG_RUNTIME_DIR keeps the socket out of the
+ * world-writable /tmp, closing the predictable-path squatting / TOCTOU window.
+ * The client path-builders (prettymux-open, prettymux_agent_cli) resolve the
+ * directory the same way, and the server also exports the full path via
+ * PRETTYMUX_SOCKET for clients running inside prettymux. */
+static const char *
+socket_runtime_dir(void)
+{
+    const char *dir = g_getenv("XDG_RUNTIME_DIR");
+    return (dir && dir[0]) ? dir : "/tmp";
+}
+
 static char *
 build_socket_path_for_instance(const char *instance_id)
 {
     if (!instance_id_is_valid(instance_id))
         return NULL;
-    return g_strdup_printf("/tmp/prettymux-%s.sock", instance_id);
+    return g_strdup_printf("%s/prettymux-%s.sock",
+                           socket_runtime_dir(), instance_id);
 }
 
 static gboolean
