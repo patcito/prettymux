@@ -181,33 +181,6 @@ sidebar_ui_build_branch_cwd_section(GtkWidget *section_label,
 }
 
 void
-sidebar_ui_build_ports_section(GtkWidget *section_label,
-                               const char *ports_summary,
-                               gboolean enabled)
-{
-    g_autofree char *compact = NULL;
-
-    if (!GTK_IS_LABEL(section_label))
-        return;
-
-    if (!enabled || !ports_summary || !ports_summary[0]) {
-        sidebar_sections_hide_label(section_label);
-        return;
-    }
-
-    compact = g_strdup(ports_summary);
-    g_strstrip(compact);
-    if (!compact[0]) {
-        sidebar_sections_hide_label(section_label);
-        return;
-    }
-
-    gtk_label_set_text(GTK_LABEL(section_label), compact);
-    gtk_widget_set_visible(section_label, TRUE);
-    gtk_widget_set_tooltip_text(section_label, compact);
-}
-
-void
 sidebar_ui_build_progress_section(GtkWidget *section_label,
                                   int progress_state,
                                   int progress_percent,

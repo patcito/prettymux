@@ -28,7 +28,8 @@
 #include "session.h"
 #include "close_confirm.h"
 #include "command_palette.h"
-#include "port_scanner.h"
+#include "history.h"
+// port_scanner removed: was only used by the deleted embedded-browser auto-launch
 #include "socket_server.h"
 #include "shortcuts_overlay.h"
 #include "settings_dialog.h"
@@ -201,7 +202,6 @@ on_main_window_active_changed(GObject *object, GParamSpec *pspec, gpointer user_
     g_main_window_active = gtk_window_is_active(GTK_WINDOW(object));
     app_support_set_main_window_active(g_main_window_active);
     hover_focus_handle_window_active_changed(g_main_window_active);
-    port_scanner_set_window_active(g_main_window_active);
 }
 
 static void
@@ -503,7 +503,6 @@ on_app_shutdown(GApplication *app, gpointer user_data)
 {
     (void)app;
     (void)user_data;
-    port_scanner_stop();
     socket_server_stop();
     if (!app_actions_is_quitting()) {
         session_begin_shutdown();
@@ -861,6 +860,10 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_widget_set_visible(ui.command_palette, FALSE);
     gtk_overlay_add_overlay(GTK_OVERLAY(ui.overlay), ui.command_palette);
 
+    // Command history (overlay)
+    ui.history_overlay = history_overlay_new();
+    gtk_overlay_add_overlay(GTK_OVERLAY(ui.overlay), ui.history_overlay);
+
     session_set_context(GTK_WINDOW(window),
                         ui.terminal_stack, ui.workspace_list);
 
@@ -874,10 +877,6 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     if (sock_path) {
         setup_shell_integration_env();
     }
-    port_scanner_set_callback(terminal_routing_on_port_scanner_detected, NULL);
-    port_scanner_set_window_active(g_main_window_active);
-    port_scanner_set_active_workspace(current_workspace);
-    port_scanner_start();
 
     // Create initial workspace + restore or create defaults
     workspace_add(ui.terminal_stack, ui.workspace_list, g_ghostty_app);

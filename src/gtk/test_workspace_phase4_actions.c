@@ -5,7 +5,6 @@
 #include "close_confirm.h"
 #include "ghostty_terminal.h"
 #include "hover_focus.h"
-#include "port_scanner.h"
 #include "project_icon_cache.h"
 #include "resize_overlay.h"
 #include "session.h"
@@ -70,12 +69,6 @@ hover_focus_note_pointer_motion(void)
 void
 hover_focus_suppress_until_motion(void)
 {
-}
-
-void
-port_scanner_set_active_workspace(int workspace_idx)
-{
-    (void)workspace_idx;
 }
 
 char *
@@ -164,7 +157,6 @@ sidebar_ui_build_workspace_card(GtkWidget *header_box,
                                 GtkWidget **out_meta_label,
                                 GtkWidget **out_status_label,
                                 GtkWidget **out_status_entries_box,
-                                GtkWidget **out_ports_label,
                                 GtkWidget **out_progress_label,
                                 GtkWidget **out_structure_label,
                                 GtkWidget **out_badge)
@@ -175,7 +167,6 @@ sidebar_ui_build_workspace_card(GtkWidget *header_box,
     GtkWidget *status = gtk_label_new(NULL);
     GtkWidget *status_entries = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     GtkWidget *aux = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-    GtkWidget *ports = gtk_label_new(NULL);
     GtkWidget *progress = gtk_label_new(NULL);
     GtkWidget *structure = gtk_label_new(NULL);
     GtkWidget *badge = gtk_label_new("!");
@@ -188,7 +179,6 @@ sidebar_ui_build_workspace_card(GtkWidget *header_box,
     gtk_box_append(GTK_BOX(details), status);
     gtk_box_append(GTK_BOX(details), aux);
     gtk_box_append(GTK_BOX(aux), structure);
-    gtk_box_append(GTK_BOX(aux), ports);
     gtk_box_append(GTK_BOX(aux), progress);
     gtk_box_append(GTK_BOX(header_box), badge);
 
@@ -198,8 +188,6 @@ sidebar_ui_build_workspace_card(GtkWidget *header_box,
         *out_status_label = status;
     if (out_status_entries_box)
         *out_status_entries_box = status_entries;
-    if (out_ports_label)
-        *out_ports_label = ports;
     if (out_progress_label)
         *out_progress_label = progress;
     if (out_structure_label)
@@ -239,16 +227,6 @@ sidebar_ui_build_branch_cwd_section(GtkWidget *section_label,
     (void)section_label;
     (void)cwd;
     (void)branch;
-    (void)enabled;
-}
-
-void
-sidebar_ui_build_ports_section(GtkWidget *section_label,
-                               const char *ports_summary,
-                               gboolean enabled)
-{
-    (void)section_label;
-    (void)ports_summary;
     (void)enabled;
 }
 

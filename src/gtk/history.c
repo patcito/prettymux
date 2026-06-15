@@ -2,6 +2,11 @@
 #include <stdio.h>
 #include <string.h>
 
+/* Cap the in-memory history to the most recent N unique entries so a huge
+ * ~/.bash_history doesn't load (and stay resident) in full. The overlay only
+ * ever shows the most recent matches, so the older tail is never useful. */
+#define HISTORY_MAX_ENTRIES 5000
+
 struct _HistoryOverlay {
     GtkWidget *revealer;
     GtkWidget *entry;
@@ -19,32 +24,50 @@ static void load_history(void) {
     hist_state.all_lines = g_ptr_array_new_with_free_func(g_free);
 
     const char *histfile = g_getenv("HISTFILE");
-    if (!histfile) {
-        char *path = g_build_filename(g_get_home_dir(), ".bash_history", NULL);
+    char *path = NULL;
+    if (!histfile || !histfile[0]) {
+        path = g_build_filename(g_get_home_dir(), ".bash_history", NULL);
         histfile = path;
-        // We'll leak path but it's a static lifetime
     }
 
     FILE *fp = fopen(histfile, "r");
+    g_free(path); /* fopen copied the name; safe to free now */
     if (!fp) return;
 
-    // Use a hash table to deduplicate
-    GHashTable *seen = g_hash_table_new(g_str_hash, g_str_equal);
+    /* Read every valid line in file order (oldest first). */
+    GPtrArray *raw = g_ptr_array_new_with_free_func(g_free);
     char line[4096];
     while (fgets(line, sizeof(line), fp)) {
-        // Strip newline
         size_t len = strlen(line);
         if (len > 0 && line[len-1] == '\n') line[len-1] = '\0';
         if (line[0] == '\0' || line[0] == '#') continue;
-
-        if (!g_hash_table_contains(seen, line)) {
-            char *dup = g_strdup(line);
-            g_ptr_array_add(hist_state.all_lines, dup);
-            g_hash_table_add(seen, dup);
-        }
+        g_ptr_array_add(raw, g_strdup(line));
     }
     fclose(fp);
+
+    /* Walk newest -> oldest, keeping the newest occurrence of each unique
+     * command, capped at HISTORY_MAX_ENTRIES. Dedup by newest (not first)
+     * so a recently re-run command isn't dropped because an older copy
+     * exists earlier in the file. `recent` borrows pointers from `raw`. */
+    GHashTable *seen = g_hash_table_new(g_str_hash, g_str_equal);
+    GPtrArray *recent = g_ptr_array_new();
+    for (int i = (int)raw->len - 1;
+         i >= 0 && recent->len < HISTORY_MAX_ENTRIES; i--) {
+        char *l = g_ptr_array_index(raw, i);
+        if (!g_hash_table_contains(seen, l)) {
+            g_hash_table_add(seen, l);
+            g_ptr_array_add(recent, l);
+        }
+    }
     g_hash_table_unref(seen);
+
+    /* Emit oldest -> newest (update_filter shows the tail first). */
+    for (int i = (int)recent->len - 1; i >= 0; i--)
+        g_ptr_array_add(hist_state.all_lines,
+                        g_strdup(g_ptr_array_index(recent, i)));
+
+    g_ptr_array_unref(recent);
+    g_ptr_array_unref(raw);
 }
 
 static void update_filter(void) {
@@ -168,4 +191,10 @@ void history_overlay_hide(GtkWidget *overlay) {
     (void)overlay;
     gtk_revealer_set_reveal_child(GTK_REVEALER(hist_state.revealer), FALSE);
     hist_state.target = NULL;
+    /* Release the loaded history so it isn't held resident while closed;
+     * it's reloaded on next show. */
+    if (hist_state.all_lines) {
+        g_ptr_array_unref(hist_state.all_lines);
+        hist_state.all_lines = NULL;
+    }
 }

@@ -303,28 +303,6 @@ test_status_section_suppression_and_clear(void)
 }
 
 static void
-test_ports_section_sanitization_and_suppression(void)
-{
-    GtkWidget *label;
-
-    require_display_or_skip();
-
-    label = gtk_label_new(NULL);
-    sidebar_ui_build_ports_section(label, "ports 3000 8080", FALSE);
-    g_assert_false(gtk_widget_get_visible(label));
-    g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(label)), ==, "");
-
-    sidebar_ui_build_ports_section(label, "  ports 3000 8080  ", TRUE);
-    g_assert_true(gtk_widget_get_visible(label));
-    g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(label)), ==, "ports 3000 8080");
-    g_assert_cmpstr(gtk_widget_get_tooltip_text(label), ==, "ports 3000 8080");
-
-    sidebar_ui_build_ports_section(label, "  ", TRUE);
-    g_assert_false(gtk_widget_get_visible(label));
-    g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(label)), ==, "");
-}
-
-static void
 test_progress_section_formats_and_suppresses(void)
 {
     GtkWidget *label;
@@ -399,7 +377,6 @@ test_workspace_card_sets_compact_truncation_properties(void)
     GtkWidget *meta = NULL;
     GtkWidget *preview = NULL;
     GtkWidget *status_entries = NULL;
-    GtkWidget *ports = NULL;
     GtkWidget *progress = NULL;
     GtkWidget *structure = NULL;
     GtkWidget *badge = NULL;
@@ -412,7 +389,6 @@ test_workspace_card_sets_compact_truncation_properties(void)
                                            &meta,
                                            &preview,
                                            &status_entries,
-                                           &ports,
                                            &progress,
                                            &structure,
                                            &badge);
@@ -421,7 +397,6 @@ test_workspace_card_sets_compact_truncation_properties(void)
     g_assert_true(GTK_IS_LABEL(meta));
     g_assert_true(GTK_IS_LABEL(preview));
     g_assert_true(GTK_IS_BOX(status_entries));
-    g_assert_true(GTK_IS_LABEL(ports));
     g_assert_true(GTK_IS_LABEL(progress));
     g_assert_true(GTK_IS_LABEL(structure));
     g_assert_true(GTK_IS_LABEL(badge));
@@ -432,13 +407,11 @@ test_workspace_card_sets_compact_truncation_properties(void)
     g_assert_cmpint(gtk_label_get_max_width_chars(GTK_LABEL(preview)), ==, 30);
     g_assert_cmpint(gtk_label_get_ellipsize(GTK_LABEL(preview)), ==,
                     PANGO_ELLIPSIZE_END);
-    g_assert_cmpint(gtk_label_get_max_width_chars(GTK_LABEL(ports)), ==, 16);
     g_assert_cmpint(gtk_label_get_max_width_chars(GTK_LABEL(progress)), ==, 16);
     g_assert_cmpint(gtk_label_get_max_width_chars(GTK_LABEL(structure)), ==, 10);
     g_assert_false(gtk_widget_get_visible(meta));
     g_assert_false(gtk_widget_get_visible(preview));
     g_assert_false(gtk_widget_get_visible(status_entries));
-    g_assert_false(gtk_widget_get_visible(ports));
     g_assert_false(gtk_widget_get_visible(progress));
     g_assert_false(gtk_widget_get_visible(structure));
     g_assert_false(gtk_widget_get_visible(badge));
@@ -452,7 +425,7 @@ test_row_activation_prefers_rename_entry_over_workspace_switch(void)
     GtkWidget *header_box;
     GtkWidget *rename_entry;
     GtkWidget *meta = NULL, *status = NULL, *status_entries = NULL;
-    GtkWidget *ports = NULL, *progress = NULL, *structure = NULL, *badge = NULL;
+    GtkWidget *progress = NULL, *structure = NULL, *badge = NULL;
 
     require_display_or_skip();
     reset_stub_counters();
@@ -464,7 +437,7 @@ test_row_activation_prefers_rename_entry_over_workspace_switch(void)
     header_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     card = sidebar_ui_build_workspace_card(header_box,
                                            &meta, &status, &status_entries,
-                                           &ports, &progress, &structure, &badge);
+                                           &progress, &structure, &badge);
     rename_entry = gtk_entry_new();
     g_object_set_data(G_OBJECT(header_box), "rename-entry", rename_entry);
     gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), card);
@@ -484,7 +457,7 @@ test_row_activation_prefers_rename_in_progress_over_workspace_switch(void)
     GtkWidget *card;
     GtkWidget *header_box;
     GtkWidget *meta = NULL, *status = NULL, *status_entries = NULL;
-    GtkWidget *ports = NULL, *progress = NULL, *structure = NULL, *badge = NULL;
+    GtkWidget *progress = NULL, *structure = NULL, *badge = NULL;
 
     require_display_or_skip();
     reset_stub_counters();
@@ -498,7 +471,7 @@ test_row_activation_prefers_rename_in_progress_over_workspace_switch(void)
                       GINT_TO_POINTER(1));
     card = sidebar_ui_build_workspace_card(header_box,
                                            &meta, &status, &status_entries,
-                                           &ports, &progress, &structure, &badge);
+                                           &progress, &structure, &badge);
     gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), card);
     gtk_list_box_append(GTK_LIST_BOX(ui.workspace_list), row);
 
@@ -519,7 +492,7 @@ test_row_activation_switches_workspace_when_not_renaming(void)
     GtkWidget *header0;
     GtkWidget *header1;
     GtkWidget *meta = NULL, *status = NULL, *status_entries = NULL;
-    GtkWidget *ports = NULL, *progress = NULL, *structure = NULL, *badge = NULL;
+    GtkWidget *progress = NULL, *structure = NULL, *badge = NULL;
 
     require_display_or_skip();
     reset_stub_counters();
@@ -531,7 +504,7 @@ test_row_activation_switches_workspace_when_not_renaming(void)
     header0 = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     card0 = sidebar_ui_build_workspace_card(header0,
                                             &meta, &status, &status_entries,
-                                            &ports, &progress, &structure, &badge);
+                                            &progress, &structure, &badge);
     gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row0), card0);
     gtk_list_box_append(GTK_LIST_BOX(ui.workspace_list), row0);
 
@@ -539,7 +512,7 @@ test_row_activation_switches_workspace_when_not_renaming(void)
     header1 = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     card1 = sidebar_ui_build_workspace_card(header1,
                                             &meta, &status, &status_entries,
-                                            &ports, &progress, &structure, &badge);
+                                            &progress, &structure, &badge);
     gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row1), card1);
     gtk_list_box_append(GTK_LIST_BOX(ui.workspace_list), row1);
 
@@ -598,7 +571,7 @@ test_card_preserves_header_box_and_close_button(void)
     GtkWidget *header_box;
     GtkWidget *close_btn;
     GtkWidget *meta = NULL, *status = NULL, *status_entries = NULL;
-    GtkWidget *ports = NULL, *progress = NULL, *structure = NULL, *badge = NULL;
+    GtkWidget *progress = NULL, *structure = NULL, *badge = NULL;
     GtkWidget *card;
     GtkWidget *retrieved_header;
 
@@ -610,7 +583,7 @@ test_card_preserves_header_box_and_close_button(void)
 
     card = sidebar_ui_build_workspace_card(header_box,
                                            &meta, &status, &status_entries,
-                                           &ports, &progress, &structure, &badge);
+                                           &progress, &structure, &badge);
 
     retrieved_header = g_object_get_data(G_OBJECT(card), "header-box");
     g_assert_true(retrieved_header == header_box);
@@ -623,7 +596,7 @@ test_card_workspace_data_survives_wrapping(void)
 {
     GtkWidget *header_box;
     GtkWidget *meta = NULL, *status = NULL, *status_entries = NULL;
-    GtkWidget *ports = NULL, *progress = NULL, *structure = NULL, *badge = NULL;
+    GtkWidget *progress = NULL, *structure = NULL, *badge = NULL;
     GtkWidget *card;
     Workspace ws = {0};
 
@@ -632,7 +605,7 @@ test_card_workspace_data_survives_wrapping(void)
     header_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     card = sidebar_ui_build_workspace_card(header_box,
                                            &meta, &status, &status_entries,
-                                           &ports, &progress, &structure, &badge);
+                                           &progress, &structure, &badge);
 
     g_object_set_data(G_OBJECT(card), "workspace", &ws);
     g_assert_true(g_object_get_data(G_OBJECT(card), "workspace") == &ws);
@@ -720,8 +693,6 @@ main(int argc, char **argv)
                     test_status_section_renders_and_limits_entries);
     g_test_add_func("/sidebar-ui/status/suppress-clear",
                     test_status_section_suppression_and_clear);
-    g_test_add_func("/sidebar-ui/ports/sanitize-suppress",
-                    test_ports_section_sanitization_and_suppression);
     g_test_add_func("/sidebar-ui/progress/format-suppress",
                     test_progress_section_formats_and_suppresses);
     g_test_add_func("/sidebar-ui/structure/format-suppress",

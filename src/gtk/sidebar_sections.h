@@ -14,9 +14,6 @@ void       sidebar_ui_build_branch_cwd_section(GtkWidget *section_label,
 void       sidebar_ui_build_workspace_status_section(GtkWidget *section_box,
                                                      GPtrArray *status_entries,
                                                      int max_entries);
-void       sidebar_ui_build_ports_section(GtkWidget *section_label,
-                                          const char *ports_summary,
-                                          gboolean enabled);
 void       sidebar_ui_build_progress_section(GtkWidget *section_label,
                                              int progress_state,
                                              int progress_percent,

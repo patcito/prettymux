@@ -44,7 +44,6 @@ typedef struct _Workspace {
     GtkWidget *sidebar_meta_label;   /* Branch + cwd summary line */
     GtkWidget *sidebar_status_label; /* Recent notification preview line */
     GtkWidget *sidebar_status_entries_box; /* Recent structured status lines */
-    GtkWidget *sidebar_ports_label;  /* Compact ports summary line */
     GtkWidget *sidebar_progress_label; /* Compact progress visualization */
     GtkWidget *sidebar_structure_label; /* Pane/column count indicator */
     GtkWidget *sidebar_badge;        /* Attention badge dot */
@@ -211,7 +210,6 @@ GPtrArray  *workspace_get_sorted_status_entries(Workspace *ws);
 int         workspace_get_sidebar_column_count(Workspace *ws);
 int         workspace_get_sidebar_tab_count(Workspace *ws);
 gboolean    workspace_get_sidebar_attention_state(Workspace *ws);
-char       *workspace_get_sidebar_ports_summary(Workspace *ws);
 gboolean    workspace_get_sidebar_progress(Workspace *ws,
                                            int *state_out,
                                            int *percent_out);

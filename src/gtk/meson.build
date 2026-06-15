@@ -41,7 +41,7 @@ sources = files(
   'project_icon_cache.c',
   'close_confirm.c',
   'command_palette.c',
-  'port_scanner.c',
+  'history.c',
   'prettymux_agent_cli.c',
   'app_actions.c',
   'app_state.c',

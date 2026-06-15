@@ -320,13 +320,6 @@ socket_server_route_command_to_instance(const char *instance_id,
 }
 
 void
-terminal_routing_handle_reported_port(const char *terminal_id, int port)
-{
-    (void)terminal_id;
-    (void)port;
-}
-
-void
 terminal_routing_register_scope(const char *terminal_id,
                                 pid_t session_id,
                                 const char *tty_name,

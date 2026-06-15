@@ -1105,21 +1105,6 @@ socket_commands_on_socket_command(const char  *command,
             json_builder_set_member_name(response, "message");
             json_builder_add_string_value(response, "no terminal found");
         }
-    } else if (strcmp(command, "port.report") == 0) {
-        int port = (int)json_object_get_int_member_with_default(msg, "port", 0);
-        const char *terminal_id =
-            json_object_get_string_member_with_default(msg, "terminalId", "");
-
-        if (port > 0 && terminal_id[0]) {
-            terminal_routing_handle_reported_port(terminal_id, port);
-            json_builder_set_member_name(response, "status");
-            json_builder_add_string_value(response, "ok");
-        } else {
-            json_builder_set_member_name(response, "status");
-            json_builder_add_string_value(response, "error");
-            json_builder_set_member_name(response, "message");
-            json_builder_add_string_value(response, "missing port or terminalId");
-        }
     } else if (strcmp(command, "terminal.register") == 0) {
         const char *terminal_id =
             json_object_get_string_member_with_default(msg, "terminalId", "");
@@ -1192,8 +1177,7 @@ socket_commands_on_socket_command(const char  *command,
         strcmp(command, "list.actions") != 0 &&
         strcmp(command, "app.quit") != 0 &&
         strcmp(command, "tab.edit") != 0 &&
-        strcmp(command, "workspace.edit") != 0 &&
-        strcmp(command, "port.report") != 0) {
+        strcmp(command, "workspace.edit") != 0) {
         session_queue_save();
     }
 }

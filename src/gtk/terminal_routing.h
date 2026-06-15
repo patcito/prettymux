@@ -21,7 +21,3 @@ void terminal_routing_register_scope(const char *terminal_id,
                                      pid_t       session_id,
                                      const char *tty_name,
                                      const char *tty_path);
-void terminal_routing_handle_reported_port(const char *terminal_id, int port);
-void terminal_routing_on_port_scanner_detected(const char *terminal_id,
-                                               int         port,
-                                               gpointer    user_data);

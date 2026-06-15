@@ -39,22 +39,17 @@ if [ -n "$BASH_VERSION" ] &&
     PRETTYMUX_TERMINAL_REGISTERED=1
     export PRETTYMUX_TERMINAL_REGISTERED
 
+    # session id is used at shutdown to SIGHUP the terminal's process group.
     _prettymux_session_id="$(ps -o sid= -p "$$" 2>/dev/null | tr -d '[:space:]')"
-    _prettymux_tty_name="$(ps -o tty= -p "$$" 2>/dev/null | tr -d '[:space:]')"
-    _prettymux_tty_path="$(readlink -f "/proc/$$/fd/0" 2>/dev/null)"
 
     if [ -n "$_prettymux_session_id" ]; then
         "$PRETTYMUX_OPEN_BIN" \
             --register-terminal "$PRETTYMUX_TERMINAL_ID" \
             --session-id "$_prettymux_session_id" \
-            --tty-name "${_prettymux_tty_name:-}" \
-            --tty-path "${_prettymux_tty_path:-}" \
             >/dev/null 2>&1 || true
     fi
 
     unset _prettymux_session_id
-    unset _prettymux_tty_name
-    unset _prettymux_tty_path
 fi
 
 unset _prettymux_shell_is_interactive

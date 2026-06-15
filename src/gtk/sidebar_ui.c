@@ -267,7 +267,6 @@ sidebar_ui_build_workspace_card(GtkWidget  *header_box,
                                 GtkWidget **out_meta_label,
                                 GtkWidget **out_status_label,
                                 GtkWidget **out_status_entries_box,
-                                GtkWidget **out_ports_label,
                                 GtkWidget **out_progress_label,
                                 GtkWidget **out_structure_label,
                                 GtkWidget **out_badge)
@@ -275,7 +274,6 @@ sidebar_ui_build_workspace_card(GtkWidget  *header_box,
     GtkWidget *card;
     GtkWidget *details;
     GtkWidget *aux_row;
-    GtkWidget *ports;
     GtkWidget *progress;
     GtkWidget *structure;
     GtkWidget *meta;
@@ -333,15 +331,6 @@ sidebar_ui_build_workspace_card(GtkWidget  *header_box,
     gtk_widget_set_visible(structure, FALSE);
     gtk_box_append(GTK_BOX(aux_row), structure);
 
-    ports = gtk_label_new("");
-    gtk_widget_add_css_class(ports, "sidebar-meta");
-    gtk_widget_add_css_class(ports, "sidebar-ports");
-    gtk_label_set_xalign(GTK_LABEL(ports), 0);
-    gtk_label_set_ellipsize(GTK_LABEL(ports), PANGO_ELLIPSIZE_END);
-    gtk_label_set_max_width_chars(GTK_LABEL(ports), 16);
-    gtk_widget_set_visible(ports, FALSE);
-    gtk_box_append(GTK_BOX(aux_row), ports);
-
     progress = gtk_label_new("");
     gtk_widget_add_css_class(progress, "sidebar-meta");
     gtk_widget_add_css_class(progress, "sidebar-progress");
@@ -362,7 +351,6 @@ sidebar_ui_build_workspace_card(GtkWidget  *header_box,
     if (out_meta_label)  *out_meta_label  = meta;
     if (out_status_label) *out_status_label = status;
     if (out_status_entries_box) *out_status_entries_box = status_entries;
-    if (out_ports_label) *out_ports_label = ports;
     if (out_progress_label) *out_progress_label = progress;
     if (out_structure_label) *out_structure_label = structure;
     if (out_badge)        *out_badge        = badge;

@@ -91,8 +91,7 @@ usage(void)
         "       prettymux-open --list-actions           List all actions\n"
         "       prettymux-open --quit                   Close prettymux cleanly\n"
         "       prettymux-open --switch-workspace <n>   Switch to workspace N\n"
-        "       prettymux-open --register-terminal <id> --session-id <sid> [--tty-name <tty>] [--tty-path <path>]\n"
-        "       prettymux-open --report-port <port> --terminal-id <id>\n"
+        "       prettymux-open --register-terminal <id> --session-id <sid>\n"
         "       prettymux-open --list-instances         List running instances\n"
         "       prettymux-open [--instance <id>] <command>\n"
         "       prettymux-open [--socket <path>] <command>\n"
@@ -1194,37 +1193,6 @@ main(int argc, char *argv[])
         free(escaped_id);
         free(escaped_tty_name);
         free(escaped_tty_path);
-        return send_command(msg);
-    }
-
-    if (strcmp(arg, "--report-port") == 0) {
-        if (cmd_argc < 4) {
-            fprintf(stderr,
-                    "prettymux-open: --report-port requires <port> --terminal-id <id>\n");
-            return 1;
-        }
-
-        int port = atoi(cmd_argv[1]);
-        const char *terminal_id = NULL;
-        for (int i = 2; i + 1 < cmd_argc; i += 2) {
-            if (strcmp(cmd_argv[i], "--terminal-id") == 0) {
-                terminal_id = cmd_argv[i + 1];
-                break;
-            }
-        }
-
-        if (port <= 0 || !terminal_id || !terminal_id[0]) {
-            fprintf(stderr,
-                    "prettymux-open: --report-port requires <port> --terminal-id <id>\n");
-            return 1;
-        }
-
-        char *escaped = json_escape(terminal_id);
-        char msg[256];
-        snprintf(msg, sizeof(msg),
-                 "{\"command\":\"port.report\",\"port\":%d,\"terminalId\":\"%s\"}",
-                 port, escaped);
-        free(escaped);
         return send_command(msg);
     }
 

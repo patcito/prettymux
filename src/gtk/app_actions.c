@@ -11,6 +11,7 @@
 #include "command_palette.h"
 #include "ghostty.h"
 #include "ghostty_terminal.h"
+#include "history.h"
 #include "hover_focus.h"
 #include "notifications.h"
 #include "pane_move_overlay.h"
@@ -547,6 +548,19 @@ app_actions_handle(const char *action)
         Workspace *ws = workspace_get_current();
         if (ws && ui.terminal_box)
             workspace_toggle_notes(ws, ui.terminal_box);
+    } else if (strcmp(action, "history.show") == 0) {
+        Workspace *ws = workspace_get_current();
+        if (ws && ui.history_overlay) {
+            GtkNotebook *focused = workspace_get_focused_pane(ws);
+            if (focused && GTK_IS_NOTEBOOK(focused)) {
+                int pg = gtk_notebook_get_current_page(focused);
+                if (pg >= 0) {
+                    GhosttyTerminal *term = notebook_terminal_at(focused, pg);
+                    if (term)
+                        history_overlay_show(ui.history_overlay, term);
+                }
+            }
+        }
     } else if (strcmp(action, "terminal.search") == 0) {
         Workspace *ws = workspace_get_current();
         if (ws) {

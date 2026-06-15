@@ -195,7 +195,7 @@ theme_apply(void)
         ".sidebar-status-entry { margin-top: 0; }"
         ".sidebar-notification-preview { margin-top: 2px; font-style: italic; }"
         ".sidebar-aux-row { margin-top: 1px; }"
-        ".sidebar-ports, .sidebar-structure-indicator, .sidebar-progress {"
+        ".sidebar-structure-indicator, .sidebar-progress {"
         "  font-size: 0.7em;"
         "  margin-top: 1px;"
         "}"

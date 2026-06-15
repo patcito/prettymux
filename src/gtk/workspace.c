@@ -9,7 +9,6 @@
 #include "sidebar_ui.h"
 #include "ghostty_terminal.h"
 #include "hover_focus.h"
-#include "port_scanner.h"
 #include "project_icon_cache.h"
 #include "resize_overlay.h"
 #include "session.h"
@@ -136,8 +135,6 @@ static gboolean workspace_status_entry_has_recent_attention(Workspace *ws);
 static gboolean workspace_sidebar_env_toggle(const char *env_name,
                                              gboolean default_value);
 static int workspace_sidebar_status_entry_limit(void);
-static void workspace_collect_ports_from_text(const char *text,
-                                              GArray *ports);
 static void workspace_cancel_git_branch_detect(Workspace *ws);
 static void workspace_free_detached(Workspace *ws);
 static gboolean workspace_move_restore_layout_node(Workspace *ws,
@@ -1189,67 +1186,6 @@ workspace_status_entry_has_recent_attention(Workspace *ws)
     return FALSE;
 }
 
-static void
-workspace_sidebar_add_unique_port(GArray *ports, int port)
-{
-    guint i;
-
-    if (!ports || port <= 0 || port > 65535)
-        return;
-
-    for (i = 0; i < ports->len; i++) {
-        int known = g_array_index(ports, int, i);
-        if (known == port)
-            return;
-    }
-
-    g_array_append_val(ports, port);
-}
-
-static void
-workspace_collect_ports_from_prefix(const char *text,
-                                    const char *prefix,
-                                    GArray *ports)
-{
-    const char *scan;
-    gsize prefix_len;
-
-    if (!text || !text[0] || !prefix || !prefix[0] || !ports)
-        return;
-
-    prefix_len = strlen(prefix);
-    scan = text;
-    while ((scan = strstr(scan, prefix)) != NULL) {
-        const char *num = scan + prefix_len;
-        char *end = NULL;
-        long parsed;
-
-        while (*num == ' ')
-            num++;
-
-        if (!g_ascii_isdigit(*num)) {
-            scan += prefix_len;
-            continue;
-        }
-
-        parsed = strtol(num, &end, 10);
-        if (end == num) {
-            scan += prefix_len;
-            continue;
-        }
-
-        workspace_sidebar_add_unique_port(ports, (int)parsed);
-        scan = end;
-    }
-}
-
-static void
-workspace_collect_ports_from_text(const char *text, GArray *ports)
-{
-    workspace_collect_ports_from_prefix(text, "localhost:", ports);
-    workspace_collect_ports_from_prefix(text, "Port ", ports);
-}
-
 const char *
 workspace_get_sidebar_primary_cwd(Workspace *ws)
 {
@@ -1313,54 +1249,6 @@ workspace_get_sidebar_attention_state(Workspace *ws)
     if (workspace_has_activity(ws))
         return TRUE;
     return workspace_status_entry_has_recent_attention(ws);
-}
-
-char *
-workspace_get_sidebar_ports_summary(Workspace *ws)
-{
-    GArray *ports;
-    g_autoptr(GPtrArray) entries = NULL;
-
-    if (!ws)
-        return g_strdup("");
-
-    ports = g_array_new(FALSE, FALSE, sizeof(int));
-    workspace_collect_ports_from_text(ws->notification, ports);
-
-    entries = workspace_get_sorted_status_entries(ws);
-    for (guint i = 0; i < entries->len; i++) {
-        workspace_status_entry *entry = g_ptr_array_index(entries, i);
-        if (!workspace_status_entry_is_notification(entry))
-            continue;
-        workspace_collect_ports_from_text(entry->summary, ports);
-        workspace_collect_ports_from_text(entry->detail, ports);
-    }
-
-    if (ports->len == 0) {
-        g_array_unref(ports);
-        return g_strdup("");
-    }
-
-    if (ports->len == 1) {
-        int p0 = g_array_index(ports, int, 0);
-        g_array_unref(ports);
-        return g_strdup_printf("port %d", p0);
-    }
-
-    if (ports->len == 2) {
-        int p0 = g_array_index(ports, int, 0);
-        int p1 = g_array_index(ports, int, 1);
-        g_array_unref(ports);
-        return g_strdup_printf("ports %d %d", p0, p1);
-    }
-
-    {
-        int p0 = g_array_index(ports, int, 0);
-        int p1 = g_array_index(ports, int, 1);
-        guint extra = ports->len - 2;
-        g_array_unref(ports);
-        return g_strdup_printf("ports %d %d +%u", p0, p1, extra);
-    }
 }
 
 gboolean
@@ -1572,7 +1460,6 @@ void workspace_refresh_sidebar_label(Workspace *ws) {
     GtkWidget *header_box;
     g_autoptr(GPtrArray) all_entries = NULL;
     g_autoptr(GPtrArray) status_entries = NULL;
-    g_autofree char *ports_summary = NULL;
     const workspace_status_entry *notification_entry = NULL;
     const char *notification_preview = NULL;
     const char *primary_cwd;
@@ -1580,7 +1467,6 @@ void workspace_refresh_sidebar_label(Workspace *ws) {
     gboolean show_branch_cwd;
     gboolean show_status_entries;
     gboolean show_notification_preview;
-    gboolean show_ports;
     gboolean show_progress;
     gboolean show_structure;
     gboolean strip_mode;
@@ -1609,8 +1495,6 @@ void workspace_refresh_sidebar_label(Workspace *ws) {
     show_notification_preview = workspace_sidebar_env_toggle(
         "PRETTYMUX_SIDEBAR_SHOW_NOTIFICATION_PREVIEW", TRUE) &&
         workspace_sidebar_env_toggle("PRETTYMUX_SIDEBAR_SHOW_NOTIFICATIONS", TRUE);
-    show_ports = workspace_sidebar_env_toggle(
-        "PRETTYMUX_SIDEBAR_SHOW_PORTS", TRUE);
     show_progress = workspace_sidebar_env_toggle(
         "PRETTYMUX_SIDEBAR_SHOW_PROGRESS", TRUE);
     show_structure = workspace_sidebar_env_toggle(
@@ -1619,7 +1503,6 @@ void workspace_refresh_sidebar_label(Workspace *ws) {
     pane_or_column_count = workspace_get_sidebar_column_count(ws);
     tab_count = workspace_get_sidebar_tab_count(ws);
     strip_mode = workspace_get_layout_mode(ws) == WORKSPACE_LAYOUT_STRIP;
-    ports_summary = workspace_get_sidebar_ports_summary(ws);
     have_progress = workspace_get_sidebar_progress(ws,
                                                    &progress_state,
                                                    &progress_percent);
@@ -1662,12 +1545,6 @@ void workspace_refresh_sidebar_label(Workspace *ws) {
             ws->sidebar_status_label,
             notification_preview,
             show_notification_preview);
-    }
-
-    if (GTK_IS_LABEL(ws->sidebar_ports_label)) {
-        sidebar_ui_build_ports_section(ws->sidebar_ports_label,
-                                       ports_summary,
-                                       show_ports);
     }
 
     if (GTK_IS_LABEL(ws->sidebar_progress_label)) {
@@ -4216,14 +4093,12 @@ workspace_detach_from_instance(int index)
     workspace_assign_weak_widget(&ws->sidebar_meta_label, NULL);
     workspace_assign_weak_widget(&ws->sidebar_status_label, NULL);
     workspace_assign_weak_widget(&ws->sidebar_status_entries_box, NULL);
-    workspace_assign_weak_widget(&ws->sidebar_ports_label, NULL);
     workspace_assign_weak_widget(&ws->sidebar_progress_label, NULL);
     workspace_assign_weak_widget(&ws->sidebar_structure_label, NULL);
     workspace_assign_weak_widget(&ws->sidebar_badge, NULL);
 
     if (workspaces->len == 0) {
         current_workspace = 0;
-        port_scanner_set_active_workspace(0);
         return ws;
     }
 
@@ -4696,11 +4571,11 @@ static GtkWidget *create_workspace_row(Workspace *ws) {
 
     GtkWidget *meta_label = NULL, *notification_label = NULL;
     GtkWidget *status_entries_box = NULL, *badge = NULL;
-    GtkWidget *ports_label = NULL, *progress_label = NULL;
+    GtkWidget *progress_label = NULL;
     GtkWidget *structure_label = NULL;
     GtkWidget *card = sidebar_ui_build_workspace_card(
         header_box, &meta_label, &notification_label,
-        &status_entries_box, &ports_label, &progress_label,
+        &status_entries_box, &progress_label,
         &structure_label, &badge);
     gtk_widget_add_css_class(card, "sidebar-row");
     g_object_set_data(G_OBJECT(card), "workspace", ws);
@@ -4708,7 +4583,6 @@ static GtkWidget *create_workspace_row(Workspace *ws) {
     workspace_assign_weak_widget(&ws->sidebar_meta_label, meta_label);
     workspace_assign_weak_widget(&ws->sidebar_status_label, notification_label);
     workspace_assign_weak_widget(&ws->sidebar_status_entries_box, status_entries_box);
-    workspace_assign_weak_widget(&ws->sidebar_ports_label, ports_label);
     workspace_assign_weak_widget(&ws->sidebar_progress_label, progress_label);
     workspace_assign_weak_widget(&ws->sidebar_structure_label, structure_label);
     workspace_assign_weak_widget(&ws->sidebar_badge, badge);
@@ -4944,7 +4818,6 @@ void workspace_add(GtkWidget *terminal_stack, GtkWidget *workspace_list, ghostty
     ws->sidebar_meta_label = NULL;
     ws->sidebar_status_label = NULL;
     ws->sidebar_status_entries_box = NULL;
-    ws->sidebar_ports_label = NULL;
     ws->sidebar_progress_label = NULL;
     ws->sidebar_structure_label = NULL;
     ws->sidebar_badge = NULL;
@@ -5042,7 +4915,6 @@ void workspace_switch(int index, GtkWidget *terminal_stack, GtkWidget *workspace
     if (!workspaces || index < 0 || index >= (int)workspaces->len)
         return;
     current_workspace = index;
-    port_scanner_set_active_workspace(index);
 
     /* Bug 9 fix: use the workspace's container widget directly instead of
      * building a name string.  workspace_remove doesn't renumber stack

@@ -15,6 +15,7 @@ typedef struct {
     GtkWidget *terminal_stack;
     GtkWidget *overlay;
     GtkWidget *command_palette;
+    GtkWidget *history_overlay;
     GtkWidget *bell_button;
     GtkWidget *toast_revealer;
     GtkWidget *toast_frame;
