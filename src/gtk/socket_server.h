@@ -1,8 +1,9 @@
 /*
  * socket_server.h - Unix domain socket for IPC
  *
- * Creates /tmp/prettymux-<instance-id>.sock, accepts JSON commands from
- * child processes (e.g. shell integration scripts, prettymux-open CLI).
+ * Creates $XDG_RUNTIME_DIR/prettymux-<instance-id>.sock (falling back to /tmp
+ * when XDG_RUNTIME_DIR is unset), accepts JSON commands from child processes
+ * (e.g. shell integration scripts, prettymux-open CLI).
  *
  * Supported commands:
  *   {"command": "open.url", "url": "https://..."}

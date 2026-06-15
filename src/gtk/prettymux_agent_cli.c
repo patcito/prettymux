@@ -313,8 +313,9 @@ find_socket_path(GError **error)
                                                 sizeof(candidate_instance_id)))
             continue;
 
-        g_snprintf(candidate, sizeof(candidate), "%s/%s",
-                   socket_runtime_dir(), ent->d_name);
+        if (g_snprintf(candidate, sizeof(candidate), "%s/%s",
+                       socket_runtime_dir(), ent->d_name) >= (int)sizeof(candidate))
+            continue; /* path too long for the buffer */
         if (!socket_is_connectable(candidate))
             continue;
 

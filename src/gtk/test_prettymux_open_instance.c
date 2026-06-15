@@ -231,6 +231,34 @@ test_default_resolution_prefers_deterministic_instance_order(void)
 }
 
 static void
+test_default_resolution_uses_xdg_runtime_dir(void)
+{
+    g_autofree char *tmp_dir =
+        g_dir_make_tmp("prettymux-open-xdg-XXXXXX", NULL);
+    g_autofree char *id =
+        g_strdup_printf("%" G_GUINT64_FORMAT, (guint64)g_get_real_time() + 5000);
+    PassiveSocket sock = { .fd = -1 };
+    const char *resolved;
+
+    g_assert_nonnull(tmp_dir);
+    test_reset_targeting_state();
+    g_setenv("XDG_RUNTIME_DIR", tmp_dir, TRUE);
+
+    /* The socket is created under the runtime dir, and default discovery must
+     * find it there rather than scanning /tmp. */
+    g_assert_true(passive_socket_start(&sock, id));
+    g_assert_true(g_str_has_prefix(sock.path, tmp_dir));
+
+    resolved = find_socket();
+    g_assert_nonnull(resolved);
+    g_assert_true(g_str_has_prefix(resolved, tmp_dir));
+
+    passive_socket_stop(&sock);
+    g_unsetenv("XDG_RUNTIME_DIR"); /* restore the suite-wide /tmp fallback */
+    rmdir(tmp_dir);
+}
+
+static void
 test_env_instance_target_does_not_fallback(void)
 {
     g_autofree char *id_old = test_make_instance_id("fallback-old");
@@ -404,6 +432,8 @@ main(int argc, char **argv)
      * of the runner's XDG_RUNTIME_DIR; build_socket_path falls back to /tmp. */
     g_unsetenv("XDG_RUNTIME_DIR");
 
+    g_test_add_func("/prettymux-open/instance/default-resolution-xdg-runtime-dir",
+                    test_default_resolution_uses_xdg_runtime_dir);
     g_test_add_func("/prettymux-open/instance/default-resolution-deterministic",
                     test_default_resolution_prefers_deterministic_instance_order);
     g_test_add_func("/prettymux-open/instance/env-instance-no-fallback",

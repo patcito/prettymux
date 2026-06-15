@@ -280,25 +280,25 @@ scan_default_running_socket(void)
     DIR *d = NULL;
     struct dirent *ent;
     int have_best = 0;
+    const char *dir = socket_runtime_dir();
 
-    d = opendir("/tmp");
+    d = opendir(dir);
     if (!d)
         return NULL;
 
     while ((ent = readdir(d)) != NULL) {
         char candidate[256];
         char candidate_instance_id[128];
-        size_t name_len = strlen(ent->d_name);
+        int n;
 
         if (!parse_instance_id_from_socket_name(ent->d_name,
                                                 candidate_instance_id,
                                                 sizeof(candidate_instance_id)))
             continue;
-        if (name_len + 6 > sizeof(candidate))
-            continue;
 
-        memcpy(candidate, "/tmp/", 5);
-        memcpy(candidate + 5, ent->d_name, name_len + 1);
+        n = snprintf(candidate, sizeof(candidate), "%s/%s", dir, ent->d_name);
+        if (n < 0 || (size_t)n >= sizeof(candidate))
+            continue; /* path too long for the buffer */
         if (!socket_is_connectable(candidate))
             continue;
 
