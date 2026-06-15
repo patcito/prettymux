@@ -72,8 +72,6 @@ typedef struct {
 static GtkWidget *create_pane_notebook(Workspace *ws, ghostty_app_t app);
 static void workspace_add_terminal_to_notebook_cwd(Workspace *ws,
     GtkNotebook *notebook, ghostty_app_t app, const char *cwd);
-static void setup_tab_label_dnd(GtkWidget *label, GtkWidget *terminal,
-                                GtkNotebook *notebook, Workspace *ws);
 static void on_notebook_switch_page(GtkNotebook *nb, GtkWidget *page,
                                     guint page_num, gpointer user_data);
 static void on_notebook_page_removed(GtkNotebook *notebook, GtkWidget *child,
@@ -2085,8 +2083,6 @@ struct _RenameData {
 };
 
 static void on_rename_entry_activate(GtkEntry *entry, gpointer user_data);
-static void on_rename_entry_focus_leave(GtkEventControllerFocus *ctrl,
-                                        gpointer user_data);
 
 static gboolean
 on_rename_key_pressed(GtkEventControllerKey *ctrl, guint keyval,
@@ -2110,136 +2106,7 @@ on_rename_key_pressed(GtkEventControllerKey *ctrl, guint keyval,
     return FALSE;
 }
 
-typedef struct {
-    Workspace *workspace;
-    GtkWidget *entry;
-    GtkWidget *popover;
-    GtkWidget *label;       /* the sidebar inner label, for live text update */
-    gboolean   committed;   /* set TRUE when Enter / focus-leave commits */
-} WorkspaceRenamePopoverData;
-
 static gboolean rename_grab_focus_idle_cb(gpointer user_data);
-
-static void
-ws_rename_popover_commit(WorkspaceRenamePopoverData *data)
-{
-    if (!data || data->committed)
-        return;
-    data->committed = TRUE;
-
-    const char *new_text = data->entry
-        ? gtk_editable_get_text(GTK_EDITABLE(data->entry))
-        : NULL;
-    if (data->workspace && new_text && new_text[0]) {
-        gboolean changed = g_strcmp0(new_text, data->workspace->name) != 0;
-        snprintf(data->workspace->name, sizeof(data->workspace->name),
-                 "%.60s", new_text);
-        if (data->label && GTK_IS_LABEL(data->label))
-            gtk_label_set_text(GTK_LABEL(data->label), new_text);
-        workspace_refresh_sidebar_label(data->workspace);
-        if (changed)
-            session_queue_save();
-    }
-}
-
-static void
-ws_rename_popover_on_activate(GtkEntry *entry, gpointer user_data)
-{
-    (void)entry;
-    WorkspaceRenamePopoverData *data = user_data;
-    ws_rename_popover_commit(data);
-    if (data->popover)
-        gtk_popover_popdown(GTK_POPOVER(data->popover));
-}
-
-static gboolean
-ws_rename_popover_on_key(GtkEventControllerKey *ctrl, guint keyval,
-                         guint keycode, GdkModifierType state,
-                         gpointer user_data)
-{
-    (void)ctrl;
-    (void)keycode;
-    (void)state;
-    if (keyval != GDK_KEY_Escape)
-        return FALSE;
-    WorkspaceRenamePopoverData *data = user_data;
-    /* Don't commit on Escape — pop down without saving. */
-    data->committed = TRUE;
-    if (data->popover)
-        gtk_popover_popdown(GTK_POPOVER(data->popover));
-    return TRUE;
-}
-
-static void
-ws_rename_popover_on_closed(GtkPopover *popover, gpointer user_data)
-{
-    WorkspaceRenamePopoverData *data = user_data;
-    /* If the popover dismisses without Enter / Escape (e.g. click
-     * outside), commit the typed value — matches inline-rename UX. */
-    ws_rename_popover_commit(data);
-    /* Tear the popover down so we don't leak a stale parent on the
-     * sidebar label after rename is done. The g_object_set_data_full
-     * ("popover-data", ..., g_free) on the popover frees `data`
-     * automatically when the popover is destroyed. */
-    gtk_widget_unparent(GTK_WIDGET(popover));
-}
-
-static void
-start_workspace_rename_popover(RenameData *rd)
-{
-    if (!rd || !rd->workspace || !rd->label || !rd->event_box)
-        return;
-
-    /* Anchor on the inner label widget so the popover sits over the
-     * row's visible name. event_box is a horizontal GtkBox; pointing
-     * at the label keeps the popover tight to the renamed text. */
-    GtkWidget *anchor = rd->label;
-    if (!anchor || !gtk_widget_get_parent(anchor))
-        anchor = rd->event_box;
-
-    GtkWidget *popover = gtk_popover_new();
-    gtk_popover_set_has_arrow(GTK_POPOVER(popover), TRUE);
-    gtk_popover_set_position(GTK_POPOVER(popover), GTK_POS_TOP);
-    gtk_popover_set_autohide(GTK_POPOVER(popover), TRUE);
-    gtk_widget_set_parent(popover, anchor);
-
-    GtkWidget *entry = gtk_entry_new();
-    gtk_entry_set_placeholder_text(GTK_ENTRY(entry), "Workspace name");
-    gtk_editable_set_text(GTK_EDITABLE(entry),
-                          rd->workspace->name);
-    gtk_entry_set_activates_default(GTK_ENTRY(entry), TRUE);
-    gtk_widget_set_size_request(entry, 240, -1);
-
-    WorkspaceRenamePopoverData *data =
-        g_new0(WorkspaceRenamePopoverData, 1);
-    data->workspace = rd->workspace;
-    data->entry = entry;
-    data->popover = popover;
-    data->label = rd->label;
-    data->committed = FALSE;
-    /* Tie data lifetime to the popover so it's freed if the row /
-     * label is destroyed mid-rename (e.g. workspace deleted). */
-    g_object_set_data_full(G_OBJECT(popover), "popover-data", data, g_free);
-
-    g_signal_connect(entry, "activate",
-                     G_CALLBACK(ws_rename_popover_on_activate), data);
-    GtkEventController *key = gtk_event_controller_key_new();
-    g_signal_connect(key, "key-pressed",
-                     G_CALLBACK(ws_rename_popover_on_key), data);
-    gtk_widget_add_controller(entry, key);
-    g_signal_connect(popover, "closed",
-                     G_CALLBACK(ws_rename_popover_on_closed), data);
-
-    gtk_popover_set_child(GTK_POPOVER(popover), entry);
-    gtk_popover_popup(GTK_POPOVER(popover));
-
-    /* Popover popup() doesn't fully realize the entry synchronously.
-     * Defer focus + select-all to an idle so the entry is mapped and
-     * its window/grab is in place — without this, the focus and
-     * selection can land on whatever widget had focus before. */
-    g_object_ref(entry);
-    g_idle_add(rename_grab_focus_idle_cb, entry);
-}
 
 static gboolean
 rename_grab_focus_idle_cb(gpointer user_data)
@@ -2424,17 +2291,6 @@ on_rename_entry_activate(GtkEntry *entry, gpointer user_data)
 {
     RenameData *rd = user_data;
     finish_rename(entry, rd);
-}
-
-static void
-on_rename_entry_focus_leave(GtkEventControllerFocus *ctrl, gpointer user_data)
-{
-    (void)ctrl;
-    RenameData *rd = user_data;
-    GtkWidget *entry_widget = gtk_event_controller_get_widget(
-        GTK_EVENT_CONTROLLER(ctrl));
-    if (GTK_IS_ENTRY(entry_widget))
-        finish_rename(GTK_ENTRY(entry_widget), rd);
 }
 
 static gboolean
@@ -2821,71 +2677,6 @@ create_terminal_tab(Workspace *ws, GtkNotebook *notebook,
     return terminal;
 }
 
-/* ── Feature 1: DnD - Tab drag source callbacks ─────────────────── */
-
-static GdkContentProvider *
-on_tab_drag_prepare(GtkDragSource *source, double x, double y,
-                    gpointer user_data)
-{
-    (void)source; (void)x; (void)y;
-    TabDragData *dd = user_data;
-
-    GBytes *bytes = g_bytes_new(dd, sizeof(TabDragData));
-    GdkContentProvider *provider = gdk_content_provider_new_typed(
-        G_TYPE_BYTES, bytes);
-    g_bytes_unref(bytes);
-    return provider;
-}
-
-static void
-on_tab_drag_begin(GtkDragSource *source, GdkDrag *drag, gpointer user_data)
-{
-    (void)user_data;
-    GtkWidget *icon = gtk_label_new("Tab");
-    gtk_widget_add_css_class(icon, "drag-icon");
-    GdkPaintable *paintable = gtk_widget_paintable_new(icon);
-    gdk_drag_set_hotspot(drag, 20, 10);
-    gtk_drag_source_set_icon(source, paintable, 20, 10);
-    g_object_unref(paintable);
-}
-
-/* ── Feature 1: DnD - Notebook drop target callbacks ────────────── */
-
-static gboolean
-on_notebook_drop(GtkDropTarget *target, const GValue *value,
-                 double x, double y, gpointer user_data)
-{
-    (void)target; (void)x; (void)y;
-    GtkNotebook *dest_nb = GTK_NOTEBOOK(user_data);
-    GtkWidget *terminal = NULL;
-    GtkNotebook *src_nb = NULL;
-    Workspace *src_ws = NULL;
-
-    if (!workspace_drag_value_terminal(value, &terminal, &src_nb, &src_ws))
-        return FALSE;
-    if (src_nb == dest_nb)
-        return FALSE;
-
-    /* Find destination workspace */
-    Workspace *dest_ws = NULL;
-    guint wi;
-    for (wi = 0; wi < workspaces->len; wi++) {
-        Workspace *ws = g_ptr_array_index(workspaces, wi);
-        guint pi;
-        for (pi = 0; pi < ws->pane_notebooks->len; pi++) {
-            if (g_ptr_array_index(ws->pane_notebooks, pi) == dest_nb) {
-                dest_ws = ws;
-                break;
-            }
-        }
-        if (dest_ws) break;
-    }
-
-    return src_ws && dest_ws
-        ? move_terminal_to_notebook(src_ws, src_nb, terminal, dest_ws, dest_nb)
-        : FALSE;
-}
-
 /* ── Feature 1: DnD - Workspace sidebar drop target callbacks ───── */
 
 static gboolean
@@ -2927,40 +2718,6 @@ on_ws_sidebar_drop(GtkDropTarget *target, const GValue *value,
         workspace_switch(dest_ws_idx, g_terminal_stack, g_workspace_list);
 
     return move_terminal_to_notebook(src_ws, src_nb, terminal, dest_ws, dest_nb);
-}
-
-/* ── DnD: Setup drag source on tab labels ───────────────────────── */
-
-static void
-setup_tab_label_dnd(GtkWidget *label_widget, GtkWidget *terminal,
-                    GtkNotebook *notebook, Workspace *ws)
-{
-    TabDragData *dd = g_new0(TabDragData, 1);
-    dd->terminal = terminal;
-    dd->source_notebook = GTK_WIDGET(notebook);
-    dd->source_ws_idx = workspace_get_index(ws);
-
-    /* Prevent the TabDragData from leaking */
-    g_object_set_data_full(G_OBJECT(label_widget), "tab-drag-data", dd, g_free);
-
-    GtkDragSource *drag_source = gtk_drag_source_new();
-    gtk_drag_source_set_actions(drag_source, GDK_ACTION_MOVE);
-    g_signal_connect(drag_source, "prepare",
-                     G_CALLBACK(on_tab_drag_prepare), dd);
-    g_signal_connect(drag_source, "drag-begin",
-                     G_CALLBACK(on_tab_drag_begin), dd);
-    gtk_widget_add_controller(label_widget, GTK_EVENT_CONTROLLER(drag_source));
-}
-
-/* ── DnD: Setup drop target on pane notebooks ───────────────────── */
-
-static void
-setup_notebook_drop_target(GtkNotebook *notebook)
-{
-    GtkDropTarget *drop = gtk_drop_target_new(G_TYPE_BYTES, GDK_ACTION_MOVE);
-    g_signal_connect(drop, "drop",
-                     G_CALLBACK(on_notebook_drop), notebook);
-    gtk_widget_add_controller(GTK_WIDGET(notebook), GTK_EVENT_CONTROLLER(drop));
 }
 
 /* ── DnD: Setup drop target on workspace sidebar rows ───────────── */
