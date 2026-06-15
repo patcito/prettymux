@@ -131,6 +131,18 @@ prettymux-open --move-tab --from-w 0 --from-p 0 --from-t 1 --to-w 1 --to-p 0
 
 Run `prettymux-open --list-actions`, `prettymux-open --list-workspaces`, or `prettymux-open --list-tabs` to inspect what can be automated.
 
+Agents can also attach structured status entries to a workspace (sidebar +
+optional desktop notifications):
+
+```bash
+prettymux-open --set-workspace-status --id deploy:main --provider ci \
+  --state running --summary "Deploying main" --notify -w 0
+```
+
+The full JSON-over-socket command surface — transport, targeting, every command,
+and the agent-notification API — is documented in
+[docs/socket-protocol.md](docs/socket-protocol.md).
+
 ## Build From Source
 
 ```bash
