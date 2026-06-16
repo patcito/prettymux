@@ -47,6 +47,13 @@ struct _GhosttyTerminal {
     guint              tick_source_id;
     gboolean           exit_emitted;
 
+    /* Last overlay-relative geometry mirrored from the dummy target, so the
+     * per-tick overlay re-allocation only fires when the terminal actually
+     * needs repositioning/resizing (e.g. strip scroll/resize) instead of
+     * churning the whole overlay layout every frame while idle. */
+    int                mirror_x, mirror_y, mirror_w, mirror_h;
+    gboolean           mirror_valid;
+
     /* IME */
     GtkIMContext      *im_context;
 
@@ -649,10 +656,38 @@ tick_callback(gpointer user_data)
             gtk_widget_set_visible(GTK_WIDGET(self), TRUE);
         GtkWidget *overlay = gtk_widget_get_ancestor(GTK_WIDGET(self),
                                                      GTK_TYPE_OVERLAY);
-        if (overlay)
-            gtk_widget_queue_allocate(overlay);
+        /* Only re-run the overlay's get-child-position (an O(children) layout
+         * pass) when this terminal's overlay-relative geometry actually
+         * changed. That geometry is exactly what on_overlay_get_child_position
+         * reads — the dummy's position in overlay coords plus its w/h — so
+         * gating on it is behaviour-identical but avoids churning the overlay
+         * layout every 16ms per terminal while nothing is moving. */
+        if (overlay) {
+            graphene_point_t p;
+            gboolean moved = TRUE;
+            if (w > 0 && h > 0 &&
+                gtk_widget_compute_point(self->dummy_target, overlay,
+                                         &GRAPHENE_POINT_INIT(0, 0), &p)) {
+                int x = (int)p.x;
+                int y = (int)p.y;
+                moved = !self->mirror_valid ||
+                        x != self->mirror_x || y != self->mirror_y ||
+                        w != self->mirror_w || h != self->mirror_h;
+                self->mirror_x = x;
+                self->mirror_y = y;
+                self->mirror_w = w;
+                self->mirror_h = h;
+                self->mirror_valid = TRUE;
+            } else {
+                /* Couldn't resolve geometry this frame — be conservative. */
+                self->mirror_valid = FALSE;
+            }
+            if (moved)
+                gtk_widget_queue_allocate(overlay);
+        }
     } else if (self->dummy_target) {
         gtk_widget_set_visible(GTK_WIDGET(self), FALSE);
+        self->mirror_valid = FALSE;
     }
 
     ghostty_terminal_refresh_status(self);
