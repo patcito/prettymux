@@ -183,6 +183,9 @@ void history_overlay_show(GtkWidget *overlay, GhosttyTerminal *target) {
     load_history();
     gtk_editable_set_text(GTK_EDITABLE(hist_state.entry), "");
     update_filter();
+    /* Make the overlay child targetable only while shown — otherwise it sits
+     * over the whole window and swallows every click. */
+    gtk_widget_set_visible(hist_state.revealer, TRUE);
     gtk_revealer_set_reveal_child(GTK_REVEALER(hist_state.revealer), TRUE);
     gtk_widget_grab_focus(hist_state.entry);
 }
@@ -190,6 +193,7 @@ void history_overlay_show(GtkWidget *overlay, GhosttyTerminal *target) {
 void history_overlay_hide(GtkWidget *overlay) {
     (void)overlay;
     gtk_revealer_set_reveal_child(GTK_REVEALER(hist_state.revealer), FALSE);
+    gtk_widget_set_visible(hist_state.revealer, FALSE);
     hist_state.target = NULL;
     /* Release the loaded history so it isn't held resident while closed;
      * it's reloaded on next show. */

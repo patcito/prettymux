@@ -864,8 +864,10 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_widget_set_visible(ui.command_palette, FALSE);
     gtk_overlay_add_overlay(GTK_OVERLAY(ui.overlay), ui.command_palette);
 
-    // Command history (overlay)
+    // Command history (overlay) — hidden until shown, otherwise the
+    // full-size overlay child would intercept clicks across the window.
     ui.history_overlay = history_overlay_new();
+    gtk_widget_set_visible(ui.history_overlay, FALSE);
     gtk_overlay_add_overlay(GTK_OVERLAY(ui.overlay), ui.history_overlay);
 
     session_set_context(GTK_WINDOW(window),
