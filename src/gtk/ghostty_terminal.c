@@ -11,7 +11,9 @@
 #include "app_state.h"
 #include "app_settings.h"
 #include "hover_focus.h"
+#include "notifications.h"
 #include "socket_server.h"
+#include "terminal_routing.h"
 #include "workspace.h"
 
 #include <errno.h>
@@ -931,6 +933,30 @@ on_click_released(GtkGestureClick *gesture,
     ghostty_surface_mouse_pos(self->surface, x, y, translate_mods(state));
     ghostty_surface_mouse_button(self->surface, GHOSTTY_MOUSE_RELEASE,
                                  translate_button(button), translate_mods(state));
+
+    /* Copy-on-select: after a primary-button select gesture, copy the current
+     * selection to the clipboard. On by default; disable in Settings. */
+    if (button == 1 && app_settings_get_copy_on_select() &&
+        ghostty_surface_has_selection(self->surface)) {
+        ghostty_text_s sel = {0};
+        if (ghostty_surface_read_selection(self->surface, &sel)) {
+            if (sel.text && sel.text_len > 0) {
+                GdkDisplay *display = gtk_widget_get_display(GTK_WIDGET(self));
+                GdkClipboard *clip =
+                    display ? gdk_display_get_clipboard(display) : NULL;
+                if (clip) {
+                    gdk_clipboard_set_text(clip, sel.text);
+                    SurfaceLookup loc =
+                        terminal_routing_find_for_surface(self->surface);
+                    sidebar_toast_show_copy("Copied to clipboard",
+                                            loc.workspace_idx,
+                                            loc.pane_notebook, loc.tab_idx);
+                }
+            }
+            ghostty_surface_free_text(self->surface, &sel);
+        }
+    }
+
     gtk_gesture_set_state(GTK_GESTURE(gesture), GTK_EVENT_SEQUENCE_CLAIMED);
     gtk_gl_area_queue_render(self->gl_area);
 }

@@ -493,6 +493,25 @@ static gboolean autosave_tick(gpointer d) {
     return G_SOURCE_CONTINUE;
 }
 
+/* Announce copy-on-select once (it's a default-on behaviour, so existing
+ * users get a one-time heads-up + where to disable it), then never again. */
+static gboolean copy_on_select_notice_cb(gpointer d) {
+    (void)d;
+    if (app_settings_get_copy_on_select() &&
+        !app_settings_get_copy_on_select_notified()) {
+        Workspace *ws = workspace_get_current();
+        GtkNotebook *pane = ws ? workspace_get_focused_pane(ws) : NULL;
+        int page = pane ? gtk_notebook_get_current_page(pane) : 0;
+        sidebar_toast_show(
+            "Copy on select is on \342\200\224 selected text is copied to the "
+            "clipboard. Turn it off in Settings.",
+            ws ? workspace_get_index(ws) : 0, pane, page < 0 ? 0 : page);
+        app_settings_set_copy_on_select_notified(TRUE);
+        app_settings_save();
+    }
+    return G_SOURCE_REMOVE;
+}
+
 static void
 on_paned_position_notify(GObject *object, GParamSpec *pspec, gpointer user_data)
 {
@@ -899,6 +918,9 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     g_timeout_add_seconds(30, autosave_tick, NULL);
 
     gtk_window_present(GTK_WINDOW(window));
+
+    // One-time "copy on select is on" heads-up, after the window is up.
+    g_timeout_add(900, copy_on_select_notice_cb, NULL);
 
     // ── Welcome dialog (first run) ──
     show_welcome_dialog(GTK_WINDOW(window));
