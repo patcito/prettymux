@@ -32,6 +32,8 @@ const ShortcutDef default_shortcuts[] = {
     {"pane.zoom",         GDK_KEY_z,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Zoom pane / maximize column"},
     {"pane.zoom.half",    GDK_KEY_m,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Half-width column"},
     {"terminal.search",   GDK_KEY_f,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Terminal search"},
+    {"terminal.scroll.up",   GDK_KEY_Page_Up,    GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Scroll up (page)"},
+    {"terminal.scroll.down", GDK_KEY_Page_Down,  GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Scroll down (page)"},
     {"broadcast.toggle",  GDK_KEY_e,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Broadcast mode"},
     {"notes.toggle",      GDK_KEY_q,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Quick notes"},
     {"settings.show",     GDK_KEY_s,             GDK_CONTROL_MASK | GDK_ALT_MASK,   "Settings"},

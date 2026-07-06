@@ -24,6 +24,10 @@
 #include <signal.h>
 #endif
 
+/* Multiplier applied to mouse-wheel scroll deltas to tame how fast the wheel
+ * scrolls the terminal (touchpad precise scrolling is left at 1.0). */
+#define TERMINAL_WHEEL_SCROLL_FACTOR 0.5
+
 /* ── Signal IDs ────────────────────────────────────────────────── */
 
 enum {
@@ -1037,7 +1041,18 @@ on_scroll(GtkEventControllerScroll *controller,
      * This makes terminal scrolling line up with natural-scrolling
      * settings under GNOME, Hyprland, and X11 GTK setups.
      */
-    ghostty_surface_mouse_scroll(self->surface, -dx, -dy,
+    /* Mouse wheels deliver coarse per-notch deltas that Ghostty then
+     * multiplies, which scrolls uncomfortably fast. Damp the wheel; leave
+     * touchpad (pixel-precise SURFACE units) untouched so it still feels
+     * natural. */
+    double dy_factor = 1.0;
+#if GTK_CHECK_VERSION(4, 8, 0)
+    if (gtk_event_controller_scroll_get_unit(controller) ==
+        GDK_SCROLL_UNIT_WHEEL)
+        dy_factor = TERMINAL_WHEEL_SCROLL_FACTOR;
+#endif
+
+    ghostty_surface_mouse_scroll(self->surface, -dx, -dy * dy_factor,
                                  (ghostty_input_scroll_mods_t)translate_mods(state));
     gtk_gl_area_queue_render(self->gl_area);
     return TRUE;

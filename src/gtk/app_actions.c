@@ -561,6 +561,27 @@ app_actions_handle(const char *action)
                 }
             }
         }
+    } else if (strcmp(action, "terminal.scroll.up") == 0 ||
+               strcmp(action, "terminal.scroll.down") == 0) {
+        Workspace *ws = workspace_get_current();
+        if (ws) {
+            GtkNotebook *focused = workspace_get_focused_pane(ws);
+            if (focused && GTK_IS_NOTEBOOK(focused)) {
+                int pg = gtk_notebook_get_current_page(focused);
+                if (pg >= 0) {
+                    GhosttyTerminal *term = notebook_terminal_at(focused, pg);
+                    ghostty_surface_t surface =
+                        term ? ghostty_terminal_get_surface(term) : NULL;
+                    if (surface) {
+                        const char *ba =
+                            strcmp(action, "terminal.scroll.up") == 0
+                                ? "scroll_page_up"
+                                : "scroll_page_down";
+                        ghostty_surface_binding_action(surface, ba, strlen(ba));
+                    }
+                }
+            }
+        }
     } else if (strcmp(action, "terminal.search") == 0) {
         Workspace *ws = workspace_get_current();
         if (ws) {
