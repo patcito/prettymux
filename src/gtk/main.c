@@ -481,8 +481,38 @@ static bool read_clipboard_cb(void *ud, ghostty_clipboard_e c, void *d) {
 static void confirm_read_clipboard_cb(void *ud, const char *t, void *d, ghostty_clipboard_request_e r) {
     (void)ud; (void)t; (void)d; (void)r;
 }
+/* Terminal-initiated clipboard write (OSC 52, or an app's own copy such as
+ * Claude Code's copy-on-select). Without this, those writes were silently
+ * dropped and only prettymux's own selection-copy reached the clipboard —
+ * which never fires while an app holds mouse-reporting mode. Bridge the
+ * content to the GDK clipboard so app copies actually work. */
 static void write_clipboard_cb(void *ud, ghostty_clipboard_e c, const ghostty_clipboard_content_s *co, size_t l, _Bool cf) {
-    (void)ud; (void)c; (void)co; (void)l; (void)cf;
+    (void)ud; (void)cf;
+    if (!co || l == 0)
+        return;
+
+    const char *text = NULL;
+    for (size_t i = 0; i < l; i++) {
+        if (!co[i].data)
+            continue;
+        if (!text)
+            text = co[i].data; /* fallback: first entry with data */
+        if (!co[i].mime || g_str_has_prefix(co[i].mime, "text/")) {
+            text = co[i].data; /* prefer a text/* payload */
+            break;
+        }
+    }
+    if (!text)
+        return;
+
+    GdkDisplay *display = gdk_display_get_default();
+    if (!display)
+        return;
+    GdkClipboard *clip = (c == GHOSTTY_CLIPBOARD_SELECTION)
+        ? gdk_display_get_primary_clipboard(display)
+        : gdk_display_get_clipboard(display);
+    if (clip)
+        gdk_clipboard_set_text(clip, text);
 }
 
 // ── Terminal lookup: find GhosttyTerminal by ghostty_surface_t ──
