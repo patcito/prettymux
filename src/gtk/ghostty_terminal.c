@@ -28,6 +28,11 @@
  * scrolls the terminal (touchpad precise scrolling is left at 1.0). */
 #define TERMINAL_WHEEL_SCROLL_FACTOR 0.5
 
+/* The per-terminal tick runs at 16ms. The status bar (cwd, git branch, search
+ * counters) changes rarely and is also refreshed directly whenever its inputs
+ * change, so polling it at ~4Hz instead of ~62Hz is plenty. */
+#define STATUS_REFRESH_TICKS 15
+
 /* ── Signal IDs ────────────────────────────────────────────────── */
 
 enum {
@@ -59,6 +64,17 @@ struct _GhosttyTerminal {
      * churning the whole overlay layout every frame while idle. */
     int                mirror_x, mirror_y, mirror_w, mirror_h;
     gboolean           mirror_valid;
+
+    /* Ticks since the status bar was last refreshed (see STATUS_REFRESH_TICKS). */
+    guint              status_tick;
+
+    /* At most one clipboard read may be outstanding per terminal. `clip_state`
+     * is ghostty's request, which we promised to complete exactly once; it is
+     * non-NULL only while that promise is unfulfilled. See the clipboard
+     * callbacks in main.c. */
+    void              *clip_state;
+    GCancellable      *clip_cancellable;
+    GtkWindow         *clip_dialog;   /* confirmation dialog, if one is up */
 
     /* IME */
     GtkIMContext      *im_context;
@@ -249,6 +265,10 @@ ghostty_terminal_refresh_status(GhosttyTerminal *self)
     if (!self)
         return;
 
+    /* Restart the poll interval: direct refreshes (cwd/git/search) mean the
+     * timer's low-rate safety net doesn't need to fire right after. */
+    self->status_tick = 0;
+
     if (self->search_active) {
         if (self->status_cwd) {
             if (self->search_query && self->search_query[0]) {
@@ -415,6 +435,9 @@ on_gl_realize(GtkGLArea *area, gpointer user_data)
     ghostty_surface_config_s config = ghostty_surface_config_new();
     config.platform_tag = GHOSTTY_PLATFORM_LINUX;
     config.platform.gtk.gtk_widget = (void *)self->gl_area;
+    /* Ghostty hands this back as the first argument of the runtime clipboard
+     * callbacks, which is how they resolve the surface they belong to. */
+    config.userdata = self;
 
     double scale = gtk_widget_get_scale_factor(GTK_WIDGET(area));
     config.scale_factor = scale;
@@ -632,17 +655,28 @@ tick_callback(gpointer user_data)
 {
     GhosttyTerminal *self = GHOSTTY_TERMINAL(user_data);
 
-    if (g_ghostty_app)
-        ghostty_app_tick(g_ghostty_app);
+    /* Deliberately NOT done here:
+     *  - ghostty_app_tick(): it takes the app, not a surface, and only drains
+     *    the app mailbox. Every mailbox push wakes us (wakeup_cb), so it is
+     *    driven on demand from main.c. Calling it here ran it once per
+     *    terminal per frame.
+     *  - gtk_gl_area_queue_render(): ghostty asks for redraws via
+     *    GHOSTTY_ACTION_RENDER (-> ghostty_terminal_queue_render), and the
+     *    input handlers queue their own. Rendering every terminal at 62Hz
+     *    while idle was the bulk of prettymux's background CPU.
+     *
+     * Known edge case: ghostty's renderer pushes .redraw_surface onto a
+     * 64-slot app mailbox with a non-blocking try-push and ignores failure
+     * (renderer/Thread.zig). If that push is ever dropped while the GTK thread
+     * is stalled, the blind 62Hz render used to paper over it. A dropped frame
+     * self-heals on the next output or cursor-blink wakeup (<=600ms); a real
+     * fix belongs upstream, by making redraw a coalesced non-droppable bit. */
 
-    gtk_gl_area_queue_render(self->gl_area);
-
-    /* Check for process exit */
-    if (self->surface && ghostty_surface_process_exited(self->surface)
-        && !self->exit_emitted) {
-        self->exit_emitted = TRUE;
-        g_signal_emit(self, signals[SIGNAL_PROCESS_EXITED], 0, self->exit_code);
-    }
+    /* No process-exit poll here either: GHOSTTY_ACTION_SHOW_CHILD_EXITED ->
+     * ghostty_terminal_notify_child_exited() reports the real exit code. The
+     * old poll raced that action (a 16ms default-priority timeout beats the
+     * deferred action idle) and could emit the sentinel -1 while latching
+     * exit_emitted, suppressing the correct code. */
 
     /* Mirror the dummy page widget's geometry. Keep a size_request so
      * the GL area measures/realizes correctly. The actual *position*
@@ -696,7 +730,12 @@ tick_callback(gpointer user_data)
         self->mirror_valid = FALSE;
     }
 
-    ghostty_terminal_refresh_status(self);
+    /* Status text is refreshed directly when its inputs change; this poll is
+     * only a low-rate safety net. */
+    if (++self->status_tick >= STATUS_REFRESH_TICKS) {
+        self->status_tick = 0;
+        ghostty_terminal_refresh_status(self);
+    }
 
     return G_SOURCE_CONTINUE;
 }
@@ -1088,6 +1127,8 @@ on_focus_leave(GtkEventControllerFocus *controller, gpointer user_data)
 
 /* ── GObject lifecycle ─────────────────────────────────────────── */
 
+static void ghostty_terminal_clipboard_abort(GhosttyTerminal *self);
+
 static void
 ghostty_terminal_dispose(GObject *object)
 {
@@ -1097,6 +1138,9 @@ ghostty_terminal_dispose(GObject *object)
         g_source_remove(self->tick_source_id);
         self->tick_source_id = 0;
     }
+
+    /* Must run before the surface is freed: settling the request needs it. */
+    ghostty_terminal_clipboard_abort(self);
 
     if (self->surface) {
         ghostty_surface_free(self->surface);
@@ -1374,6 +1418,105 @@ ghostty_terminal_get_surface(GhosttyTerminal *self)
 {
     g_return_val_if_fail(GHOSTTY_IS_TERMINAL(self), NULL);
     return self->surface;
+}
+
+/* ── Pending clipboard request ─────────────────────────────────────
+ *
+ * Returning true from read_clipboard_cb is a promise to ghostty that we will
+ * settle that request exactly once. (Settle, not call once: a request needing
+ * confirmation is completed twice — the first call hands it to the confirm
+ * callback, which preserves it; the second, confirmed, call frees it.)
+ *
+ * The read is async and the user may close the terminal before it lands, so
+ * the terminal itself owns the outstanding request: it cancels the GDK read on
+ * dispose and settles the request while its surface is still alive. Everything
+ * here runs on the GTK main thread.
+ */
+
+gboolean
+ghostty_terminal_clipboard_begin(GhosttyTerminal *self,
+                                 void            *state,
+                                 GCancellable   **out_cancellable)
+{
+    g_return_val_if_fail(GHOSTTY_IS_TERMINAL(self), FALSE);
+
+    if (self->clip_state)
+        return FALSE;   /* one outstanding request at a time */
+
+    self->clip_state = state;
+    self->clip_dialog = NULL;
+    g_clear_object(&self->clip_cancellable);
+    self->clip_cancellable = g_cancellable_new();
+
+    if (out_cancellable)
+        *out_cancellable = self->clip_cancellable;
+    return TRUE;
+}
+
+gboolean
+ghostty_terminal_clipboard_is_pending(GhosttyTerminal *self, void *state)
+{
+    return GHOSTTY_IS_TERMINAL(self) && self->clip_state && self->clip_state == state;
+}
+
+void
+ghostty_terminal_clipboard_end(GhosttyTerminal *self)
+{
+    g_return_if_fail(GHOSTTY_IS_TERMINAL(self));
+
+    self->clip_state = NULL;
+    self->clip_dialog = NULL;
+    g_clear_object(&self->clip_cancellable);
+}
+
+/* Ghostty kept the request alive to ask the user; the dialog now owns it. */
+void
+ghostty_terminal_clipboard_set_dialog(GhosttyTerminal *self, GtkWindow *dialog)
+{
+    g_return_if_fail(GHOSTTY_IS_TERMINAL(self));
+    self->clip_dialog = dialog;
+}
+
+gboolean
+ghostty_terminal_clipboard_has_dialog(GhosttyTerminal *self)
+{
+    return GHOSTTY_IS_TERMINAL(self) && self->clip_dialog != NULL;
+}
+
+static gboolean
+destroy_dialog_idle(gpointer data)
+{
+    GtkWindow *dialog = data;
+    gtk_window_destroy(dialog);
+    g_object_unref(dialog);
+    return G_SOURCE_REMOVE;
+}
+
+/* Settle whatever clipboard request is outstanding, before the surface dies. */
+static void
+ghostty_terminal_clipboard_abort(GhosttyTerminal *self)
+{
+    if (self->clip_cancellable)
+        g_cancellable_cancel(self->clip_cancellable);
+
+    /* Complete with no data and confirmed=true: ghostty frees the request
+     * without routing it back through confirm_read_clipboard_cb, and a closed
+     * terminal discloses nothing. */
+    if (self->clip_state && self->surface)
+        ghostty_surface_complete_clipboard_request(self->surface, "", self->clip_state, true);
+    self->clip_state = NULL;
+
+    /* gtk_window_destroy() does not emit AdwMessageDialog::response, so the
+     * dialog's context is freed by its closure notifier rather than by the
+     * response handler. Deferred to an idle so the teardown cannot re-enter
+     * this object while it is being disposed. */
+    if (self->clip_dialog) {
+        GtkWindow *dialog = self->clip_dialog;
+        self->clip_dialog = NULL;
+        g_idle_add(destroy_dialog_idle, g_object_ref(dialog));
+    }
+
+    g_clear_object(&self->clip_cancellable);
 }
 
 void

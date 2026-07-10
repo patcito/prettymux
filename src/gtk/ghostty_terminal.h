@@ -141,6 +141,22 @@ gboolean ghostty_terminal_is_search_active(GhosttyTerminal *self);
 const char *ghostty_terminal_get_search_query(GhosttyTerminal *self);
 
 /*
+ * Pending OSC 52 / paste clipboard request (see the clipboard callbacks in
+ * main.c). Ghostty hands us a request we must complete exactly once; the
+ * terminal tracks it so closing the terminal mid-read cancels the GDK read
+ * and settles the request instead of leaking it or answering a dead surface.
+ *
+ * clipboard_begin() fails if a request is already outstanding.
+ */
+gboolean ghostty_terminal_clipboard_begin(GhosttyTerminal *self,
+                                          void            *state,
+                                          GCancellable   **out_cancellable);
+gboolean ghostty_terminal_clipboard_is_pending(GhosttyTerminal *self, void *state);
+void     ghostty_terminal_clipboard_end(GhosttyTerminal *self);
+void     ghostty_terminal_clipboard_set_dialog(GhosttyTerminal *self, GtkWindow *dialog);
+gboolean ghostty_terminal_clipboard_has_dialog(GhosttyTerminal *self);
+
+/*
  * Signals:
  *   "title-changed"      (GhosttyTerminal *self, const char *title)
  *   "pwd-changed"        (GhosttyTerminal *self, const char *cwd)

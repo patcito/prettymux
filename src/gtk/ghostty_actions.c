@@ -84,7 +84,11 @@ ghostty_actions_action_cb(ghostty_app_t app, ghostty_target_s target,
         break;
     }
 
-    g_idle_add(action_idle_handler, d);
+    /* Normal priority, not the default idle priority. Actions carry
+     * GHOSTTY_ACTION_RENDER, which is now the only thing that redraws an idle
+     * terminal; at G_PRIORITY_DEFAULT_IDLE it sorts below GDK's redraw pass
+     * and can be starved outright by a busy higher-priority source. */
+    g_idle_add_full(G_PRIORITY_DEFAULT, action_idle_handler, d, NULL);
     return true;
 }
 

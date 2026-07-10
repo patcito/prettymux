@@ -482,8 +482,14 @@ terminal_search_show(GhosttyTerminal *term, const char *needle)
 
 // ── Ghostty callbacks ──
 
+/* Ghostty calls wakeup_cb (possibly off the main thread) whenever the app has
+ * work to do. Coalesce those into a single pending idle instead of queueing one
+ * source per call. */
+static gint g_wakeup_pending = 0;
+
 static gboolean wakeup_idle(gpointer data) {
     (void)data;
+    g_atomic_int_set(&g_wakeup_pending, 0);
     if (g_ghostty_app)
         ghostty_app_tick(g_ghostty_app);
     return G_SOURCE_REMOVE;
@@ -491,24 +497,268 @@ static gboolean wakeup_idle(gpointer data) {
 
 static void wakeup_cb(void *ud) {
     (void)ud;
-    g_idle_add(wakeup_idle, NULL);
+    /* Normal priority, not the default idle priority: a steady stream of
+     * priority-0 sources must not starve ghostty's mailbox drain. */
+    if (g_atomic_int_compare_and_exchange(&g_wakeup_pending, 0, 1))
+        g_idle_add_full(G_PRIORITY_DEFAULT, wakeup_idle, NULL, NULL);
 }
 static void close_surface_cb(void *ud, _Bool rt) { (void)ud; (void)rt; }
-static bool read_clipboard_cb(void *ud, ghostty_clipboard_e c, void *d) {
-    (void)ud; (void)c; (void)d; return false;
+
+/* Ghostty's apprt.Clipboard has three values (standard=0, selection=1,
+ * primary=2) but ghostty.h only declares the first two, and it passes the raw
+ * integer through. GDK has just two clipboards, so everything that isn't the
+ * standard one maps to the primary selection. Getting this wrong is not
+ * cosmetic: an `OSC 52 ; p` write would land on the user's real clipboard. */
+static GdkClipboard *clipboard_for(GdkDisplay *display, ghostty_clipboard_e c) {
+    if (!display)
+        return NULL;
+    return (c == GHOSTTY_CLIPBOARD_STANDARD)
+        ? gdk_display_get_clipboard(display)
+        : gdk_display_get_primary_clipboard(display);
 }
-static void confirm_read_clipboard_cb(void *ud, const char *t, void *d, ghostty_clipboard_request_e r) {
-    (void)ud; (void)t; (void)d; (void)r;
+
+/* A terminal a user can still see and whose surface is still usable. Closing a
+ * tab unparents the terminal (workspace_close_tab_at) and normally disposes it,
+ * but any lingering ref elsewhere would leave a live surface behind; a closed
+ * tab's child process must not be able to reach the clipboard. Terminals in
+ * background workspaces stay parented, so this does not reject them. */
+static gboolean terminal_is_live(gpointer ud) {
+    return ud && GHOSTTY_IS_TERMINAL(ud)
+        && ghostty_terminal_get_surface(GHOSTTY_TERMINAL(ud))
+        && gtk_widget_get_parent(GTK_WIDGET(ud)) != NULL;
 }
+
+/* ── Clipboard reads (paste requests and OSC 52 reads) ──────────────
+ *
+ * Ghostty calls read_clipboard_cb with the surface's userdata (the
+ * GhosttyTerminal) and an opaque request `state`. Returning TRUE promises we
+ * will eventually hand the text back via
+ * ghostty_surface_complete_clipboard_request(); returning FALSE lets ghostty
+ * free the request itself, but also reports the binding as *not performed*, so
+ * the keystroke falls through to the child PTY.
+ *
+ * The GDK read is async, so the terminal may be closed before it lands. We
+ * therefore only hold a *weak* ref — a strong one would keep the terminal, and
+ * with it the child process, alive behind a closed tab — and register the
+ * request with the terminal, which cancels the read and settles the request in
+ * dispose() while its surface is still valid. Every path below settles the
+ * request exactly once, guarded by ghostty_terminal_clipboard_is_pending().
+ *
+ * If ghostty considers the paste unsafe (bracketed-paste bypass, control
+ * chars) or unauthorized (an app reading the clipboard via OSC 52), it calls
+ * confirm_read_clipboard_cb *from inside* complete_clipboard_request() and
+ * preserves the request for us to confirm. We prompt, then complete with the
+ * text on accept or an empty string on decline. */
+
+typedef struct {
+    GWeakRef  term;
+    void     *state; /* ghostty's clipboard request; must be completed once */
+} ClipboardReadCtx;
+
+static void clipboard_read_done_cb(GObject *source, GAsyncResult *res, gpointer ud) {
+    ClipboardReadCtx *ctx = ud;
+    GError *error = NULL;
+    char *text = gdk_clipboard_read_text_finish(GDK_CLIPBOARD(source), res, &error);
+    GhosttyTerminal *term = g_weak_ref_get(&ctx->term);
+
+    /* Not pending => the terminal was closed and already settled the request
+     * (and cancelled this read). Touching ctx->state now would be a UAF. */
+    if (term && ghostty_terminal_clipboard_is_pending(term, ctx->state)) {
+        ghostty_surface_t surface = ghostty_terminal_get_surface(term);
+
+        if (surface) {
+            /* May re-enter confirm_read_clipboard_cb synchronously, which puts
+             * a dialog up and keeps the request alive for its response. */
+            ghostty_surface_complete_clipboard_request(surface, text ? text : "",
+                                                       ctx->state, false);
+            if (!ghostty_terminal_clipboard_has_dialog(term))
+                ghostty_terminal_clipboard_end(term);   /* request consumed */
+        } else {
+            ghostty_terminal_clipboard_end(term);
+        }
+    }
+
+    if (error)
+        g_error_free(error);
+    g_free(text);
+    if (term)
+        g_object_unref(term);
+    g_weak_ref_clear(&ctx->term);
+    g_free(ctx);
+}
+
+static bool read_clipboard_cb(void *ud, ghostty_clipboard_e c, void *state) {
+    if (!terminal_is_live(ud))
+        return false;
+
+    GhosttyTerminal *term = GHOSTTY_TERMINAL(ud);
+    ghostty_surface_t surface = ghostty_terminal_get_surface(term);
+
+    GdkClipboard *clip = clipboard_for(gtk_widget_get_display(GTK_WIDGET(term)), c);
+    if (!clip)
+        return false;
+
+    /* Ghostty's contract: no text available => return false, so an image-only
+     * clipboard doesn't silently swallow the paste binding. */
+    GdkContentFormats *formats = gdk_clipboard_get_formats(clip);
+    if (!formats || !gdk_content_formats_contain_gtype(formats, G_TYPE_STRING))
+        return false;
+
+    GCancellable *cancellable = NULL;
+    if (!ghostty_terminal_clipboard_begin(term, state, &cancellable)) {
+        /* A read is already outstanding. Don't return false: Ctrl+Shift+V is a
+         * *performable* binding, so a false here is read as "no such binding"
+         * and the keystroke gets encoded into the child PTY as a literal ^V.
+         * Settle this request as empty instead — it consumes the key (and
+         * answers a concurrent OSC 52 query with no data). */
+        ghostty_surface_complete_clipboard_request(surface, "", state, true);
+        return true;
+    }
+
+    ClipboardReadCtx *ctx = g_new0(ClipboardReadCtx, 1);
+    g_weak_ref_init(&ctx->term, term);
+    ctx->state = state;
+    gdk_clipboard_read_text_async(clip, cancellable, clipboard_read_done_cb, ctx);
+    return true;
+}
+
+typedef struct {
+    GWeakRef  term;
+    void     *state;
+    char     *text;  /* owned copy of the pending clipboard text */
+} ClipboardConfirmCtx;
+
+/* Freed when the dialog's closure dies, i.e. when the dialog is finalized —
+ * not from the response handler. gtk_window_destroy() (which is how a closing
+ * terminal tears its dialog down) does NOT emit ::response, so hanging the
+ * free off the response would leak the context. */
+static void clipboard_confirm_ctx_free(gpointer data, GClosure *closure) {
+    ClipboardConfirmCtx *ctx = data;
+    (void)closure;
+    g_weak_ref_clear(&ctx->term);
+    g_free(ctx->text);
+    g_free(ctx);
+}
+
+static void clipboard_confirm_response_cb(AdwMessageDialog *dialog,
+                                          const char *response,
+                                          gpointer ud) {
+    ClipboardConfirmCtx *ctx = ud;
+    gboolean allowed = g_strcmp0(response, "allow") == 0;
+    GhosttyTerminal *term = g_weak_ref_get(&ctx->term);
+
+    (void)dialog;
+
+    /* Not pending => the terminal closed while the dialog was up and settled
+     * the request itself; this response is now moot. */
+    if (term && ghostty_terminal_clipboard_is_pending(term, ctx->state)) {
+        ghostty_surface_t surface = ghostty_terminal_get_surface(term);
+
+        /* Complete either way so ghostty releases the request; on decline we
+         * hand back an empty string so nothing is pasted / disclosed. */
+        if (surface)
+            ghostty_surface_complete_clipboard_request(
+                surface, allowed ? ctx->text : "", ctx->state, true);
+        ghostty_terminal_clipboard_end(term);
+    }
+
+    if (term)
+        g_object_unref(term);
+}
+
+static void confirm_read_clipboard_cb(void *ud, const char *t, void *state, ghostty_clipboard_request_e r) {
+    if (!ud || !GHOSTTY_IS_TERMINAL(ud))
+        return;
+
+    GhosttyTerminal *term = GHOSTTY_TERMINAL(ud);
+
+    /* Reached only from inside complete_clipboard_request() for a request we
+     * registered, so it must still be pending. */
+    if (!ghostty_terminal_clipboard_is_pending(term, state))
+        return;
+
+    gboolean osc52 = (r == GHOSTTY_CLIPBOARD_REQUEST_OSC_52_READ);
+    const char *heading = osc52
+        ? "Allow the program to read your clipboard?"
+        : "Paste this text?";
+    const char *body = osc52
+        ? "A program running in this terminal is requesting the contents of "
+          "your clipboard. Only allow this if you trust it."
+        : "The text being pasted may run as a command. Only paste text you "
+          "trust.";
+
+    ClipboardConfirmCtx *ctx = g_new0(ClipboardConfirmCtx, 1);
+    g_weak_ref_init(&ctx->term, term);
+    ctx->state = state;
+    ctx->text = g_strdup(t ? t : "");
+
+    AdwMessageDialog *dialog = ADW_MESSAGE_DIALOG(
+        adw_message_dialog_new(g_main_window, heading, body));
+    adw_message_dialog_add_responses(dialog,
+                                     "cancel", "Cancel",
+                                     "allow", osc52 ? "Allow" : "Paste",
+                                     NULL);
+    adw_message_dialog_set_response_appearance(dialog, "allow",
+                                               ADW_RESPONSE_DESTRUCTIVE);
+    adw_message_dialog_set_default_response(dialog, "cancel");
+    adw_message_dialog_set_close_response(dialog, "cancel");
+    g_signal_connect_data(dialog, "response",
+                          G_CALLBACK(clipboard_confirm_response_cb), ctx,
+                          clipboard_confirm_ctx_free, 0);
+
+    /* Hands the request over to the dialog: the read path must now leave it
+     * pending, and dispose() knows to tear the dialog down. */
+    ghostty_terminal_clipboard_set_dialog(term, GTK_WINDOW(dialog));
+    gtk_window_present(GTK_WINDOW(dialog));
+}
+typedef struct {
+    GWeakRef      term;
+    GdkClipboard *clip;  /* strong ref */
+    char         *text;
+} ClipboardWriteCtx;
+
+/* See clipboard_confirm_ctx_free: freed with the closure, not on ::response. */
+static void clipboard_write_ctx_free(gpointer data, GClosure *closure) {
+    ClipboardWriteCtx *ctx = data;
+    (void)closure;
+    g_weak_ref_clear(&ctx->term);
+    g_object_unref(ctx->clip);
+    g_free(ctx->text);
+    g_free(ctx);
+}
+
+static void clipboard_write_response_cb(AdwMessageDialog *dialog,
+                                        const char *response,
+                                        gpointer ud) {
+    ClipboardWriteCtx *ctx = ud;
+    GhosttyTerminal *term = g_weak_ref_get(&ctx->term);
+
+    (void)dialog;
+
+    /* Only honour Allow while the terminal that asked is still alive. Closing
+     * the tab must not leave a prompt behind that can still overwrite the
+     * clipboard on behalf of a dead process. */
+    if (terminal_is_live(term) && g_strcmp0(response, "allow") == 0)
+        gdk_clipboard_set_text(ctx->clip, ctx->text);
+
+    if (term)
+        g_object_unref(term);
+}
+
 /* Terminal-initiated clipboard write (OSC 52, or an app's own copy such as
  * Claude Code's copy-on-select). Without this, those writes were silently
  * dropped and only prettymux's own selection-copy reached the clipboard —
  * which never fires while an app holds mouse-reporting mode. Bridge the
- * content to the GDK clipboard so app copies actually work. */
+ * content to the GDK clipboard so app copies actually work.
+ *
+ * `cf` is set when ghostty's `clipboard-write` is `ask` (it defaults to
+ * `allow`). Honour it: a user who asked to be prompted must not have their
+ * clipboard overwritten silently by whatever is running in the terminal. */
 static void write_clipboard_cb(void *ud, ghostty_clipboard_e c, const ghostty_clipboard_content_s *co, size_t l, _Bool cf) {
-    (void)ud; (void)cf;
-    if (!co || l == 0)
+    if (!co || l == 0 || !terminal_is_live(ud))
         return;
+
+    GhosttyTerminal *term = GHOSTTY_TERMINAL(ud);
 
     const char *text = NULL;
     for (size_t i = 0; i < l; i++) {
@@ -517,21 +767,44 @@ static void write_clipboard_cb(void *ud, ghostty_clipboard_e c, const ghostty_cl
         if (!text)
             text = co[i].data; /* fallback: first entry with data */
         if (!co[i].mime || g_str_has_prefix(co[i].mime, "text/")) {
-            text = co[i].data; /* prefer a text/* payload */
+            text = co[i].data; /* prefer a text mime type */
             break;
         }
     }
     if (!text)
         return;
 
-    GdkDisplay *display = gdk_display_get_default();
-    if (!display)
+    GdkClipboard *clip = clipboard_for(gtk_widget_get_display(GTK_WIDGET(term)), c);
+    if (!clip)
         return;
-    GdkClipboard *clip = (c == GHOSTTY_CLIPBOARD_SELECTION)
-        ? gdk_display_get_primary_clipboard(display)
-        : gdk_display_get_clipboard(display);
-    if (clip)
+
+    if (!cf) {
         gdk_clipboard_set_text(clip, text);
+        return;
+    }
+
+    ClipboardWriteCtx *ctx = g_new0(ClipboardWriteCtx, 1);
+    g_weak_ref_init(&ctx->term, term);
+    ctx->clip = g_object_ref(clip);
+    ctx->text = g_strdup(text);
+
+    AdwMessageDialog *dialog = ADW_MESSAGE_DIALOG(adw_message_dialog_new(
+        g_main_window,
+        "Allow the program to write to your clipboard?",
+        "A program running in this terminal is trying to replace your "
+        "clipboard contents. Only allow this if you trust it."));
+    adw_message_dialog_add_responses(dialog,
+                                     "cancel", "Cancel",
+                                     "allow", "Allow",
+                                     NULL);
+    adw_message_dialog_set_response_appearance(dialog, "allow",
+                                               ADW_RESPONSE_DESTRUCTIVE);
+    adw_message_dialog_set_default_response(dialog, "cancel");
+    adw_message_dialog_set_close_response(dialog, "cancel");
+    g_signal_connect_data(dialog, "response",
+                          G_CALLBACK(clipboard_write_response_cb), ctx,
+                          clipboard_write_ctx_free, 0);
+    gtk_window_present(GTK_WINDOW(dialog));
 }
 
 // ── Terminal lookup: find GhosttyTerminal by ghostty_surface_t ──
@@ -852,9 +1125,20 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     rc.confirm_read_clipboard_cb = confirm_read_clipboard_cb;
     rc.write_clipboard_cb = write_clipboard_cb;
     rc.close_surface_cb = close_surface_cb;
+    /* Left false deliberately. Turning it on makes ghostty drive the PRIMARY
+     * selection itself: it would copy every local selection to PRIMARY and
+     * repoint middle-click paste at it. That is standard Linux behaviour but a
+     * separate product decision from this change, and prettymux already owns
+     * copy-on-select (toggle + toast). clipboard_for() still has to map the
+     * non-standard targets, because `OSC 52 ; s|p` writes reach
+     * write_clipboard_cb regardless of this flag. */
+    rc.supports_selection_clipboard = false;
 
     g_ghostty_app = ghostty_app_new(&rc, config);
     if (!g_ghostty_app) { fprintf(stderr, "ghostty_app_new failed\n"); return; }
+
+    /* No periodic app tick: ghostty calls wakeup_cb after every mailbox push,
+     * which schedules exactly one coalesced ghostty_app_tick(). */
 
     // Register GApplication action for notification click navigation
     {
