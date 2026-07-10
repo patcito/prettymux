@@ -184,6 +184,13 @@ app_settings_write_ghostty_override(void)
         g_string_append_printf(contents, "theme = %s\n",
                                theme_name);
 
+    /* prettymux implements copy-on-select itself (see ghostty_terminal.c's
+     * button-release handler): it honours the Settings toggle and raises a
+     * toast. Ghostty's own copy-on-select defaults to true on Linux and would
+     * copy unconditionally, silently overriding that toggle now that
+     * write_clipboard_cb bridges its clipboard writes to GDK. */
+    g_string_append(contents, "copy-on-select = false\n");
+
     path = app_settings_ghostty_override_path();
     dir = g_path_get_dirname(path);
     g_mkdir_with_parents(dir, 0755);
