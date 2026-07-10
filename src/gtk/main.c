@@ -420,14 +420,29 @@ terminal_search_send_action(GhosttyTerminal *term, const char *action)
     ghostty_surface_binding_action(surface, action, strlen(action));
 }
 
+/* The search bar tracks its terminal weakly. A strong ref here would outlive a
+ * closed tab — keeping the terminal, its surface and its child process alive,
+ * and leaving a live surface for stale clipboard prompts to write through. The
+ * weak pointer nulls itself when the terminal is finalized, and every reader
+ * below already handles a NULL target. */
+static void
+terminal_search_clear_target(void)
+{
+    if (!g_terminal_search_target)
+        return;
+
+    g_object_remove_weak_pointer(G_OBJECT(g_terminal_search_target),
+                                 (gpointer *)&g_terminal_search_target);
+    g_terminal_search_target = NULL;
+}
+
 static void
 terminal_search_hide(void)
 {
     if (g_terminal_search_target) {
         ghostty_terminal_set_search_active(g_terminal_search_target, FALSE, "");
         ghostty_terminal_focus(g_terminal_search_target);
-        g_object_unref(g_terminal_search_target);
-        g_terminal_search_target = NULL;
+        terminal_search_clear_target();
     }
 
     g_terminal_search_total = -1;
@@ -441,10 +456,14 @@ terminal_search_set_target(GhosttyTerminal *term)
     if (term == g_terminal_search_target)
         return;
 
-    if (g_terminal_search_target)
-        g_object_unref(g_terminal_search_target);
+    terminal_search_clear_target();
 
-    g_terminal_search_target = term ? g_object_ref(term) : NULL;
+    if (term) {
+        g_terminal_search_target = term;
+        g_object_add_weak_pointer(G_OBJECT(term),
+                                  (gpointer *)&g_terminal_search_target);
+    }
+
     g_terminal_search_total = -1;
     g_terminal_search_selected = -1;
     terminal_search_update_count_label();

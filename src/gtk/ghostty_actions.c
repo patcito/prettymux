@@ -365,7 +365,9 @@ action_idle_handler(gpointer user_data)
 
     case GHOSTTY_ACTION_SEARCH_TOTAL: {
         SurfaceLookup loc = terminal_routing_find_for_surface(surface);
-        if (loc.terminal == g_terminal_search_target) {
+        /* Both sides can be NULL — an action deferred past its terminal's
+         * close, with no search running — and NULL == NULL must not match. */
+        if (loc.terminal && loc.terminal == g_terminal_search_target) {
             g_terminal_search_total = action.action.search_total.total;
             ghostty_terminal_set_search_results(g_terminal_search_target,
                                                 g_terminal_search_total,
@@ -376,7 +378,7 @@ action_idle_handler(gpointer user_data)
 
     case GHOSTTY_ACTION_SEARCH_SELECTED: {
         SurfaceLookup loc = terminal_routing_find_for_surface(surface);
-        if (loc.terminal == g_terminal_search_target) {
+        if (loc.terminal && loc.terminal == g_terminal_search_target) {
             g_terminal_search_selected = action.action.search_selected.selected;
             ghostty_terminal_set_search_results(g_terminal_search_target,
                                                 g_terminal_search_total,
