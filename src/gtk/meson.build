@@ -43,6 +43,7 @@ sources = files(
   'close_confirm.c',
   'command_palette.c',
   'history.c',
+  'desktop_toolbar.c',
   'prettymux_agent_cli.c',
   'app_actions.c',
   'app_state.c',
@@ -251,6 +252,13 @@ test_app_state_instance = executable('test_app_state_instance',
   include_directories: extra_include_dirs,
 )
 test('app-state-instance', test_app_state_instance)
+
+test_desktop_toolbar = executable('test_desktop_toolbar',
+  files('test_desktop_toolbar.c', 'desktop_toolbar.c'),
+  dependencies: [gtk4],
+  include_directories: extra_include_dirs,
+)
+test('desktop-toolbar', test_desktop_toolbar)
 
 if is_linux
   test_workspace_phase4_actions = executable('test_workspace_phase4_actions',

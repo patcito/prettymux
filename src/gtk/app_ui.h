@@ -12,6 +12,7 @@ typedef struct {
     GtkWidget *workspace_list;
     GtkWidget *main_paned;
     GtkWidget *terminal_box;
+    GtkWidget *desktop_toolbar;
     GtkWidget *terminal_stack;
     GtkWidget *overlay;
     GtkWidget *command_palette;
