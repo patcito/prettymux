@@ -1944,6 +1944,37 @@ test_workspace_shutdown_terminals_requests_close_and_hangs_running_sessions(void
     reset_workspace_globals();
 }
 
+static void
+test_remove_terminal_widget_detaches_overlay_before_dispose(void)
+{
+    Workspace *ws;
+    GtkWidget *terminal;
+    GtkWidget *terminal_weak;
+    GtkWidget *dummy;
+
+    require_display_or_skip();
+    ws = alloc_workspace();
+    ws->overlay = g_object_ref_sink(gtk_overlay_new());
+    terminal = ghostty_terminal_new(NULL);
+    terminal_weak = terminal;
+    dummy = g_object_ref_sink(gtk_box_new(GTK_ORIENTATION_VERTICAL, 0));
+    g_object_set_data(G_OBJECT(dummy), "linked-terminal", terminal);
+    g_object_set_data(G_OBJECT(terminal), "linked-dummy", dummy);
+    ghostty_terminal_set_dummy_target(GHOSTTY_TERMINAL(terminal), dummy);
+    g_object_add_weak_pointer(G_OBJECT(terminal),
+                              (gpointer *)&terminal_weak);
+    g_ptr_array_add(ws->terminals, terminal);
+    gtk_overlay_add_overlay(GTK_OVERLAY(ws->overlay), terminal);
+
+    workspace_remove_terminal_widget(ws, terminal);
+
+    g_assert_null(terminal_weak);
+    g_assert_cmpuint(ws->terminals->len, ==, 0);
+    g_assert_null(g_object_get_data(G_OBJECT(dummy), "linked-terminal"));
+    g_object_unref(dummy);
+    free_workspace_fixture(ws);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -2025,6 +2056,8 @@ main(int argc, char **argv)
                     test_workspace_import_preserves_serial_on_collision);
     g_test_add_func("/workspace-shutdown/terminals/request-close-and-hangup",
                     test_workspace_shutdown_terminals_requests_close_and_hangs_running_sessions);
+    g_test_add_func("/workspace-regressions/close/overlay-dispose-order",
+                    test_remove_terminal_widget_detaches_overlay_before_dispose);
 
     return g_test_run();
 }

@@ -2369,6 +2369,59 @@ tab_close_refresh_idle_cb(gpointer user_data)
     return G_SOURCE_REMOVE;
 }
 
+/*
+ * Tear down a floating GhosttyTerminal before detaching it from GtkOverlay.
+ *
+ * On GTK 4.14/X11, detaching a realized GtkGLArea while it still owns the
+ * root focus can leave the window showing the compositor's selection-blue
+ * fallback until the next full redraw.  Clear focus while the IM context is
+ * still alive, hide and unrealize the GL widget, then detach and dispose it.
+ * The temporary reference keeps the widget alive across GtkOverlay's unref.
+ */
+void
+workspace_remove_terminal_widget(Workspace *ws, GtkWidget *terminal)
+{
+    GtkRoot *root;
+    gboolean overlay_child;
+
+    if (!ws || !GHOSTTY_IS_TERMINAL(terminal))
+        return;
+
+    g_object_ref(terminal);
+
+    overlay_child = GTK_IS_OVERLAY(ws->overlay) &&
+        gtk_widget_get_parent(terminal) == ws->overlay;
+    if (overlay_child) {
+        root = gtk_widget_get_root(terminal);
+        if (GTK_IS_ROOT(root))
+            gtk_root_set_focus(root, NULL);
+
+        gtk_widget_set_visible(terminal, FALSE);
+        if (gtk_widget_get_realized(terminal))
+            gtk_widget_unrealize(terminal);
+    }
+
+    if (ws->terminals)
+        g_ptr_array_remove(ws->terminals, terminal);
+    if (overlay_child) {
+        GtkWidget *dummy =
+            ghostty_terminal_get_dummy_target(GHOSTTY_TERMINAL(terminal));
+
+        if (dummy)
+            g_object_set_data(G_OBJECT(dummy), "linked-terminal", NULL);
+        g_object_set_data(G_OBJECT(terminal), "linked-dummy", NULL);
+        ghostty_terminal_set_dummy_target(GHOSTTY_TERMINAL(terminal), NULL);
+        gtk_overlay_remove_overlay(GTK_OVERLAY(ws->overlay), terminal);
+    }
+
+    /* Production GhosttyTerminal widgets are overlay children and are now
+     * unparented.  Test doubles and defensive callers may provide a widget
+     * owned by another container; let that parent release it normally. */
+    if (!gtk_widget_get_parent(terminal))
+        g_object_run_dispose(G_OBJECT(terminal));
+    g_object_unref(terminal);
+}
+
 gboolean
 workspace_close_tab_at(Workspace *ws, GtkNotebook *nb, int page)
 {
@@ -2388,9 +2441,7 @@ workspace_close_tab_at(Workspace *ws, GtkNotebook *nb, int page)
     if (n <= 1 && ws->pane_notebooks && ws->pane_notebooks->len <= 1)
         return FALSE;
 
-    g_ptr_array_remove(ws->terminals, terminal);
-    if (ws->overlay)
-        gtk_overlay_remove_overlay(GTK_OVERLAY(ws->overlay), terminal);
+    workspace_remove_terminal_widget(ws, terminal);
     gtk_notebook_remove_page(nb, page);
 
     /* Defer tab label refresh to idle to avoid re-entrancy */
@@ -3651,13 +3702,8 @@ workspace_restore_from_payload_object(Workspace *ws,
                     if (gtk_notebook_get_n_pages(nb) > 0) {
                         GtkWidget *old = gtk_notebook_get_nth_page(nb, 0);
                         GtkWidget *old_terminal = page_linked_terminal(old);
-                        if (old_terminal) {
-                            g_ptr_array_remove(ws->terminals, old_terminal);
-                            if (ws->overlay) {
-                                gtk_overlay_remove_overlay(
-                                    GTK_OVERLAY(ws->overlay), old_terminal);
-                            }
-                        }
+                        if (old_terminal)
+                            workspace_remove_terminal_widget(ws, old_terminal);
                         gtk_notebook_remove_page(nb, 0);
                     }
                     workspace_add_terminal_to_notebook_with_cwd(
@@ -5045,11 +5091,8 @@ workspace_close_current_for_layout(Workspace *ws)
     for (int i = 0; i < gtk_notebook_get_n_pages(focused); i++) {
         GtkWidget *child = gtk_notebook_get_nth_page(focused, i);
         GtkWidget *terminal = page_linked_terminal(child);
-        if (terminal) {
-            g_ptr_array_remove(ws->terminals, terminal);
-            if (ws->overlay)
-                gtk_overlay_remove_overlay(GTK_OVERLAY(ws->overlay), terminal);
-        }
+        if (terminal)
+            workspace_remove_terminal_widget(ws, terminal);
     }
 
     if (focused_col >= 0 && focused_col_pane_count > 1) {
@@ -5631,11 +5674,8 @@ workspace_close_pane(Workspace *ws, GtkNotebook *pane)
         for (i = 0; i < n_pages; i++) {
             GtkWidget *child = gtk_notebook_get_nth_page(pane, i);
             GtkWidget *terminal = page_linked_terminal(child);
-            if (terminal) {
-                g_ptr_array_remove(ws->terminals, terminal);
-                if (ws->overlay)
-                    gtk_overlay_remove_overlay(GTK_OVERLAY(ws->overlay), terminal);
-            }
+            if (terminal)
+                workspace_remove_terminal_widget(ws, terminal);
         }
     }
 

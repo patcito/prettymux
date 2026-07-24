@@ -86,6 +86,7 @@ void workspace_add_terminal_to_notebook_with_cwd(Workspace *ws,
                                                   GtkNotebook *notebook,
                                                   ghostty_app_t app,
                                                   const char *cwd);
+void workspace_remove_terminal_widget(Workspace *ws, GtkWidget *terminal);
 
 /*
  * Git branch detection (async).

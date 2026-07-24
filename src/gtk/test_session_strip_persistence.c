@@ -489,6 +489,13 @@ workspace_add_terminal_to_notebook_with_cwd(Workspace *ws,
 }
 
 void
+workspace_remove_terminal_widget(Workspace *ws, GtkWidget *terminal)
+{
+    (void)ws;
+    (void)terminal;
+}
+
+void
 workspace_add(GtkWidget *terminal_stack, GtkWidget *workspace_list, ghostty_app_t app)
 {
     Workspace *ws;
