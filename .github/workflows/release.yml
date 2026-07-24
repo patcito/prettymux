@@ -629,7 +629,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev libadwaita-1-dev libjson-glib-dev meson ninja-build
+          sudo apt-get install -y libgtk-4-dev libadwaita-1-dev libjson-glib-dev libsqlite3-dev meson ninja-build
 
       - name: Build prettymux
         run: |

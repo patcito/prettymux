@@ -51,6 +51,12 @@ workspace_picker_show(GtkWindow *parent)
     (void)parent;
 }
 
+GtkWidget *
+agent_sessions_panel_new(void)
+{
+    return gtk_expander_new("Agent chats");
+}
+
 int
 workspace_get_index(Workspace *ws)
 {

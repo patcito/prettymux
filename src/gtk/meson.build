@@ -15,6 +15,17 @@ endif
 gtk4 = dependency('gtk4')
 adw = dependency('libadwaita-1', version: '>=1.2')
 json_glib = dependency('json-glib-1.0')
+sqlite3 = dependency('sqlite3', required: is_linux)
+
+prettymux_dependencies = [gtk4, adw, json_glib]
+prettymux_c_args = [
+  '-DPRETTYMUX_SOURCE_DIR="' + meson.current_source_dir() + '"',
+  '-DPRETTYMUX_VERSION="' + meson.project_version() + '"',
+]
+if sqlite3.found()
+  prettymux_dependencies += sqlite3
+  prettymux_c_args += '-DHAVE_SQLITE3'
+endif
 
 ghostty_dir = get_option('ghostty_dir')
 glad_dir = ghostty_dir / 'vendor' / 'glad'
@@ -44,6 +55,7 @@ sources = files(
   'command_palette.c',
   'history.c',
   'desktop_toolbar.c',
+  'agent_sessions.c',
   'prettymux_agent_cli.c',
   'app_actions.c',
   'app_state.c',
@@ -152,12 +164,9 @@ else
 endif
 
 executable('prettymux', sources + platform_sources,
-  dependencies: [gtk4, adw, json_glib] + platform_deps,
+  dependencies: prettymux_dependencies + platform_deps,
   include_directories: extra_include_dirs,
-  c_args: [
-    '-DPRETTYMUX_SOURCE_DIR="' + meson.current_source_dir() + '"',
-    '-DPRETTYMUX_VERSION="' + meson.project_version() + '"',
-  ],
+  c_args: prettymux_c_args,
   link_args: platform_link_args,
   build_rpath: build_rpath,
   install_rpath: install_rpath,
@@ -259,6 +268,17 @@ test_desktop_toolbar = executable('test_desktop_toolbar',
   include_directories: extra_include_dirs,
 )
 test('desktop-toolbar', test_desktop_toolbar)
+
+if sqlite3.found()
+  test_agent_sessions = executable('test_agent_sessions',
+    files('test_agent_sessions.c', 'agent_sessions.c'),
+    dependencies: [gtk4, json_glib, sqlite3],
+    include_directories: extra_include_dirs,
+    c_args: ['-DHAVE_SQLITE3', '-ffunction-sections', '-fdata-sections'],
+    link_args: is_linux ? ['-Wl,--gc-sections'] : [],
+  )
+  test('agent-sessions', test_agent_sessions)
+endif
 
 if is_linux
   test_workspace_phase4_actions = executable('test_workspace_phase4_actions',

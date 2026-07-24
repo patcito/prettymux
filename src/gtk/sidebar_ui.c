@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "app_state.h"
+#include "agent_sessions.h"
 #include "notifications.h"
 #include "pane_move_overlay.h"
 #include "session.h"
@@ -397,6 +398,9 @@ sidebar_ui_build(void)
     gtk_widget_set_margin_top(ui.workspace_search, 8);
     gtk_widget_set_margin_bottom(ui.workspace_search, 4);
     gtk_box_append(GTK_BOX(ui.sidebar_box), ui.workspace_search);
+
+    ui.agent_sessions_panel = agent_sessions_panel_new();
+    gtk_box_append(GTK_BOX(ui.sidebar_box), ui.agent_sessions_panel);
 
     ui.workspace_list = gtk_list_box_new();
     gtk_list_box_set_selection_mode(GTK_LIST_BOX(ui.workspace_list),

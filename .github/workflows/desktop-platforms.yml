@@ -211,7 +211,7 @@ jobs:
 
       - name: Install GTK4 stack via Homebrew
         run: |
-          brew install gtk4 libadwaita json-glib meson ninja pkg-config
+          brew install gtk4 libadwaita json-glib sqlite meson ninja pkg-config
 
       - name: Build ghostty
         run: |

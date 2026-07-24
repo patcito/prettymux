@@ -55,6 +55,7 @@ parts:
       - libgtk-4-dev
       - libadwaita-1-dev
       - libjson-glib-dev
+      - libsqlite3-dev
       - meson
       - ninja-build
       - g++
@@ -62,6 +63,7 @@ parts:
       - libgtk-4-1
       - libadwaita-1-0
       - libjson-glib-1.0-0
+      - libsqlite3-0
     override-build: |
       cd $CRAFT_PART_SRC/src/gtk
       meson setup builddir --buildtype=release -Dghostty_dir=$CRAFT_STAGE/ghostty
