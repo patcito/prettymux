@@ -15,3 +15,4 @@ void agent_session_free(gpointer data);
 
 GtkWidget *agent_sessions_panel_new(void);
 void agent_sessions_panel_refresh(GtkWidget *panel);
+void agent_sessions_panel_update_language(GtkWidget *panel);

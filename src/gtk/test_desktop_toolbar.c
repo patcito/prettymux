@@ -3,9 +3,11 @@
 #include <gtk/gtk.h>
 
 #include "app_state.h"
+#include "ui_language.h"
 
 static const char *last_action;
 static int picker_calls;
+static UiLanguage selected_language = UI_LANGUAGE_EN;
 
 AppState *
 app_state(void)
@@ -25,6 +27,48 @@ workspace_picker_show(GtkWindow *parent)
 {
     (void)parent;
     picker_calls++;
+}
+
+void
+sidebar_ui_update_language(void)
+{
+}
+
+UiLanguage
+ui_language_current(void)
+{
+    return selected_language;
+}
+
+void
+ui_language_set(UiLanguage language)
+{
+    selected_language = language;
+}
+
+const char *
+ui_language_display_name(UiLanguage language)
+{
+    static const char *names[] = {
+        "中文", "English", "한국어", "日本語", "Español",
+    };
+    return names[language];
+}
+
+const char *
+ui_text(UiTextKey key)
+{
+    static const char *labels[UI_TEXT_COUNT] = {
+        [UI_TEXT_LANGUAGE] = "Language",
+        [UI_TEXT_NEW_PROJECT] = "New Project",
+        [UI_TEXT_NEW_TAB] = "New Tab",
+        [UI_TEXT_RIGHT_TERMINAL] = "Right Terminal",
+        [UI_TEXT_BELOW_TERMINAL] = "Below Terminal",
+        [UI_TEXT_CLOSE_PANE] = "Close Pane",
+        [UI_TEXT_ZOOM_RESTORE] = "Zoom",
+        [UI_TEXT_ALL_ACTIONS] = "All Actions",
+    };
+    return labels[key] ? labels[key] : "";
 }
 
 static void
@@ -58,6 +102,8 @@ test_toolbar_exposes_common_actions(void)
             g_assert_cmpint(picker_calls, ==, 1);
             continue;
         }
+        if (!GTK_IS_BUTTON(child))
+            continue;
 
         g_assert_cmpuint(action_index, <, G_N_ELEMENTS(expected));
         g_assert_cmpstr(action, ==, expected[action_index++]);
@@ -67,6 +113,14 @@ test_toolbar_exposes_common_actions(void)
     }
 
     g_assert_cmpuint(action_index, ==, G_N_ELEMENTS(expected));
+
+    {
+        GtkWidget *dropdown = g_object_get_data(
+            G_OBJECT(scroll), "prettymux-language-dropdown");
+        g_assert_true(GTK_IS_DROP_DOWN(dropdown));
+        gtk_drop_down_set_selected(GTK_DROP_DOWN(dropdown), UI_LANGUAGE_JA);
+        g_assert_cmpint(selected_language, ==, UI_LANGUAGE_JA);
+    }
 }
 
 int

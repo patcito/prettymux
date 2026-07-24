@@ -8,6 +8,7 @@
 #include "notifications.h"
 #include "pane_move_overlay.h"
 #include "session.h"
+#include "ui_language.h"
 #include "workspace.h"
 #include "workspace_picker.h"
 
@@ -390,9 +391,6 @@ sidebar_ui_build(void)
     gtk_widget_set_size_request(ui.sidebar_box, 180, -1);
 
     ui.workspace_search = gtk_search_entry_new();
-    g_object_set(G_OBJECT(ui.workspace_search),
-                 "placeholder-text", "Search workspaces",
-                 NULL);
     gtk_widget_set_margin_start(ui.workspace_search, 8);
     gtk_widget_set_margin_end(ui.workspace_search, 8);
     gtk_widget_set_margin_top(ui.workspace_search, 8);
@@ -432,10 +430,29 @@ sidebar_ui_build(void)
                      G_CALLBACK(notifications_on_bell_button_clicked), NULL);
     gtk_box_append(GTK_BOX(bottom_box), ui.bell_button);
 
-    btn = gtk_button_new_with_label("+ New Workspace");
+    btn = gtk_button_new();
+    ui.new_workspace_button = btn;
     gtk_widget_set_hexpand(btn, TRUE);
     g_signal_connect(btn, "clicked", G_CALLBACK(on_add_workspace_clicked), NULL);
     gtk_box_append(GTK_BOX(bottom_box), btn);
 
     gtk_box_append(GTK_BOX(ui.sidebar_box), bottom_box);
+    sidebar_ui_update_language();
+}
+
+void
+sidebar_ui_update_language(void)
+{
+    if (GTK_IS_SEARCH_ENTRY(ui.workspace_search)) {
+        g_object_set(G_OBJECT(ui.workspace_search),
+                     "placeholder-text",
+                     ui_text(UI_TEXT_SEARCH_WORKSPACES),
+                     NULL);
+    }
+    if (GTK_IS_BUTTON(ui.new_workspace_button)) {
+        gtk_button_set_label(GTK_BUTTON(ui.new_workspace_button),
+                             ui_text(UI_TEXT_NEW_WORKSPACE));
+    }
+    if (GTK_IS_WIDGET(ui.agent_sessions_panel))
+        agent_sessions_panel_update_language(ui.agent_sessions_panel);
 }

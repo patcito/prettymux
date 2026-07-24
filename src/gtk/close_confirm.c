@@ -2,6 +2,8 @@
 
 #include <string.h>
 
+#include "ui_language.h"
+
 typedef struct {
     CloseConfirmKind kind;
     CloseConfirmCallback callback;
@@ -146,15 +148,15 @@ close_confirm_heading(CloseConfirmKind kind)
 {
     switch (kind) {
     case CLOSE_CONFIRM_TAB:
-        return "Close this tab?";
+        return ui_text(UI_TEXT_CLOSE_TAB_HEADING);
     case CLOSE_CONFIRM_PANE:
-        return "Close this pane?";
+        return ui_text(UI_TEXT_CLOSE_PANE_HEADING);
     case CLOSE_CONFIRM_WORKSPACE:
-        return "Close this workspace?";
+        return ui_text(UI_TEXT_CLOSE_WORKSPACE_HEADING);
     case CLOSE_CONFIRM_APP:
-        return "Quit PrettyMux?";
+        return ui_text(UI_TEXT_QUIT_HEADING);
     default:
-        return "Confirm close";
+        return ui_text(UI_TEXT_CONFIRM_CLOSE);
     }
 }
 
@@ -163,13 +165,13 @@ close_confirm_body(CloseConfirmKind kind)
 {
     switch (kind) {
     case CLOSE_CONFIRM_TAB:
-        return "The current tab will be closed.";
+        return ui_text(UI_TEXT_CLOSE_TAB_BODY);
     case CLOSE_CONFIRM_PANE:
-        return "The current pane and its tabs will be closed.";
+        return ui_text(UI_TEXT_CLOSE_PANE_BODY);
     case CLOSE_CONFIRM_WORKSPACE:
-        return "The current workspace and its panes will be closed.";
+        return ui_text(UI_TEXT_CLOSE_WORKSPACE_BODY);
     case CLOSE_CONFIRM_APP:
-        return "PrettyMux will close all panes and tabs in this window.";
+        return ui_text(UI_TEXT_QUIT_BODY);
     default:
         return "";
     }
@@ -180,15 +182,15 @@ close_confirm_label(CloseConfirmKind kind)
 {
     switch (kind) {
     case CLOSE_CONFIRM_TAB:
-        return "Close Tab";
+        return ui_text(UI_TEXT_CLOSE_TAB_CONFIRM);
     case CLOSE_CONFIRM_PANE:
-        return "Close Pane";
+        return ui_text(UI_TEXT_CLOSE_PANE_CONFIRM);
     case CLOSE_CONFIRM_WORKSPACE:
-        return "Close Workspace";
+        return ui_text(UI_TEXT_CLOSE_WORKSPACE_CONFIRM);
     case CLOSE_CONFIRM_APP:
-        return "Quit";
+        return ui_text(UI_TEXT_QUIT_CONFIRM);
     default:
-        return "Confirm";
+        return ui_text(UI_TEXT_CONFIRM);
     }
 }
 
@@ -246,7 +248,7 @@ close_confirm_request(GtkWindow *parent,
         close_confirm_heading(kind),
         close_confirm_body(kind)));
     adw_message_dialog_add_responses(dialog,
-                                     "cancel", "Cancel",
+                                     "cancel", ui_text(UI_TEXT_CANCEL),
                                      "confirm", close_confirm_label(kind),
                                      NULL);
     adw_message_dialog_set_response_appearance(dialog, "confirm",
@@ -255,7 +257,7 @@ close_confirm_request(GtkWindow *parent,
     adw_message_dialog_set_close_response(dialog, "cancel");
 
     check = gtk_check_button_new_with_label(
-        "Don't ask again and remember this");
+        ui_text(UI_TEXT_DONT_ASK_AGAIN));
     adw_message_dialog_set_extra_child(dialog, check);
 
     req = g_new0(CloseConfirmRequest, 1);

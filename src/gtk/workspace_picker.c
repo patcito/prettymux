@@ -2,6 +2,7 @@
 
 #include "app_state.h"
 #include "ghostty_terminal.h"
+#include "ui_language.h"
 #include "workspace.h"
 
 static const char *
@@ -73,11 +74,11 @@ workspace_picker_show(GtkWindow *parent)
     const char *cwd;
 
     dialog = gtk_file_chooser_native_new(
-        "Choose a project folder",
+        ui_text(UI_TEXT_CHOOSE_PROJECT_FOLDER),
         parent,
         GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER,
-        "_Create Workspace",
-        "_Cancel");
+        ui_text(UI_TEXT_CREATE_WORKSPACE),
+        ui_text(UI_TEXT_CANCEL));
 
     cwd = current_workspace_cwd();
     if (cwd && cwd[0]) {

@@ -9,6 +9,7 @@ typedef struct {
     GtkWidget *outer_paned;
     GtkWidget *sidebar_box;
     GtkWidget *workspace_search;
+    GtkWidget *new_workspace_button;
     GtkWidget *agent_sessions_panel;
     GtkWidget *workspace_list;
     GtkWidget *main_paned;

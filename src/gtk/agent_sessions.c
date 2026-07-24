@@ -12,6 +12,7 @@
 
 #include "app_state.h"
 #include "ghostty_terminal.h"
+#include "ui_language.h"
 #include "workspace.h"
 
 #define AGENT_SESSION_TITLE_LIMIT 120
@@ -517,12 +518,22 @@ relative_age(gint64 timestamp)
                                       - timestamp);
 
     if (seconds < 60)
-        return g_strdup("now");
+        return g_strdup(ui_text(UI_TEXT_NOW));
     if (seconds < 3600)
-        return g_strdup_printf("%" G_GINT64_FORMAT "m ago", seconds / 60);
+        return g_strdup_printf(ui_text(UI_TEXT_MINUTES_AGO), seconds / 60);
     if (seconds < 86400)
-        return g_strdup_printf("%" G_GINT64_FORMAT "h ago", seconds / 3600);
-    return g_strdup_printf("%" G_GINT64_FORMAT "d ago", seconds / 86400);
+        return g_strdup_printf(ui_text(UI_TEXT_HOURS_AGO), seconds / 3600);
+    return g_strdup_printf(ui_text(UI_TEXT_DAYS_AGO), seconds / 86400);
+}
+
+static const char *
+session_display_title(const AgentSession *session)
+{
+    if (g_strcmp0(session->title, "Untitled Claude chat") == 0)
+        return ui_text(UI_TEXT_UNTITLED_CLAUDE);
+    if (g_strcmp0(session->title, "Untitled Codex chat") == 0)
+        return ui_text(UI_TEXT_UNTITLED_CODEX);
+    return session->title;
 }
 
 static Workspace *
@@ -667,7 +678,7 @@ start_rename(GtkButton *button, gpointer user_data)
 
     (void)button;
     gtk_editable_set_text(GTK_EDITABLE(row->rename_entry),
-                          row->session->title);
+                          session_display_title(row->session));
     gtk_widget_set_visible(row->resume_button, FALSE);
     gtk_widget_set_visible(row->rename_button, FALSE);
     gtk_widget_set_visible(row->rename_entry, TRUE);
@@ -687,7 +698,7 @@ session_row_new(AgentSessionsUi *sessions_ui, AgentSession *session)
     GtkWidget *row_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
     GtkWidget *content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 1);
     GtkWidget *resume = gtk_button_new();
-    GtkWidget *title = gtk_label_new(session->title);
+    GtkWidget *title = gtk_label_new(session_display_title(session));
     GtkWidget *meta;
     GtkWidget *rename =
         gtk_button_new_from_icon_name("document-edit-symbolic");
@@ -718,7 +729,7 @@ session_row_new(AgentSessionsUi *sessions_ui, AgentSession *session)
 
     gtk_button_set_has_frame(GTK_BUTTON(rename), FALSE);
     gtk_widget_set_tooltip_text(rename,
-                                "Rename chat (PrettyMux display only)");
+                                ui_text(UI_TEXT_RENAME_CHAT));
     gtk_widget_set_visible(entry, FALSE);
     gtk_widget_set_hexpand(entry, TRUE);
 
@@ -801,7 +812,7 @@ agent_sessions_panel_refresh(GtkWidget *panel)
     sessions_ui->sessions = agent_sessions_load(g_get_home_dir(), 20);
     sessions_ui->aliases = aliases_load(g_get_home_dir());
     if (sessions_ui->sessions->len == 0) {
-        GtkWidget *empty = gtk_label_new("No resumable Claude/Codex chats");
+        GtkWidget *empty = gtk_label_new(ui_text(UI_TEXT_EMPTY_CHATS));
         gtk_widget_add_css_class(empty, "dim-label");
         gtk_box_append(GTK_BOX(sessions_ui->groups_box), empty);
         return;
@@ -834,6 +845,21 @@ agent_sessions_panel_refresh(GtkWidget *panel)
     }
 }
 
+void
+agent_sessions_panel_update_language(GtkWidget *panel)
+{
+    GtkWidget *title =
+        g_object_get_data(G_OBJECT(panel), "agent-sessions-title");
+    GtkWidget *refresh =
+        g_object_get_data(G_OBJECT(panel), "agent-sessions-refresh");
+
+    if (GTK_IS_LABEL(title))
+        gtk_label_set_text(GTK_LABEL(title), ui_text(UI_TEXT_CHAT_HISTORY));
+    if (GTK_IS_WIDGET(refresh))
+        gtk_widget_set_tooltip_text(refresh, ui_text(UI_TEXT_REFRESH_CHATS));
+    agent_sessions_panel_refresh(panel);
+}
+
 static void
 refresh_clicked(GtkButton *button, gpointer user_data)
 {
@@ -858,7 +884,7 @@ agent_sessions_panel_new(void)
 {
     GtkWidget *panel = gtk_expander_new(NULL);
     GtkWidget *header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
-    GtkWidget *title = gtk_label_new("Claude / Codex Chats");
+    GtkWidget *title = gtk_label_new(NULL);
     GtkWidget *refresh =
         gtk_button_new_from_icon_name("view-refresh-symbolic");
     GtkWidget *scroll = gtk_scrolled_window_new();
@@ -869,7 +895,6 @@ agent_sessions_panel_new(void)
     gtk_label_set_xalign(GTK_LABEL(title), 0);
     gtk_widget_add_css_class(title, "heading");
     gtk_button_set_has_frame(GTK_BUTTON(refresh), FALSE);
-    gtk_widget_set_tooltip_text(refresh, "Refresh Claude/Codex chats");
     gtk_box_append(GTK_BOX(header), title);
     gtk_box_append(GTK_BOX(header), refresh);
     gtk_expander_set_label_widget(GTK_EXPANDER(panel), header);
@@ -891,6 +916,6 @@ agent_sessions_panel_new(void)
     g_object_set_data(G_OBJECT(panel), "agent-sessions-title", title);
     g_object_set_data(G_OBJECT(panel), "agent-sessions-refresh", refresh);
     g_signal_connect(refresh, "clicked", G_CALLBACK(refresh_clicked), panel);
-    agent_sessions_panel_refresh(panel);
+    agent_sessions_panel_update_language(panel);
     return panel;
 }

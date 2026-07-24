@@ -43,6 +43,7 @@ sources = files(
   'theme.c',
   'hover_focus.c',
   'app_settings.c',
+  'ui_language.c',
   'shortcuts.c',
   'settings_dialog.c',
   'workspace.c',
@@ -254,6 +255,12 @@ test_app_settings_layout_mode = executable('test_app_settings_layout_mode',
   dependencies: [glib, gtk4],
 )
 test('app-settings-layout-mode', test_app_settings_layout_mode)
+
+test_ui_language = executable('test_ui_language',
+  files('test_ui_language.c', 'ui_language.c'),
+  dependencies: [glib, gtk4],
+)
+test('ui-language', test_ui_language)
 
 test_app_state_instance = executable('test_app_state_instance',
   files('test_app_state_instance.c', 'app_state.c'),
