@@ -35,6 +35,7 @@ sources = files(
   'shortcuts.c',
   'settings_dialog.c',
   'workspace.c',
+  'workspace_picker.c',
   'workspace_layout.c',
   'workspace_strip.c',
   'session.c',

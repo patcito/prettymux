@@ -8,6 +8,7 @@
 #include "pane_move_overlay.h"
 #include "session.h"
 #include "workspace.h"
+#include "workspace_picker.h"
 
 #define SIDEBAR_ROW_REVEAL_DURATION_USEC (170 * 1000)
 #define SIDEBAR_ROW_REVEAL_START_MARGIN  6
@@ -259,7 +260,7 @@ on_add_workspace_clicked(GtkButton *button, gpointer user_data)
 {
     (void)button;
     (void)user_data;
-    workspace_add(ui.terminal_stack, ui.workspace_list, g_ghostty_app);
+    workspace_picker_show(g_main_window);
 }
 
 GtkWidget *

@@ -4603,7 +4603,12 @@ create_pane_notebook(Workspace *ws, ghostty_app_t app)
 
 /* ── Workspace add/remove/switch ────────────────────────────────── */
 
-void workspace_add(GtkWidget *terminal_stack, GtkWidget *workspace_list, ghostty_app_t app) {
+static void
+workspace_add_internal(GtkWidget *terminal_stack,
+                       GtkWidget *workspace_list,
+                       ghostty_app_t app,
+                       const char *cwd)
+{
     if (!workspaces)
         workspaces = g_ptr_array_new();
 
@@ -4613,7 +4618,18 @@ void workspace_add(GtkWidget *terminal_stack, GtkWidget *workspace_list, ghostty
 
     Workspace *ws = g_new0(Workspace, 1);
     ws->serial = workspace_allocate_serial_avoiding(0, 0);
-    snprintf(ws->name, sizeof(ws->name), "Workspace %d", (int)workspaces->len + 1);
+    if (cwd && cwd[0]) {
+        g_autofree char *base_name = g_path_get_basename(cwd);
+
+        g_strlcpy(ws->name,
+                  (base_name && base_name[0]) ? base_name : cwd,
+                  sizeof(ws->name));
+        g_strlcpy(ws->cwd, cwd, sizeof(ws->cwd));
+        ws->user_renamed = TRUE;
+    } else {
+        snprintf(ws->name, sizeof(ws->name), "Workspace %d",
+                 (int)workspaces->len + 1);
+    }
     ws->terminals = g_ptr_array_new();
     ws->pane_notebooks = g_ptr_array_new();
     ws->active_pane = NULL;
@@ -4655,10 +4671,28 @@ void workspace_add(GtkWidget *terminal_stack, GtkWidget *workspace_list, ghostty
     g_ptr_array_add(workspaces, ws);
 
     /* Create first terminal */
-    workspace_add_terminal(ws, app);
+    workspace_add_terminal_to_notebook_cwd(
+        ws, GTK_NOTEBOOK(ws->notebook), app, (cwd && cwd[0]) ? cwd : NULL);
 
     /* Switch to it */
     workspace_switch(workspaces->len - 1, terminal_stack, workspace_list);
+}
+
+void
+workspace_add(GtkWidget *terminal_stack,
+              GtkWidget *workspace_list,
+              ghostty_app_t app)
+{
+    workspace_add_internal(terminal_stack, workspace_list, app, NULL);
+}
+
+void
+workspace_add_with_cwd(GtkWidget *terminal_stack,
+                       GtkWidget *workspace_list,
+                       ghostty_app_t app,
+                       const char *cwd)
+{
+    workspace_add_internal(terminal_stack, workspace_list, app, cwd);
 }
 
 void workspace_remove(int index, GtkWidget *terminal_stack, GtkWidget *workspace_list) {

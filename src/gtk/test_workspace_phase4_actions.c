@@ -1975,6 +1975,35 @@ test_remove_terminal_widget_detaches_overlay_before_dispose(void)
     free_workspace_fixture(ws);
 }
 
+static void
+test_workspace_add_with_cwd_uses_selected_project_directory(void)
+{
+    GtkWidget *terminal_stack;
+    GtkWidget *workspace_list;
+    Workspace *ws;
+    GtkWidget *terminal;
+
+    require_display_or_skip();
+    reset_workspace_globals();
+
+    terminal_stack = g_object_ref_sink(gtk_stack_new());
+    workspace_list = g_object_ref_sink(gtk_list_box_new());
+    workspace_add_with_cwd(terminal_stack, workspace_list, NULL,
+                           "/tmp/example-project");
+
+    g_assert_nonnull(workspaces);
+    g_assert_cmpuint(workspaces->len, ==, 1);
+    ws = g_ptr_array_index(workspaces, 0);
+    g_assert_cmpstr(ws->name, ==, "example-project");
+    g_assert_cmpstr(ws->cwd, ==, "/tmp/example-project");
+    g_assert_true(ws->user_renamed);
+    g_assert_cmpuint(ws->terminals->len, ==, 1);
+
+    terminal = g_ptr_array_index(ws->terminals, 0);
+    g_assert_cmpstr(ghostty_terminal_get_cwd(GHOSTTY_TERMINAL(terminal)),
+                    ==, "/tmp/example-project");
+}
+
 int
 main(int argc, char **argv)
 {
@@ -2058,6 +2087,8 @@ main(int argc, char **argv)
                     test_workspace_shutdown_terminals_requests_close_and_hangs_running_sessions);
     g_test_add_func("/workspace-regressions/close/overlay-dispose-order",
                     test_remove_terminal_widget_detaches_overlay_before_dispose);
+    g_test_add_func("/workspace-create/project-folder/selected-cwd",
+                    test_workspace_add_with_cwd_uses_selected_project_directory);
 
     return g_test_run();
 }

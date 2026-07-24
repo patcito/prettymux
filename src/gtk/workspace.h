@@ -75,6 +75,10 @@ Workspace *workspace_get_current(void);
 int workspace_get_index(Workspace *ws);
 int workspace_apply_layout_mode_to_all(WorkspaceLayoutMode mode);
 void workspace_add(GtkWidget *terminal_stack, GtkWidget *workspace_list, ghostty_app_t app);
+void workspace_add_with_cwd(GtkWidget *terminal_stack,
+                            GtkWidget *workspace_list,
+                            ghostty_app_t app,
+                            const char *cwd);
 void workspace_remove(int index, GtkWidget *terminal_stack, GtkWidget *workspace_list);
 void workspace_switch(int index, GtkWidget *terminal_stack, GtkWidget *workspace_list);
 void workspace_add_terminal(Workspace *ws, ghostty_app_t app);

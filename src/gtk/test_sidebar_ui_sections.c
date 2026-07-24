@@ -45,6 +45,12 @@ workspace_add(GtkWidget *terminal_stack, GtkWidget *workspace_list, ghostty_app_
     (void)app;
 }
 
+void
+workspace_picker_show(GtkWindow *parent)
+{
+    (void)parent;
+}
+
 int
 workspace_get_index(Workspace *ws)
 {
