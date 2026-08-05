@@ -7,6 +7,7 @@
 #include "app_state.h"
 #include "notifications.h"
 #include "session.h"
+#include "ui_language.h"
 #include "workspace.h"
 
 static int workspace_switch_call_count = 0;
@@ -43,6 +44,34 @@ workspace_add(GtkWidget *terminal_stack, GtkWidget *workspace_list, ghostty_app_
     (void)terminal_stack;
     (void)workspace_list;
     (void)app;
+}
+
+void
+workspace_picker_show(GtkWindow *parent)
+{
+    (void)parent;
+}
+
+GtkWidget *
+agent_sessions_panel_new(void)
+{
+    return gtk_expander_new("Agent chats");
+}
+
+void
+agent_sessions_panel_update_language(GtkWidget *panel)
+{
+    (void)panel;
+}
+
+const char *
+ui_text(UiTextKey key)
+{
+    if (key == UI_TEXT_SEARCH_WORKSPACES)
+        return "Search workspaces";
+    if (key == UI_TEXT_NEW_WORKSPACE)
+        return "+ New Workspace";
+    return "";
 }
 
 int

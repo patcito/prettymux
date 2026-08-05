@@ -8,6 +8,7 @@ Build-Depends: debhelper (>= 12),
                libgtk-4-dev,
                libadwaita-1-dev,
                libjson-glib-dev,
+               libsqlite3-dev,
                g++
 Standards-Version: 4.6.0
 Homepage: https://github.com/patcito/prettymux
@@ -17,7 +18,8 @@ Architecture: amd64
 Depends: ${shlibs:Depends}, ${misc:Depends},
          libgtk-4-1,
          libadwaita-1-0,
-         libjson-glib-1.0-0
+         libjson-glib-1.0-0,
+         libsqlite3-0
 Description: GPU-accelerated terminal multiplexer
  PrettyMux is a GPU-accelerated terminal multiplexer built on
  libghostty with workspace management and shell integration.

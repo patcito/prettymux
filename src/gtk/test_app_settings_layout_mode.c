@@ -156,6 +156,61 @@ test_default_layout_mode_invalid_value_fallback(void)
     g_free(home);
 }
 
+static void
+test_ui_language_roundtrip(void)
+{
+    if (g_test_subprocess()) {
+        const char *home;
+        const char *phase;
+
+        test_prepare_home();
+        home = g_getenv("PRETTYMUX_TEST_HOME");
+        phase = g_getenv("PRETTYMUX_TEST_PHASE");
+        g_assert_nonnull(phase);
+
+        if (g_strcmp0(phase, "save") == 0) {
+            g_autofree char *path = NULL;
+            g_autofree char *saved_language = NULL;
+            g_autoptr(GKeyFile) key_file = g_key_file_new();
+
+            app_settings_set_ui_language("ja");
+            app_settings_save();
+            path = test_settings_path_for_home(home);
+            g_assert_true(g_key_file_load_from_file(
+                key_file, path, G_KEY_FILE_NONE, NULL));
+            saved_language = g_key_file_get_string(
+                key_file, "ui", "language", NULL);
+            g_assert_cmpstr(saved_language, ==, "ja");
+            return;
+        }
+
+        if (g_strcmp0(phase, "load") == 0) {
+            g_assert_cmpstr(app_settings_get_ui_language(), ==, "ja");
+            return;
+        }
+
+        g_error("unknown subprocess phase");
+        return;
+    }
+
+    char *home = g_dir_make_tmp("prettymux-test-language-XXXXXX", NULL);
+    g_assert_nonnull(home);
+    g_setenv("PRETTYMUX_TEST_HOME", home, TRUE);
+    g_setenv("HOME", home, TRUE);
+
+    g_setenv("PRETTYMUX_TEST_PHASE", "save", TRUE);
+    g_test_trap_subprocess("/app-settings/ui-language/roundtrip", 0, 0);
+    g_test_trap_assert_passed();
+
+    g_setenv("PRETTYMUX_TEST_PHASE", "load", TRUE);
+    g_test_trap_subprocess("/app-settings/ui-language/roundtrip", 0, 0);
+    g_test_trap_assert_passed();
+
+    g_unsetenv("PRETTYMUX_TEST_PHASE");
+    g_unsetenv("PRETTYMUX_TEST_HOME");
+    g_free(home);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -167,6 +222,8 @@ main(int argc, char **argv)
                     test_default_layout_mode_roundtrip_strip);
     g_test_add_func("/app-settings/layout/invalid-value-fallback",
                     test_default_layout_mode_invalid_value_fallback);
+    g_test_add_func("/app-settings/ui-language/roundtrip",
+                    test_ui_language_roundtrip);
 
     return g_test_run();
 }

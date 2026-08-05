@@ -44,6 +44,7 @@
 #include "sidebar_ui.h"
 #include "socket_commands.h"
 #include "terminal_routing.h"
+#include "desktop_toolbar.h"
 
 // ── Global state ──
 
@@ -1194,6 +1195,9 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     ui.terminal_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_widget_set_hexpand(ui.terminal_box, TRUE);
     gtk_widget_set_vexpand(ui.terminal_box, TRUE);
+
+    ui.desktop_toolbar = desktop_toolbar_new();
+    gtk_box_append(GTK_BOX(ui.terminal_box), ui.desktop_toolbar);
 
     ui.terminal_stack = gtk_stack_new();
     gtk_widget_set_hexpand(ui.terminal_stack, TRUE);

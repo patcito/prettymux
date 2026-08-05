@@ -22,6 +22,7 @@
 #include "socket_server.h"
 #include "theme.h"
 #include "workspace.h"
+#include "workspace_picker.h"
 #include "workspace_strip.h"
 
 static gboolean g_app_quit_in_progress = FALSE;
@@ -443,7 +444,7 @@ app_actions_handle(const char *action)
         if (workspaces && idx >= 0 && idx < (int)workspaces->len)
             workspace_switch(idx, ui.terminal_stack, ui.workspace_list);
     } else if (strcmp(action, "workspace.new") == 0) {
-        workspace_add(ui.terminal_stack, ui.workspace_list, g_ghostty_app);
+        workspace_picker_show(g_main_window);
     } else if (strcmp(action, "workspace.close") == 0) {
         request_close_current_workspace();
     } else if (strcmp(action, "workspace.next") == 0 ||

@@ -5,6 +5,7 @@
 typedef struct _Workspace Workspace;
 
 void       sidebar_ui_build(void);
+void       sidebar_ui_update_language(void);
 void       sidebar_ui_show_move_to_window_menu(Workspace *workspace);
 
 /* Cancel a pending deferred workspace-row activation. Called when a

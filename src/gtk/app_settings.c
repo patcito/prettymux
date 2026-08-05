@@ -15,6 +15,7 @@ typedef struct {
     WorkspaceLayoutMode default_layout_mode;
     char *gtk_renderer_mode;
     char *gtk_renderer_probe_result;
+    char *ui_language;
     int tab_height;
     Theme custom_theme;
 } AppSettingsState;
@@ -30,6 +31,7 @@ static AppSettingsState app_settings = {
     .default_layout_mode = WORKSPACE_LAYOUT_STRIP,
     .gtk_renderer_mode = NULL,
     .gtk_renderer_probe_result = NULL,
+    .ui_language = NULL,
     .tab_height = 42,
     .custom_theme = {
         .name = "Custom",
@@ -255,6 +257,9 @@ app_settings_load(void)
         if (g_key_file_has_key(kf, "ui", "tab_height", NULL))
             app_settings.tab_height =
                 g_key_file_get_integer(kf, "ui", "tab_height", NULL);
+        if (g_key_file_has_key(kf, "ui", "language", NULL))
+            app_settings.ui_language =
+                g_key_file_get_string(kf, "ui", "language", NULL);
         app_settings_load_theme_colors(kf, "custom_theme",
                                        &app_settings.custom_theme);
     }
@@ -271,6 +276,21 @@ app_settings_load(void)
     }
     if (!app_settings.gtk_renderer_probe_result)
         app_settings.gtk_renderer_probe_result = g_strdup("");
+    if (!app_settings.ui_language || !app_settings.ui_language[0]) {
+        const char *locale = g_get_language_names()[0];
+        const char *detected = "en";
+
+        if (locale && g_str_has_prefix(locale, "zh"))
+            detected = "zh";
+        else if (locale && g_str_has_prefix(locale, "ko"))
+            detected = "ko";
+        else if (locale && g_str_has_prefix(locale, "ja"))
+            detected = "ja";
+        else if (locale && g_str_has_prefix(locale, "es"))
+            detected = "es";
+        g_free(app_settings.ui_language);
+        app_settings.ui_language = g_strdup(detected);
+    }
 
     g_free(path);
     g_key_file_unref(kf);
@@ -320,6 +340,11 @@ app_settings_save(void)
                               : "");
     g_key_file_set_integer(kf, "ui", "tab_height",
                           app_settings.tab_height);
+    g_key_file_set_string(kf, "ui", "language",
+                          app_settings.ui_language &&
+                          app_settings.ui_language[0]
+                              ? app_settings.ui_language
+                              : "en");
 
     g_key_file_set_string(kf, "custom_theme", "bg", app_settings.custom_theme.bg);
     g_key_file_set_string(kf, "custom_theme", "fg", app_settings.custom_theme.fg);
@@ -455,6 +480,23 @@ app_settings_set_default_layout_mode(WorkspaceLayoutMode mode)
     app_settings.default_layout_mode = mode == WORKSPACE_LAYOUT_STRIP
         ? WORKSPACE_LAYOUT_STRIP
         : WORKSPACE_LAYOUT_CLASSIC;
+}
+
+const char *
+app_settings_get_ui_language(void)
+{
+    app_settings_load();
+    return app_settings.ui_language && app_settings.ui_language[0]
+        ? app_settings.ui_language : "en";
+}
+
+void
+app_settings_set_ui_language(const char *language_code)
+{
+    app_settings_load();
+    g_free(app_settings.ui_language);
+    app_settings.ui_language =
+        g_strdup(language_code && language_code[0] ? language_code : "en");
 }
 
 const char *

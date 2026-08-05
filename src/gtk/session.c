@@ -1672,15 +1672,9 @@ session_restore_for_instance(const char *instance_id,
                                     GtkWidget *old = gtk_notebook_get_nth_page(nb, 0);
                                     GtkWidget *old_terminal =
                                         session_page_linked_terminal(old);
-                                    if (old_terminal) {
-                                        g_ptr_array_remove(ws->terminals,
-                                                           old_terminal);
-                                        if (ws->overlay) {
-                                            gtk_overlay_remove_overlay(
-                                                GTK_OVERLAY(ws->overlay),
-                                                old_terminal);
-                                        }
-                                    }
+                                    if (old_terminal)
+                                        workspace_remove_terminal_widget(
+                                            ws, old_terminal);
                                     gtk_notebook_remove_page(nb, 0);
                                 }
                                 workspace_add_terminal_to_notebook_with_cwd(
