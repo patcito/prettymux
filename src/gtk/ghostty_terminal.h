@@ -73,6 +73,19 @@ int ghostty_terminal_get_exit_code(GhosttyTerminal *self);
  */
 void ghostty_terminal_set_title(GhosttyTerminal *self, const char *title);
 void ghostty_terminal_set_cwd(GhosttyTerminal *self, const char *cwd);
+
+/*
+ * Per-tab ghostty color-theme override.
+ *
+ * When set (non-NULL, non-empty), this tab's terminal surface uses the
+ * named ghostty theme instead of inheriting its pane / workspace / global
+ * theme. Passing NULL or "" clears the override. The setter only records
+ * the name; call app_apply_scoped_terminal_themes() to push it to the
+ * live surface. Persisted per-tab in the session file.
+ */
+void        ghostty_terminal_set_theme_override(GhosttyTerminal *self,
+                                                const char *theme_name);
+const char *ghostty_terminal_get_theme_override(GhosttyTerminal *self);
 void ghostty_terminal_set_hover_url(GhosttyTerminal *self, const char *url);
 void ghostty_terminal_set_scope(GhosttyTerminal *self,
                                 pid_t            session_id,

@@ -1341,6 +1341,11 @@ session_save_for_instance(const char *instance_id,
             json_builder_add_string_value(b,
                 ws->notes_text ? ws->notes_text : "");
 
+            /* Per-workspace ghostty theme override ("" == inherit). */
+            json_builder_set_member_name(b, "theme");
+            json_builder_add_string_value(b,
+                ws->theme_name ? ws->theme_name : "");
+
             session_save_workspace_layout_mode(b, ws);
 
             json_builder_set_member_name(b, "layout");
@@ -1360,6 +1365,13 @@ session_save_for_instance(const char *instance_id,
 
                     json_builder_set_member_name(b, "paneId");
                     json_builder_add_string_value(b, pane_id ? pane_id : "");
+
+                    /* Per-pane ghostty theme override ("" == inherit). */
+                    const char *pane_theme =
+                        g_object_get_data(G_OBJECT(nb), "pane-theme");
+                    json_builder_set_member_name(b, "theme");
+                    json_builder_add_string_value(b,
+                        pane_theme ? pane_theme : "");
 
                     /* Active tab in this pane */
                     json_builder_set_member_name(b, "activeTab");
@@ -1410,6 +1422,15 @@ session_save_for_instance(const char *instance_id,
                             json_builder_set_member_name(b, "cwd");
                             json_builder_add_string_value(b,
                                 cwd ? cwd : "");
+
+                            /* Per-tab ghostty theme override ("" == inherit). */
+                            const char *term_theme = NULL;
+                            if (GHOSTTY_IS_TERMINAL(terminal))
+                                term_theme = ghostty_terminal_get_theme_override(
+                                    GHOSTTY_TERMINAL(terminal));
+                            json_builder_set_member_name(b, "theme");
+                            json_builder_add_string_value(b,
+                                term_theme ? term_theme : "");
 
                             json_builder_end_object(b);
                         }
@@ -1570,6 +1591,13 @@ session_restore_for_instance(const char *instance_id,
             g_free(ws->notes_text);
             ws->notes_text = g_strdup(notes);
 
+            /* Restore per-workspace theme override ("" == inherit). */
+            const char *ws_theme = json_object_get_string_member_with_default(
+                ws_obj, "theme", "");
+            g_free(ws->theme_name);
+            ws->theme_name = (ws_theme && ws_theme[0])
+                ? g_strdup(ws_theme) : NULL;
+
             /* Update sidebar label via the workspace's inner label */
             workspace_refresh_sidebar_label(ws);
 
@@ -1625,6 +1653,10 @@ session_restore_for_instance(const char *instance_id,
                         json_object_get_string_member_with_default(
                             pane_obj, "paneId", "");
 
+                    const char *saved_pane_theme =
+                        json_object_get_string_member_with_default(
+                            pane_obj, "theme", "");
+
                     if (strip_mode_active) {
                         if (pi < ws->pane_notebooks->len)
                             nb = g_ptr_array_index(ws->pane_notebooks, pi);
@@ -1642,6 +1674,14 @@ session_restore_for_instance(const char *instance_id,
                         nb = g_ptr_array_index(ws->pane_notebooks, pi);
                     if (!nb)
                         continue;
+
+                    /* Restore per-pane theme override onto the notebook.
+                     * Set unconditionally (NULL for empty) so re-restoring a
+                     * reused notebook clears a stale override. */
+                    g_object_set_data_full(G_OBJECT(nb), "pane-theme",
+                        (saved_pane_theme && saved_pane_theme[0])
+                            ? g_strdup(saved_pane_theme) : NULL,
+                        g_free);
 
                     /* Restore tabs.  The first tab in each pane
                      * was already created by the split or workspace_add. */
@@ -1722,12 +1762,27 @@ session_restore_for_instance(const char *instance_id,
                                 json_object_get_string_member_with_default(
                                     tab_obj, "name", "Terminal");
 
+                            const char *tab_theme =
+                                json_object_get_string_member_with_default(
+                                    tab_obj, "theme", "");
+
                             int page_idx = (int)ti;
                             if (page_idx < gtk_notebook_get_n_pages(nb)) {
                                 GtkWidget *child =
                                     gtk_notebook_get_nth_page(nb, page_idx);
                                 GtkWidget *tab_w =
                                     gtk_notebook_get_tab_label(nb, child);
+
+                                /* Restore per-tab theme override. Set
+                                 * unconditionally (NULL clears) so a reused
+                                 * terminal doesn't keep a stale override. */
+                                GtkWidget *tab_term =
+                                    session_page_linked_terminal(child);
+                                if (tab_term && GHOSTTY_IS_TERMINAL(tab_term))
+                                    ghostty_terminal_set_theme_override(
+                                        GHOSTTY_TERMINAL(tab_term),
+                                        (tab_theme && tab_theme[0])
+                                            ? tab_theme : NULL);
                                 gboolean is_custom =
                                     json_object_get_boolean_member_with_default(
                                         tab_obj, "customName", FALSE);

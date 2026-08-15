@@ -30,6 +30,7 @@ sources = files(
   'main.c',
   'ghostty_terminal.c',
   'theme.c',
+  'theme_selector.c',
   'hover_focus.c',
   'app_settings.c',
   'shortcuts.c',

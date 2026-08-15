@@ -4,6 +4,7 @@
 
 #include <adwaita.h>
 #include <gio/gio.h>
+#include <glib/gstdio.h>
 #include <gtk/gtk.h>
 #include <limits.h>
 #include <stdio.h>
@@ -271,6 +272,154 @@ load_ghostty_config_with_overrides(void)
     return config;
 }
 
+/* ── Per-scope ghostty theme configs ───────────────────────────────
+ *
+ * A terminal's color theme can be overridden per tab, per pane, or per
+ * workspace. Since ghostty carries the theme as a config-level property
+ * (there is no per-surface color setter), we build one ghostty_config_t
+ * per distinct override theme and push it to the surfaces that resolve to
+ * it via ghostty_surface_update_config(). Non-overridden surfaces keep the
+ * shared g_runtime_ghostty_config. Configs are cached by theme name and
+ * rebuilt whenever the global runtime settings change.
+ */
+static GHashTable *g_scoped_theme_configs; /* char* name -> ghostty_config_t */
+
+static ghostty_config_t
+build_ghostty_config_for_theme(const char *theme_name, gboolean *out_applied)
+{
+    ghostty_config_t config = ghostty_config_new();
+    char *override_path = app_settings_ghostty_override_path();
+    gboolean applied = FALSE;
+
+    ghostty_config_load_default_files(config);
+    if (override_path && g_file_test(override_path, G_FILE_TEST_EXISTS))
+        ghostty_config_load_file(config, override_path);
+    g_free(override_path);
+
+    /* ghostty has no string/CLI config setter we can target, so express the
+     * per-scope theme as a tiny config file loaded last (last value wins).
+     * The base font-size / copy-on-select still come from the override.
+     *
+     * Reject names containing newline / '=' so a hand-edited session theme
+     * name can't inject arbitrary config directives into this scope. Use a
+     * private per-call temp file (removed immediately) so concurrent
+     * prettymux instances can't race on a shared scratch path. */
+    if (theme_name && theme_name[0] && !strpbrk(theme_name, "\r\n=")) {
+        char *scratch = NULL;
+        int fd = g_file_open_tmp("prettymux-theme-XXXXXX.conf", &scratch, NULL);
+        if (fd >= 0) {
+            char *body = g_strdup_printf("theme = %s\n", theme_name);
+            g_close(fd, NULL);
+            if (g_file_set_contents(scratch, body, -1, NULL)) {
+                ghostty_config_load_file(config, scratch);
+                applied = TRUE;
+            }
+            g_free(body);
+            g_remove(scratch);
+        }
+        g_free(scratch);
+    }
+
+    ghostty_config_finalize(config);
+    if (out_applied)
+        *out_applied = applied;
+    return config;
+}
+
+/* Config for `theme_name`, or the shared runtime config when the scope
+ * inherits (NULL/empty). Cached; safe to free cached entries on invalidate
+ * because ghostty_surface_update_config derives its own internal copy. */
+static ghostty_config_t
+scoped_theme_config(const char *theme_name)
+{
+    if (!theme_name || !theme_name[0] || !g_ghostty_app)
+        return g_runtime_ghostty_config;
+
+    if (!g_scoped_theme_configs)
+        g_scoped_theme_configs = g_hash_table_new_full(
+            g_str_hash, g_str_equal, g_free,
+            (GDestroyNotify)ghostty_config_free);
+
+    ghostty_config_t config = g_hash_table_lookup(g_scoped_theme_configs,
+                                                  theme_name);
+    if (!config) {
+        gboolean applied = FALSE;
+        config = build_ghostty_config_for_theme(theme_name, &applied);
+        if (!applied) {
+            /* The override couldn't be applied (invalid name, or the temp
+             * file write failed). Don't poison the cache with a config that
+             * silently lacks the theme — fall back this time and let a later
+             * attempt retry. */
+            ghostty_config_free(config);
+            return g_runtime_ghostty_config;
+        }
+        g_hash_table_insert(g_scoped_theme_configs, g_strdup(theme_name),
+                            config);
+    }
+    return config;
+}
+
+static void
+scoped_theme_configs_invalidate(void)
+{
+    g_clear_pointer(&g_scoped_theme_configs, g_hash_table_destroy);
+}
+
+/* Resolve one terminal's effective theme by walking up its scope chain and
+ * push the matching config to its live surface. */
+void
+app_terminal_apply_scoped_theme(GhosttyTerminal *term)
+{
+    if (!term || !GHOSTTY_IS_TERMINAL(term))
+        return;
+
+    ghostty_surface_t surf = ghostty_terminal_get_surface(term);
+    if (!surf)
+        return;
+
+    const char *tab_theme = ghostty_terminal_get_theme_override(term);
+    const char *pane_theme = NULL;
+    const char *ws_theme = NULL;
+
+    /* The weak-managed dummy target is nulled when the page dies, so it's
+     * safe even if the terminal briefly outlives its notebook page. */
+    GtkWidget *dummy = ghostty_terminal_get_dummy_target(term);
+    if (dummy) {
+        GtkWidget *anc = gtk_widget_get_ancestor(dummy, GTK_TYPE_NOTEBOOK);
+        if (GTK_IS_NOTEBOOK(anc)) {
+            pane_theme = g_object_get_data(G_OBJECT(anc), "pane-theme");
+            Workspace *ws = g_object_get_data(G_OBJECT(anc), "workspace-ptr");
+            if (ws)
+                ws_theme = ws->theme_name;
+        }
+    }
+
+    const char *effective = NULL;
+    if (tab_theme && tab_theme[0])
+        effective = tab_theme;
+    else if (pane_theme && pane_theme[0])
+        effective = pane_theme;
+    else if (ws_theme && ws_theme[0])
+        effective = ws_theme;
+
+    ghostty_surface_update_config(surf, scoped_theme_config(effective));
+}
+
+void
+app_apply_scoped_terminal_themes(void)
+{
+    if (!workspaces)
+        return;
+    for (guint wi = 0; wi < workspaces->len; wi++) {
+        Workspace *ws = g_ptr_array_index(workspaces, wi);
+        if (!ws->terminals)
+            continue;
+        for (guint ti = 0; ti < ws->terminals->len; ti++)
+            app_terminal_apply_scoped_theme(
+                g_ptr_array_index(ws->terminals, ti));
+    }
+}
+
 void
 apply_runtime_settings(void *user_data)
 {
@@ -284,19 +433,11 @@ apply_runtime_settings(void *user_data)
         g_runtime_ghostty_config = load_ghostty_config_with_overrides();
         ghostty_app_update_config(g_ghostty_app, g_runtime_ghostty_config);
 
-        if (workspaces) {
-            for (guint wi = 0; wi < workspaces->len; wi++) {
-                Workspace *ws = g_ptr_array_index(workspaces, wi);
-                if (!ws->terminals)
-                    continue;
-                for (guint ti = 0; ti < ws->terminals->len; ti++) {
-                    GhosttyTerminal *term = g_ptr_array_index(ws->terminals, ti);
-                    ghostty_surface_t surf = ghostty_terminal_get_surface(term);
-                    if (surf)
-                        ghostty_surface_update_config(surf, g_runtime_ghostty_config);
-                }
-            }
-        }
+        /* Global settings changed: rebuild the per-scope theme configs so
+         * they pick up the new font-size / base theme, then re-resolve and
+         * apply each surface's effective theme (overridden or inherited). */
+        scoped_theme_configs_invalidate();
+        app_apply_scoped_terminal_themes();
     }
 
     apply_theme_to_ghostty_scheme();

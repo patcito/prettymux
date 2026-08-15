@@ -56,6 +56,11 @@ typedef struct _Workspace {
     /* Notes panel */
     char *notes_text;            /* Per-workspace notes content (heap-allocated) */
 
+    /* Per-workspace ghostty color theme override, or NULL to inherit the
+     * global default. Terminals in this workspace resolve to it unless a
+     * pane or tab override is more specific. Persisted in the session. */
+    char *theme_name;
+
     /* TRUE if the user has renamed this workspace explicitly (via
      * inline rename, sidebar context menu, or socket command). Set
      * to skip the SET_TITLE auto-overwrite so the custom name

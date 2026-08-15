@@ -359,6 +359,53 @@ ghostty_terminal_focus(GhosttyTerminal *self)
 }
 
 void
+theme_selector_popup_tab(GtkWidget *anchor, GhosttyTerminal *term)
+{
+    (void)anchor;
+    (void)term;
+}
+
+void
+theme_selector_popup_pane(GtkWidget *anchor, GtkNotebook *pane)
+{
+    (void)anchor;
+    (void)pane;
+}
+
+void
+theme_selector_popup_workspace(GtkWidget *anchor, Workspace *ws)
+{
+    (void)anchor;
+    (void)ws;
+}
+
+void
+app_terminal_apply_scoped_theme(GhosttyTerminal *term)
+{
+    (void)term;
+}
+
+void
+app_apply_scoped_terminal_themes(void)
+{
+}
+
+const char *
+ghostty_terminal_get_theme_override(GhosttyTerminal *self)
+{
+    return g_object_get_data(G_OBJECT(self), "stub-theme-override");
+}
+
+void
+ghostty_terminal_set_theme_override(GhosttyTerminal *self, const char *theme_name)
+{
+    g_object_set_data_full(G_OBJECT(self), "stub-theme-override",
+                           (theme_name && theme_name[0]) ? g_strdup(theme_name)
+                                                         : NULL,
+                           g_free);
+}
+
+void
 ghostty_terminal_queue_render(GhosttyTerminal *self)
 {
     (void)self;
@@ -1703,6 +1750,59 @@ test_workspace_import_preserves_serial_on_collision(void)
     reset_workspace_globals();
 }
 
+static void
+test_workspace_import_preserves_scoped_themes(void)
+{
+    GtkWidget *terminal_stack;
+    GtkWidget *workspace_list;
+    Workspace *imported;
+    GtkNotebook *nb;
+    GtkWidget *page0;
+    GtkWidget *term0;
+    g_autofree char *payload = NULL;
+    g_autofree char *error = NULL;
+    int imported_idx = -1;
+    ghostty_app_t fake_app = (ghostty_app_t)(guintptr)0x1;
+
+    require_display_or_skip();
+    reset_workspace_globals();
+
+    terminal_stack = gtk_stack_new();
+    workspace_list = gtk_list_box_new();
+    workspace_add(terminal_stack, workspace_list, fake_app);
+
+    /* Move-to-Window payload carrying a theme at every scope. */
+    payload = g_strdup(
+        "{\"serial\":4242,\"name\":\"Themed Move\",\"notes\":\"\","
+        "\"theme\":\"Monokai\",\"activePaneId\":\"pane-1\","
+        "\"panes\":[{\"paneId\":\"pane-1\",\"theme\":\"Catppuccin Latte\","
+        "\"activeTab\":0,\"tabs\":[{\"name\":\"Terminal\",\"customName\":false,"
+        "\"cwd\":\"/tmp\",\"theme\":\"Adwaita Dark\"}]}]}");
+
+    g_assert_true(workspace_import_from_payload(payload, fake_app, &imported_idx,
+                                                &error));
+    g_assert_null(error);
+    g_assert_cmpint(imported_idx, >=, 0);
+
+    imported = g_ptr_array_index(workspaces, imported_idx);
+    g_assert_nonnull(imported);
+    g_assert_cmpstr(imported->theme_name, ==, "Monokai");
+    g_assert_cmpuint(imported->pane_notebooks->len, >=, 1);
+
+    nb = g_ptr_array_index(imported->pane_notebooks, 0);
+    g_assert_cmpstr(g_object_get_data(G_OBJECT(nb), "pane-theme"), ==,
+                    "Catppuccin Latte");
+
+    page0 = gtk_notebook_get_nth_page(nb, 0);
+    g_assert_nonnull(page0);
+    term0 = g_object_get_data(G_OBJECT(page0), "linked-terminal");
+    g_assert_nonnull(term0);
+    g_assert_cmpstr(g_object_get_data(G_OBJECT(term0), "stub-theme-override"),
+                    ==, "Adwaita Dark");
+
+    reset_workspace_globals();
+}
+
 /* ---- Phase 4 new behavior tests ---- */
 
 static Workspace *
@@ -2023,6 +2123,8 @@ main(int argc, char **argv)
                     test_workspace_attach_to_instance_inserts_at_target_index);
     g_test_add_func("/workspace-phase10/import/preserve-serial-on-collision",
                     test_workspace_import_preserves_serial_on_collision);
+    g_test_add_func("/workspace-phase10/import/preserve-scoped-themes",
+                    test_workspace_import_preserves_scoped_themes);
     g_test_add_func("/workspace-shutdown/terminals/request-close-and-hangup",
                     test_workspace_shutdown_terminals_requests_close_and_hangs_running_sessions);
 

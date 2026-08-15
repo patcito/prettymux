@@ -208,6 +208,7 @@ test_workspace_free(Workspace *ws)
     if (ws->overlay)
         g_object_unref(ws->overlay);
     g_free(ws->notes_text);
+    g_free(ws->theme_name);
     g_free(ws);
 }
 
@@ -250,6 +251,20 @@ ghostty_terminal_get_cwd(GhosttyTerminal *self)
 {
     (void)self;
     return NULL;
+}
+
+const char *
+ghostty_terminal_get_theme_override(GhosttyTerminal *self)
+{
+    (void)self;
+    return NULL;
+}
+
+void
+ghostty_terminal_set_theme_override(GhosttyTerminal *self, const char *theme_name)
+{
+    (void)self;
+    (void)theme_name;
 }
 
 const char *
@@ -892,6 +907,104 @@ test_session_save_restore_isolated_per_instance(void)
 }
 
 static void
+test_session_persists_scoped_theme_overrides(void)
+{
+    const char *instance_id = "phase-theme";
+    SessionTestUi ui;
+    JsonObject *saved_root;
+    JsonArray *workspaces_json;
+    JsonObject *ws_json;
+    JsonArray *panes_json;
+    JsonObject *pane_json;
+    JsonArray *tabs_json;
+    JsonObject *tab_json;
+    Workspace *ws;
+    Workspace *restored_ws;
+    GtkNotebook *restored_pane;
+
+    test_clear_session_file_for_instance(instance_id);
+    ui = test_ui_new();
+
+    test_reset_workspaces();
+    ws = test_workspace_new(WORKSPACE_LAYOUT_CLASSIC, 1, "Themed WS");
+    ws->theme_name = g_strdup("Monokai");
+    g_object_set_data_full(G_OBJECT(g_ptr_array_index(ws->pane_notebooks, 0)),
+                           "pane-theme", g_strdup("Catppuccin Latte"), g_free);
+    g_ptr_array_add(workspaces, ws);
+    session_save_for_instance(instance_id, ui.window,
+                              ui.terminal_stack, ui.workspace_list);
+
+    /* Saved JSON carries the theme at workspace, pane, and tab levels. */
+    saved_root = test_load_saved_session_for_instance(instance_id);
+    workspaces_json = json_object_get_array_member(saved_root, "workspaces");
+    ws_json = json_array_get_object_element(workspaces_json, 0);
+    g_assert_cmpstr(json_object_get_string_member(ws_json, "theme"), ==,
+                    "Monokai");
+    panes_json = json_object_get_array_member(ws_json, "panes");
+    pane_json = json_array_get_object_element(panes_json, 0);
+    g_assert_cmpstr(json_object_get_string_member(pane_json, "theme"), ==,
+                    "Catppuccin Latte");
+    tabs_json = json_object_get_array_member(pane_json, "tabs");
+    tab_json = json_array_get_object_element(tabs_json, 0);
+    g_assert_true(json_object_has_member(tab_json, "theme"));
+    json_object_unref(saved_root);
+
+    /* Restore rebuilds the workspace and pane theme overrides from disk. */
+    test_reset_workspaces();
+    g_ptr_array_add(workspaces,
+                    test_workspace_new(WORKSPACE_LAYOUT_CLASSIC, 1, "Bootstrap"));
+    session_restore_for_instance(instance_id, ui.window,
+                                 ui.terminal_stack, ui.workspace_list, NULL);
+    restored_ws = test_first_workspace();
+    g_assert_nonnull(restored_ws);
+    g_assert_cmpstr(restored_ws->theme_name, ==, "Monokai");
+    g_assert_cmpuint(restored_ws->pane_notebooks->len, >=, 1);
+    restored_pane = g_ptr_array_index(restored_ws->pane_notebooks, 0);
+    g_assert_cmpstr(g_object_get_data(G_OBJECT(restored_pane), "pane-theme"),
+                    ==, "Catppuccin Latte");
+
+    test_ui_free(&ui);
+}
+
+static void
+test_session_scoped_theme_cleared_on_reinherit(void)
+{
+    const char *instance_id = "phase-theme-clear";
+    SessionTestUi ui;
+    Workspace *ws;
+    Workspace *restored_ws;
+    GtkNotebook *pane;
+
+    test_clear_session_file_for_instance(instance_id);
+    ui = test_ui_new();
+
+    /* Save an inherit (no theme override anywhere) session. */
+    test_reset_workspaces();
+    g_ptr_array_add(workspaces,
+                    test_workspace_new(WORKSPACE_LAYOUT_CLASSIC, 1, "Plain WS"));
+    session_save_for_instance(instance_id, ui.window,
+                              ui.terminal_stack, ui.workspace_list);
+
+    /* Bootstrap workspace carrying stale overrides that restore must clear. */
+    test_reset_workspaces();
+    ws = test_workspace_new(WORKSPACE_LAYOUT_CLASSIC, 1, "Bootstrap");
+    ws->theme_name = g_strdup("StaleWS");
+    g_object_set_data_full(G_OBJECT(g_ptr_array_index(ws->pane_notebooks, 0)),
+                           "pane-theme", g_strdup("StalePane"), g_free);
+    g_ptr_array_add(workspaces, ws);
+    session_restore_for_instance(instance_id, ui.window,
+                                 ui.terminal_stack, ui.workspace_list, NULL);
+
+    restored_ws = test_first_workspace();
+    g_assert_nonnull(restored_ws);
+    g_assert_null(restored_ws->theme_name);
+    pane = g_ptr_array_index(restored_ws->pane_notebooks, 0);
+    g_assert_null(g_object_get_data(G_OBJECT(pane), "pane-theme"));
+
+    test_ui_free(&ui);
+}
+
+static void
 test_session_same_instance_path_survives_restart(void)
 {
     const char *instance_id = "phase6-restartable";
@@ -1058,6 +1171,10 @@ main(int argc, char **argv)
                     test_session_save_restore_isolated_per_instance);
     g_test_add_func("/session-strip/instance/restart-stable-path",
                     test_session_same_instance_path_survives_restart);
+    g_test_add_func("/session-strip/theme/scoped-overrides-round-trip",
+                    test_session_persists_scoped_theme_overrides);
+    g_test_add_func("/session-strip/theme/cleared-on-reinherit",
+                    test_session_scoped_theme_cleared_on_reinherit);
     g_test_add_func("/session-strip/instance/nondefault-no-default-fallback",
                     test_non_default_restore_does_not_fallback_to_default_session);
     g_test_add_func("/session-strip/instance/default-legacy-fallback",

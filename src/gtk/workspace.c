@@ -13,6 +13,8 @@
 #include "resize_overlay.h"
 #include "session.h"
 #include "shortcuts.h"
+#include "theme_selector.h"
+#include "app_ui.h"
 #include <json-glib/json-glib.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -2635,6 +2637,9 @@ on_overlay_get_child_position(GtkOverlay *overlay, GtkWidget *widget,
     return TRUE;
 }
 
+static void on_tab_right_click(GtkGestureClick *gesture, int n_press,
+                               double x, double y, gpointer user_data);
+
 static GtkWidget *
 create_terminal_tab(Workspace *ws, GtkNotebook *notebook,
                     const char *cwd, int page_num)
@@ -2644,6 +2649,16 @@ create_terminal_tab(Workspace *ws, GtkNotebook *notebook,
     GtkWidget *inner_label = NULL;
     GtkWidget *tab_label = create_editable_tab_label(
         "Terminal", terminal, ws, FALSE, &inner_label);
+
+    /* Right-click the tab label -> per-tab theme menu. */
+    {
+        GtkGesture *rclick = gtk_gesture_click_new();
+        gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(rclick),
+                                      GDK_BUTTON_SECONDARY);
+        g_signal_connect(rclick, "pressed",
+                         G_CALLBACK(on_tab_right_click), terminal);
+        gtk_widget_add_controller(tab_label, GTK_EVENT_CONTROLLER(rclick));
+    }
 
     gtk_widget_set_hexpand(dummy, TRUE);
     gtk_widget_set_vexpand(dummy, TRUE);
@@ -3381,6 +3396,8 @@ workspace_export_payload(Workspace *ws, char **error_out)
     json_builder_add_string_value(builder, ws->name);
     json_builder_set_member_name(builder, "notes");
     json_builder_add_string_value(builder, ws->notes_text ? ws->notes_text : "");
+    json_builder_set_member_name(builder, "theme");
+    json_builder_add_string_value(builder, ws->theme_name ? ws->theme_name : "");
     json_builder_set_member_name(builder, "layoutMode");
     json_builder_add_string_value(
         builder,
@@ -3408,6 +3425,13 @@ workspace_export_payload(Workspace *ws, char **error_out)
             json_builder_begin_object(builder);
             json_builder_set_member_name(builder, "paneId");
             json_builder_add_string_value(builder, pane_id ? pane_id : "");
+            {
+                const char *pane_theme =
+                    g_object_get_data(G_OBJECT(nb), "pane-theme");
+                json_builder_set_member_name(builder, "theme");
+                json_builder_add_string_value(builder,
+                                              pane_theme ? pane_theme : "");
+            }
             json_builder_set_member_name(builder, "activeTab");
             json_builder_add_int_value(builder,
                                        GTK_IS_NOTEBOOK(nb)
@@ -3446,6 +3470,15 @@ workspace_export_payload(Workspace *ws, char **error_out)
                 json_builder_add_boolean_value(builder, is_custom);
                 json_builder_set_member_name(builder, "cwd");
                 json_builder_add_string_value(builder, cwd ? cwd : "");
+                {
+                    const char *term_theme = NULL;
+                    if (GHOSTTY_IS_TERMINAL(terminal))
+                        term_theme = ghostty_terminal_get_theme_override(
+                            GHOSTTY_TERMINAL(terminal));
+                    json_builder_set_member_name(builder, "theme");
+                    json_builder_add_string_value(builder,
+                                                  term_theme ? term_theme : "");
+                }
                 json_builder_end_object(builder);
             }
             json_builder_end_array(builder);
@@ -3538,6 +3571,14 @@ workspace_restore_from_payload_object(Workspace *ws,
     g_free(ws->notes_text);
     ws->notes_text = g_strdup(
         json_object_get_string_member_with_default(ws_obj, "notes", ""));
+
+    {
+        const char *imp_theme = json_object_get_string_member_with_default(
+            ws_obj, "theme", "");
+        g_free(ws->theme_name);
+        ws->theme_name = (imp_theme && imp_theme[0])
+            ? g_strdup(imp_theme) : NULL;
+    }
 
     if (json_object_has_member(ws_obj, "statusEntries")) {
         JsonArray *entries = json_object_get_array_member(ws_obj, "statusEntries");
@@ -3635,6 +3676,15 @@ workspace_restore_from_payload_object(Workspace *ws,
             if (!nb)
                 continue;
 
+            {
+                const char *pane_theme =
+                    json_object_get_string_member_with_default(pane_obj,
+                                                               "theme", "");
+                g_object_set_data_full(G_OBJECT(nb), "pane-theme",
+                    (pane_theme && pane_theme[0]) ? g_strdup(pane_theme) : NULL,
+                    g_free);
+            }
+
             if (json_object_has_member(pane_obj, "tabs")) {
                 JsonArray *tabs_arr = json_object_get_array_member(pane_obj, "tabs");
                 guint n_tabs = json_array_get_length(tabs_arr);
@@ -3696,6 +3746,18 @@ workspace_restore_from_payload_object(Workspace *ws,
                         continue;
 
                     child = gtk_notebook_get_nth_page(nb, (int)ti);
+
+                    {
+                        GtkWidget *tab_term = page_linked_terminal(child);
+                        const char *tab_theme =
+                            json_object_get_string_member_with_default(
+                                tab_obj, "theme", "");
+                        if (tab_term && GHOSTTY_IS_TERMINAL(tab_term))
+                            ghostty_terminal_set_theme_override(
+                                GHOSTTY_TERMINAL(tab_term),
+                                (tab_theme && tab_theme[0]) ? tab_theme : NULL);
+                    }
+
                     tab_w = gtk_notebook_get_tab_label(nb, child);
                     if (!tab_w)
                         continue;
@@ -3740,6 +3802,10 @@ workspace_restore_from_payload_object(Workspace *ws,
     workspace_refresh_tab_labels(ws);
     workspace_sync_summary_from_first_terminal(ws);
     workspace_refresh_sidebar_label(ws);
+    /* Apply the imported per-scope themes to any surfaces that already
+     * realized during import (target window may be visible), since the
+     * realize hook alone can fire before the overrides were set. */
+    app_apply_scoped_terminal_themes();
     return TRUE;
 }
 
@@ -3962,6 +4028,7 @@ workspace_free_detached(Workspace *ws)
     g_ptr_array_unref(ws->pane_notebooks);
     g_clear_pointer(&ws->status_entries, g_hash_table_unref);
     g_free(ws->notes_text);
+    g_free(ws->theme_name);
     g_free(ws);
 }
 
@@ -4431,8 +4498,13 @@ on_notebook_page_added(GtkNotebook *notebook, GtkWidget *child,
     if (ws) {
         workspace_set_active_pane(ws, notebook);
         GtkWidget *terminal = page_linked_terminal(child);
-        if (terminal && GHOSTTY_IS_TERMINAL(terminal))
+        if (terminal && GHOSTTY_IS_TERMINAL(terminal)) {
             focus_terminal_page_later(terminal);
+            /* A tab dropped into this pane inherits the new pane/workspace
+             * theme (unless it has its own tab override). Re-resolve now;
+             * a no-op for not-yet-realized surfaces during restore. */
+            app_terminal_apply_scoped_theme(GHOSTTY_TERMINAL(terminal));
+        }
         if (ws->pane_notebooks && ws->pane_notebooks->len > 0 &&
             g_ptr_array_index(ws->pane_notebooks, 0) == notebook)
             workspace_detect_primary_branch(ws);
@@ -4503,6 +4575,111 @@ on_notebook_pressed(GtkGestureClick *gesture, int n_press,
         workspace_set_active_pane(ws, GTK_NOTEBOOK(widget));
 }
 
+/* ── Tab / pane theme context menus ─────────────────────────────────
+ *
+ * Right-clicking a tab label or a pane notebook shows a small menu whose
+ * "Theme…" item opens the per-scope ghostty theme picker (theme_selector.c).
+ */
+/* Destroy a dynamically-created context-menu popover once it closes, so
+ * repeated right-clicks don't accumulate hidden popovers on the anchor. */
+static void
+on_ctx_menu_popover_closed(GtkPopover *popover, gpointer user_data)
+{
+    (void)user_data;
+    gtk_widget_unparent(GTK_WIDGET(popover));
+}
+
+static void
+on_tab_theme_activate(GSimpleAction *action, GVariant *param, gpointer user_data)
+{
+    (void)action;
+    (void)param;
+    GhosttyTerminal *term = user_data;
+    if (term && GHOSTTY_IS_TERMINAL(term))
+        theme_selector_popup_tab(GTK_WIDGET(term), term);
+}
+
+static void
+on_tab_right_click(GtkGestureClick *gesture, int n_press,
+                   double x, double y, gpointer user_data)
+{
+    (void)n_press;
+    GhosttyTerminal *term = user_data;
+    GtkWidget *widget = gtk_event_controller_get_widget(
+        GTK_EVENT_CONTROLLER(gesture));
+
+    if (!term || !GHOSTTY_IS_TERMINAL(term))
+        return;
+
+    /* Claim so the notebook's own click gesture doesn't also react. */
+    gtk_gesture_set_state(GTK_GESTURE(gesture), GTK_EVENT_SEQUENCE_CLAIMED);
+
+    GMenu *menu = g_menu_new();
+    g_menu_append(menu, "Theme…", "tabctx.theme");
+
+    GSimpleActionGroup *ag = g_simple_action_group_new();
+    GSimpleAction *act = g_simple_action_new("theme", NULL);
+    g_signal_connect(act, "activate", G_CALLBACK(on_tab_theme_activate), term);
+    g_action_map_add_action(G_ACTION_MAP(ag), G_ACTION(act));
+    gtk_widget_insert_action_group(widget, "tabctx", G_ACTION_GROUP(ag));
+
+    GtkWidget *popover = gtk_popover_menu_new_from_model(G_MENU_MODEL(menu));
+    gtk_widget_set_parent(popover, widget);
+    g_signal_connect(popover, "closed",
+                     G_CALLBACK(on_ctx_menu_popover_closed), NULL);
+    GdkRectangle rect = { (int)x, (int)y, 1, 1 };
+    gtk_popover_set_pointing_to(GTK_POPOVER(popover), &rect);
+    gtk_popover_popup(GTK_POPOVER(popover));
+
+    g_object_unref(menu);
+    g_object_unref(act);
+    g_object_unref(ag);
+}
+
+static void
+on_pane_theme_activate(GSimpleAction *action, GVariant *param, gpointer user_data)
+{
+    (void)action;
+    (void)param;
+    GtkNotebook *nb = user_data;
+    if (nb && GTK_IS_NOTEBOOK(nb))
+        theme_selector_popup_pane(GTK_WIDGET(nb), nb);
+}
+
+static void
+on_pane_right_click(GtkGestureClick *gesture, int n_press,
+                    double x, double y, gpointer user_data)
+{
+    (void)n_press;
+    (void)user_data;
+    GtkWidget *widget = gtk_event_controller_get_widget(
+        GTK_EVENT_CONTROLLER(gesture));
+
+    if (!GTK_IS_NOTEBOOK(widget))
+        return;
+
+    GMenu *menu = g_menu_new();
+    g_menu_append(menu, "Theme…", "panectx.theme");
+
+    GSimpleActionGroup *ag = g_simple_action_group_new();
+    GSimpleAction *act = g_simple_action_new("theme", NULL);
+    g_signal_connect(act, "activate", G_CALLBACK(on_pane_theme_activate), widget);
+    g_action_map_add_action(G_ACTION_MAP(ag), G_ACTION(act));
+    gtk_widget_insert_action_group(widget, "panectx", G_ACTION_GROUP(ag));
+
+    GtkWidget *popover = gtk_popover_menu_new_from_model(G_MENU_MODEL(menu));
+    gtk_widget_set_parent(popover, widget);
+    g_signal_connect(popover, "closed",
+                     G_CALLBACK(on_ctx_menu_popover_closed), NULL);
+    GdkRectangle rect = { (int)x, (int)y, 1, 1 };
+    gtk_popover_set_pointing_to(GTK_POPOVER(popover), &rect);
+    gtk_popover_popup(GTK_POPOVER(popover));
+
+    g_object_unref(menu);
+    g_object_unref(act);
+    g_object_unref(ag);
+}
+
 /* Helper: create a notebook for a new pane and wire up the "+" button. */
 static GtkWidget *
 create_pane_notebook(Workspace *ws, ghostty_app_t app)
@@ -4551,6 +4728,14 @@ create_pane_notebook(Workspace *ws, ghostty_app_t app)
     g_signal_connect(click, "pressed",
                      G_CALLBACK(on_notebook_pressed), ws);
     gtk_widget_add_controller(notebook, GTK_EVENT_CONTROLLER(click));
+
+    /* Right-click the pane chrome (tab strip / borders) -> pane theme menu. */
+    GtkGesture *rclick = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(rclick),
+                                  GDK_BUTTON_SECONDARY);
+    g_signal_connect(rclick, "pressed",
+                     G_CALLBACK(on_pane_right_click), NULL);
+    gtk_widget_add_controller(notebook, GTK_EVENT_CONTROLLER(rclick));
 
     return notebook;
 }
@@ -4665,6 +4850,7 @@ void workspace_remove(int index, GtkWidget *terminal_stack, GtkWidget *workspace
     g_ptr_array_unref(ws->pane_notebooks);
     g_clear_pointer(&ws->status_entries, g_hash_table_unref);
     g_free(ws->notes_text);
+    g_free(ws->theme_name);
     g_free(ws);
 }
 
@@ -5799,6 +5985,21 @@ on_sidebar_ctx_move_to_window_activate(GSimpleAction *action, GVariant *param,
 }
 
 static void
+on_sidebar_ctx_theme_activate(GSimpleAction *action, GVariant *param,
+                              gpointer user_data)
+{
+    SidebarCtxData *ctx = user_data;
+    (void)action;
+    (void)param;
+
+    if (!ctx || !ctx->workspace)
+        return;
+
+    /* NULL anchor -> the picker falls back to the main window. */
+    theme_selector_popup_workspace(NULL, ctx->workspace);
+}
+
+static void
 on_sidebar_right_click(GtkGestureClick *gesture, int n_press,
                        double x, double y, gpointer user_data)
 {
@@ -5811,6 +6012,7 @@ on_sidebar_right_click(GtkGestureClick *gesture, int n_press,
     char action_rename[64];
     char action_move_to_window[64];
     char action_delete[64];
+    char action_theme[64];
     int ws_idx = ctx && ctx->workspace ? workspace_get_index(ctx->workspace) : -1;
     guint64 token = (ctx && ctx->workspace) ? ctx->workspace->serial : 0;
 
@@ -5823,8 +6025,11 @@ on_sidebar_right_click(GtkGestureClick *gesture, int n_press,
              "sidebar-ctx-%" G_GUINT64_FORMAT ".move-to-window", token);
     snprintf(action_delete, sizeof(action_delete), "sidebar-ctx-%" G_GUINT64_FORMAT ".delete",
              token);
+    snprintf(action_theme, sizeof(action_theme), "sidebar-ctx-%" G_GUINT64_FORMAT ".theme",
+             token);
 
     g_menu_append(menu, "Rename", action_rename);
+    g_menu_append(menu, "Theme…", action_theme);
     g_menu_append(menu, "Move to Window...", action_move_to_window);
     g_menu_append(menu, "Delete", action_delete);
 
@@ -5851,6 +6056,11 @@ on_sidebar_right_click(GtkGestureClick *gesture, int n_press,
                      G_CALLBACK(on_sidebar_ctx_delete_activate), ctx);
     g_action_map_add_action(G_ACTION_MAP(ag), G_ACTION(act_delete));
 
+    GSimpleAction *act_theme = g_simple_action_new("theme", NULL);
+    g_signal_connect(act_theme, "activate",
+                     G_CALLBACK(on_sidebar_ctx_theme_activate), ctx);
+    g_action_map_add_action(G_ACTION_MAP(ag), G_ACTION(act_theme));
+
     gtk_widget_insert_action_group(widget, group_name, G_ACTION_GROUP(ag));
 
     GtkWidget *popover = gtk_popover_menu_new_from_model(G_MENU_MODEL(menu));
@@ -5864,5 +6074,6 @@ on_sidebar_right_click(GtkGestureClick *gesture, int n_press,
     g_object_unref(act_rename);
     g_object_unref(act_move_to_window);
     g_object_unref(act_delete);
+    g_object_unref(act_theme);
     g_object_unref(ag);
 }

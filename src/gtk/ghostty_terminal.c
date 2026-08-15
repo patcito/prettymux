@@ -10,6 +10,7 @@
 #include "ghostty_terminal.h"
 #include "app_state.h"
 #include "app_settings.h"
+#include "app_ui.h"
 #include "hover_focus.h"
 #include "notifications.h"
 #include "socket_server.h"
@@ -84,6 +85,7 @@ struct _GhosttyTerminal {
     char              *cwd;
     char              *start_cwd;
     char              *terminal_id;
+    char              *theme_override; /* per-tab ghostty theme name, or NULL */
     pid_t              session_id;
     char              *tty_name;
     char              *tty_path;
@@ -611,6 +613,11 @@ on_gl_realize(GtkGLArea *area, gpointer user_data)
 
         gboolean focused = gtk_widget_has_focus(GTK_WIDGET(self->gl_area));
         ghostty_surface_set_focus(self->surface, focused);
+
+        /* Apply this terminal's resolved (tab/pane/workspace) color theme
+         * now that the surface exists. Covers both fresh tabs and session
+         * restore, where the overrides were set before the GL realize. */
+        app_terminal_apply_scoped_theme(self);
 
         /* Queue first render */
         gtk_gl_area_queue_render(area);
@@ -1179,6 +1186,7 @@ ghostty_terminal_finalize(GObject *object)
     g_free(self->terminal_id);
     g_free(self->tty_name);
     g_free(self->tty_path);
+    g_free(self->theme_override);
     g_free(self->status_cwd_full);
     g_free(self->status_git_full);
     g_free(self->hover_url);
@@ -1618,6 +1626,22 @@ ghostty_terminal_set_scope(GhosttyTerminal *self,
     self->tty_name = g_strdup(tty_name ? tty_name : "");
     g_free(self->tty_path);
     self->tty_path = g_strdup(tty_path ? tty_path : "");
+}
+
+void
+ghostty_terminal_set_theme_override(GhosttyTerminal *self, const char *theme_name)
+{
+    g_return_if_fail(GHOSTTY_IS_TERMINAL(self));
+    g_free(self->theme_override);
+    self->theme_override =
+        (theme_name && theme_name[0]) ? g_strdup(theme_name) : NULL;
+}
+
+const char *
+ghostty_terminal_get_theme_override(GhosttyTerminal *self)
+{
+    g_return_val_if_fail(GHOSTTY_IS_TERMINAL(self), NULL);
+    return self->theme_override;
 }
 
 void
