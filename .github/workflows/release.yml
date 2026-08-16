@@ -335,6 +335,19 @@ jobs:
           ref: ${{ env.GHOSTTY_BRANCH }}
           path: ghostty
 
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Prefetch Ghostty Zig dependencies
+        working-directory: ghostty
+        run: |
+          zig build --fetch=all \
+            -Dapp-runtime=none \
+            -Doptimize=ReleaseFast \
+            -Dtarget=x86_64-linux-gnu
+
       - name: Build snap
         uses: snapcore/action-build@v1
         id: snapcraft
