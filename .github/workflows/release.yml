@@ -303,8 +303,9 @@ jobs:
           export VERSION
           nfpm package -p deb -f packaging/nfpm.yaml
           ls -lh *.deb
-          ! dpkg-deb -c ./*.deb | grep -q './usr/share/ghostty/'
-          dpkg-deb -c ./*.deb | grep -q './usr/share/prettymux/themes/0x96f'
+          dpkg-deb -c ./*.deb > deb-contents.txt
+          ! grep -q './usr/share/ghostty/' deb-contents.txt
+          grep -q './usr/share/prettymux/themes/0x96f' deb-contents.txt
 
       - name: Smoke test package
         run: |
