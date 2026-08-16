@@ -49,7 +49,7 @@
 // ── Global state ──
 
 #ifndef PRETTYMUX_VERSION
-#define PRETTYMUX_VERSION "0.2.52"
+#define PRETTYMUX_VERSION "0.2.53"
 #endif
 
 static void terminal_search_send_action(GhosttyTerminal *term, const char *action);
@@ -1255,6 +1255,9 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
                                : "(null)",
                            g_application_get_is_registered(G_APPLICATION(app)),
                            g_application_get_dbus_connection(G_APPLICATION(app)));
+    /* Resource discovery must happen before settings write the Ghostty theme
+     * override and before ghostty_init snapshots the process environment. */
+    setup_shell_integration_env();
     app_settings_load();
     theme_set_custom(app_settings_get_custom_theme());
     app_settings_ensure_ghostty_theme_default(theme_get_current()->name);
@@ -1379,10 +1382,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
 
     // ── Per-instance socket server ──
     socket_server_set_callback(socket_commands_on_socket_command, NULL);
-    const char *sock_path = socket_server_start();
-    if (sock_path) {
-        setup_shell_integration_env();
-    }
+    socket_server_start();
 
     // Create initial workspace + restore or create defaults
     workspace_add(ui.terminal_stack, ui.workspace_list, g_ghostty_app);

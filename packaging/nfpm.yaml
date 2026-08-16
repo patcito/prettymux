@@ -1,7 +1,7 @@
 name: prettymux
 arch: amd64
 platform: linux
-version: 0.2.52
+version: 0.2.53
 maintainer: patcito
 description: GPU-accelerated terminal multiplexer
 homepage: https://github.com/patcito/prettymux
@@ -35,10 +35,10 @@ contents:
     file_info:
       mode: 0644
 
-  # Ghostty color themes. Without these the terminal theme picker can list
-  # nothing to apply, since libghostty resolves themes from this directory.
-  - src: dist/usr/share/ghostty/themes
-    dst: /usr/share/ghostty/themes
+  # Keep embedded Ghostty resources in PrettyMux's namespace so this package
+  # can coexist with the standalone Ghostty package.
+  - src: dist/usr/share/prettymux/themes
+    dst: /usr/share/prettymux/themes
     type: tree
 
   - src: dist/usr/share/prettymux/shell-integration.sh

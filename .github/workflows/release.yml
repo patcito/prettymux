@@ -116,8 +116,8 @@ jobs:
           mkdir -p dist/usr/share/prettymux/bin
           DESTDIR="$PWD/dist" meson install -C src/gtk/builddir --no-rebuild
           install -Dm644 ghostty/zig-out/lib/libghostty.so dist/usr/lib/prettymux/libghostty.so || true
-          mkdir -p dist/usr/share/ghostty/themes
-          cp -a ghostty/zig-out/share/ghostty/themes/. dist/usr/share/ghostty/themes/ 2>/dev/null || true
+          mkdir -p dist/usr/share/prettymux/themes
+          cp -a ghostty/zig-out/share/ghostty/themes/. dist/usr/share/prettymux/themes/ 2>/dev/null || true
           install -Dm644 src/gtk/prettymux-shell-integration.sh dist/usr/share/prettymux/shell-integration.sh || true
           install -Dm644 src/gtk/prettymux-bashrc.sh dist/usr/share/prettymux/prettymux-bashrc.sh || true
           install -Dm644 ghostty/src/shell-integration/bash/ghostty.bash dist/usr/share/prettymux/ghostty.bash || true
@@ -191,8 +191,8 @@ jobs:
           mkdir -p dist/usr/share/prettymux/bin
           DESTDIR="$PWD/dist" meson install -C src/gtk/builddir --no-rebuild
           install -Dm644 ghostty/zig-out/lib/libghostty.so dist/usr/lib/prettymux/libghostty.so || true
-          mkdir -p dist/usr/share/ghostty/themes
-          cp -a ghostty/zig-out/share/ghostty/themes/. dist/usr/share/ghostty/themes/ 2>/dev/null || true
+          mkdir -p dist/usr/share/prettymux/themes
+          cp -a ghostty/zig-out/share/ghostty/themes/. dist/usr/share/prettymux/themes/ 2>/dev/null || true
           install -Dm644 src/gtk/prettymux-shell-integration.sh dist/usr/share/prettymux/shell-integration.sh || true
           install -Dm644 src/gtk/prettymux-bashrc.sh dist/usr/share/prettymux/prettymux-bashrc.sh || true
           install -Dm644 ghostty/src/shell-integration/bash/ghostty.bash dist/usr/share/prettymux/ghostty.bash || true
@@ -282,8 +282,8 @@ jobs:
           mkdir -p dist/usr/share/prettymux/bin
           DESTDIR="$PWD/dist" meson install -C src/gtk/builddir --no-rebuild
           install -Dm644 ghostty/zig-out/lib/libghostty.so dist/usr/lib/prettymux/libghostty.so || true
-          mkdir -p dist/usr/share/ghostty/themes
-          cp -a ghostty/zig-out/share/ghostty/themes/. dist/usr/share/ghostty/themes/ 2>/dev/null || true
+          mkdir -p dist/usr/share/prettymux/themes
+          cp -a ghostty/zig-out/share/ghostty/themes/. dist/usr/share/prettymux/themes/ 2>/dev/null || true
           install -Dm644 src/gtk/prettymux-shell-integration.sh dist/usr/share/prettymux/shell-integration.sh || true
           install -Dm644 src/gtk/prettymux-bashrc.sh dist/usr/share/prettymux/prettymux-bashrc.sh || true
           install -Dm644 ghostty/src/shell-integration/bash/ghostty.bash dist/usr/share/prettymux/ghostty.bash || true
@@ -303,6 +303,8 @@ jobs:
           export VERSION
           nfpm package -p deb -f packaging/nfpm.yaml
           ls -lh *.deb
+          ! dpkg-deb -c ./*.deb | grep -q './usr/share/ghostty/'
+          dpkg-deb -c ./*.deb | grep -q './usr/share/prettymux/themes/0x96f'
 
       - name: Smoke test package
         run: |
@@ -464,8 +466,8 @@ jobs:
           mkdir -p "$PKGDIR/usr/share/prettymux/bin"
           DESTDIR="$PWD/$PKGDIR" meson install -C src/gtk/builddir --no-rebuild
           install -Dm644 ghostty/zig-out/lib/libghostty.so "$PKGDIR/usr/lib/prettymux/libghostty.so" || true
-          mkdir -p "$PKGDIR/usr/share/ghostty/themes"
-          cp -a ghostty/zig-out/share/ghostty/themes/. "$PKGDIR/usr/share/ghostty/themes/" 2>/dev/null || true
+          mkdir -p "$PKGDIR/usr/share/prettymux/themes"
+          cp -a ghostty/zig-out/share/ghostty/themes/. "$PKGDIR/usr/share/prettymux/themes/" 2>/dev/null || true
 
           install -Dm644 src/gtk/prettymux-shell-integration.sh "$PKGDIR/usr/share/prettymux/shell-integration.sh" || true
           install -Dm644 src/gtk/prettymux-bashrc.sh "$PKGDIR/usr/share/prettymux/prettymux-bashrc.sh" || true

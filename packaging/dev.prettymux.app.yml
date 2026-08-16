@@ -21,8 +21,8 @@ modules:
       - install -Dm644 zig-out/lib/libghostty.so /app/lib/prettymux/libghostty.so
       # Ghostty color themes: /app/share is on XDG_DATA_DIRS inside the
       # sandbox, so the terminal theme picker can resolve them.
-      - mkdir -p /app/share/ghostty/themes
-      - cp -a zig-out/share/ghostty/themes/. /app/share/ghostty/themes/
+      - mkdir -p /app/share/prettymux/themes
+      - cp -a zig-out/share/ghostty/themes/. /app/share/prettymux/themes/
       - cp -r include /app/include
       - mkdir -p /app/vendor
       - cp -r vendor/glad /app/vendor/glad

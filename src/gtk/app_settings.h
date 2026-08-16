@@ -45,8 +45,8 @@ void app_settings_write_ghostty_override(void);
  * Ghostty theme discovery.
  *
  * app_settings_ghostty_theme_dirs: NULL-terminated list of directories that
- *   hold ghostty theme files (user config, $GHOSTTY_RESOURCES_DIR, and every
- *   system data dir). Caller frees with g_strfreev.
+ *   hold ghostty theme files (user config, PrettyMux/Ghostty resource roots,
+ *   and every system data dir). Caller frees with g_strfreev.
  * app_settings_resolve_ghostty_theme_path: absolute path to the theme file
  *   named `name`, or NULL if none is found. libghostty's own theme search
  *   dirs may be empty in a packaged install, so config is written with the

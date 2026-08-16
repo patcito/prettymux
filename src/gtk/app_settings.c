@@ -99,19 +99,25 @@ app_settings_ghostty_theme_dirs(void)
 {
     GPtrArray *dirs = g_ptr_array_new();
 
-    /* User themes first, then $GHOSTTY_RESOURCES_DIR/themes, then every
-     * system data dir + /ghostty/themes (covers /usr/share/ghostty/themes). */
+    /* Prefer user and standalone Ghostty themes. PrettyMux's private bundled
+     * tree is the final fallback; the selector deduplicates identical names. */
     g_ptr_array_add(dirs, g_build_filename(g_get_user_config_dir(), "ghostty",
                                            "themes", NULL));
 
+    const char *prettymux_res =
+        g_getenv("PRETTYMUX_GHOSTTY_RESOURCE_DIR");
     const char *res = g_getenv("GHOSTTY_RESOURCES_DIR");
-    if (res && res[0])
+    if (res && res[0] && g_strcmp0(res, prettymux_res) != 0)
         g_ptr_array_add(dirs, g_build_filename(res, "themes", NULL));
 
     const char *const *sys = g_get_system_data_dirs();
     for (int i = 0; sys && sys[i]; i++)
         g_ptr_array_add(dirs, g_build_filename(sys[i], "ghostty", "themes",
                                                NULL));
+
+    if (prettymux_res && prettymux_res[0])
+        g_ptr_array_add(dirs,
+                        g_build_filename(prettymux_res, "themes", NULL));
 
     g_ptr_array_add(dirs, NULL);
     return (char **)g_ptr_array_free(dirs, FALSE);

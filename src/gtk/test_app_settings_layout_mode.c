@@ -156,6 +156,36 @@ test_default_layout_mode_invalid_value_fallback(void)
     g_free(home);
 }
 
+static void
+test_ghostty_theme_dirs_include_prettymux_resources(void)
+{
+    const char *resource_root = "/opt/prettymux-test-resources";
+    const char *ghostty_root = "/opt/ghostty-test-resources";
+    g_setenv("PRETTYMUX_GHOSTTY_RESOURCE_DIR", resource_root, TRUE);
+    g_setenv("GHOSTTY_RESOURCES_DIR", ghostty_root, TRUE);
+
+    char **dirs = app_settings_ghostty_theme_dirs();
+    char *expected_fallback = g_build_filename(resource_root, "themes", NULL);
+    char *expected_ghostty = g_build_filename(ghostty_root, "themes", NULL);
+    gint fallback_index = -1;
+    gint ghostty_index = -1;
+
+    for (guint i = 0; dirs[i]; i++) {
+        if (g_strcmp0(dirs[i], expected_fallback) == 0)
+            fallback_index = (gint)i;
+        if (g_strcmp0(dirs[i], expected_ghostty) == 0)
+            ghostty_index = (gint)i;
+    }
+
+    g_assert_cmpint(ghostty_index, >=, 0);
+    g_assert_cmpint(fallback_index, >, ghostty_index);
+    g_free(expected_fallback);
+    g_free(expected_ghostty);
+    g_strfreev(dirs);
+    g_unsetenv("PRETTYMUX_GHOSTTY_RESOURCE_DIR");
+    g_unsetenv("GHOSTTY_RESOURCES_DIR");
+}
+
 int
 main(int argc, char **argv)
 {
@@ -167,6 +197,8 @@ main(int argc, char **argv)
                     test_default_layout_mode_roundtrip_strip);
     g_test_add_func("/app-settings/layout/invalid-value-fallback",
                     test_default_layout_mode_invalid_value_fallback);
+    g_test_add_func("/app-settings/themes/prettymux-resource-dir",
+                    test_ghostty_theme_dirs_include_prettymux_resources);
 
     return g_test_run();
 }

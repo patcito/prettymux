@@ -462,7 +462,7 @@ on_gl_realize(GtkGLArea *area, gpointer user_data)
                                    : home;
 
     /* Shell integration env vars */
-    ghostty_env_var_s env_vars[18];
+    ghostty_env_var_s env_vars[24];
     size_t env_count = 0;
     char *xdg_data_dirs = NULL;
     char *shell_hook_dir = NULL;
@@ -481,6 +481,32 @@ on_gl_realize(GtkGLArea *area, gpointer user_data)
     const char *hostname = g_getenv("HOSTNAME");
     const char *host = g_getenv("HOST");
     g_autofree char *shell_name = ghostty_terminal_shell_basename(shell_path);
+
+    /* libghostty normally inherits the process environment, but embedded
+     * builds must not rely on that for the identity variables shells need to
+     * locate their startup files.  In particular, a missing HOME turns
+     * $HOME/.bashrc and tool setup paths into /.bashrc, /.cargo/env, etc. */
+    if (home && home[0]) {
+        env_vars[env_count].key = "HOME";
+        env_vars[env_count].value = home;
+        env_count++;
+    }
+
+    const char *user_name = g_get_user_name();
+    if (user_name && user_name[0]) {
+        env_vars[env_count].key = "USER";
+        env_vars[env_count].value = user_name;
+        env_count++;
+        env_vars[env_count].key = "LOGNAME";
+        env_vars[env_count].value = user_name;
+        env_count++;
+    }
+
+    if (shell_path && shell_path[0]) {
+        env_vars[env_count].key = "SHELL";
+        env_vars[env_count].value = shell_path;
+        env_count++;
+    }
 
     env_vars[env_count].key = "PRETTYMUX";
     env_vars[env_count].value = "1";
