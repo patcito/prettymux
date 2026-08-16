@@ -231,7 +231,12 @@ jobs:
         run: |
           cd ghostty
           for attempt in 1 2 3; do
-            if zig build -Dapp-runtime=none -Demit-macos-app=false -Demit-xcframework=true -Doptimize=ReleaseFast; then
+            if zig build \
+              -Dapp-runtime=none \
+              -Demit-macos-app=false \
+              -Demit-xcframework=true \
+              -Dxcframework-target=native \
+              -Doptimize=ReleaseFast; then
               break
             fi
 
