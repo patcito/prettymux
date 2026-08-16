@@ -88,6 +88,8 @@ elif is_macos
     if fs.exists(candidate)
       ghostty_macos_xcframework = candidate
       foreach lib_candidate : [
+        candidate / 'macos-arm64_x86_64' / 'libghostty-internal.a',
+        candidate / 'macos-arm64' / 'libghostty-internal.a',
         candidate / 'macos-arm64_x86_64' / 'libghostty.a',
         candidate / 'macos-arm64' / 'libghostty.a',
         candidate / 'macos-arm64_x86_64' / 'ghostty',

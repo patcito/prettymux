@@ -250,7 +250,7 @@ jobs:
 
       - name: Inspect ghostty outputs
         run: |
-          find ghostty -maxdepth 4 \( -name 'GhosttyKit.xcframework' -o -name 'libghostty.dylib' \)
+          find ghostty/macos/GhosttyKit.xcframework -maxdepth 3 -type f -print
 
       - name: Build prettymux
         run: |
