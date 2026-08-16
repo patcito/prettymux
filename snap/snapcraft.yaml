@@ -1,6 +1,6 @@
 name: prettymux
 base: core24
-version: '0.2.50'
+version: '0.2.51'
 license: GPL-3.0-only
 summary: GPU-accelerated terminal multiplexer
 description: |
@@ -33,6 +33,9 @@ parts:
       mkdir -p "$ZIG_DIR"
       curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz" \
         | tar -xJ -C "$ZIG_DIR" --strip-components=1
+      # Snapcraft's managed LXD resolv.conf can omit the final newline.
+      # Zig 0.16 treats that as a parse failure before resolving dependencies.
+      printf '\n' >> /etc/resolv.conf
       "$ZIG_DIR/zig" build \
         -Dapp-runtime=none \
         -Doptimize=ReleaseFast \
