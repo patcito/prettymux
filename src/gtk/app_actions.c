@@ -7,6 +7,7 @@
 #include "app_settings.h"
 #include "app_support.h"
 #include "app_state.h"
+#include "theme_selector.h"
 #include "close_confirm.h"
 #include "command_palette.h"
 #include "ghostty.h"
@@ -503,6 +504,16 @@ app_actions_handle(const char *action)
         sync_ghostty_theme_to_prettymux_theme();
         app_settings_save();
         apply_runtime_settings(NULL);
+    } else if (strcmp(action, "theme.select") == 0) {
+        /* Open the color-theme picker with an in-dialog scope selector
+         * (tab / pane / workspace) for the focused terminal. */
+        Workspace *ws = workspace_get_current();
+        GtkNotebook *pane = ws ? workspace_get_focused_pane(ws) : NULL;
+        GhosttyTerminal *term = (pane && GTK_IS_NOTEBOOK(pane))
+            ? notebook_terminal_at(pane, gtk_notebook_get_current_page(pane))
+            : NULL;
+        if (term)
+            theme_selector_popup_for_terminal(GTK_WIDGET(term), term);
     } else if (strcmp(action, "tab.close") == 0) {
         request_close_current_tab(workspace_get_current());
     } else if (strcmp(action, "pane.tab.move") == 0) {

@@ -223,6 +223,13 @@ test_workspace_layout = executable('test_workspace_layout',
 )
 test('workspace-layout', test_workspace_layout)
 
+test_shortcuts_unique = executable('test_shortcuts_unique',
+  files('test_shortcuts_unique.c', 'shortcuts.c'),
+  dependencies: [gtk4],
+  include_directories: extra_include_dirs,
+)
+test('shortcuts-unique', test_shortcuts_unique)
+
 test_workspace_strip = executable('test_workspace_strip',
   files('test_workspace_strip.c', 'workspace_strip.c', 'workspace_layout.c'),
   dependencies: [gtk4],

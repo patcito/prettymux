@@ -241,6 +241,7 @@ notebook_terminal_at(GtkNotebook *notebook, int page_num)
     return NULL;
 }
 
+
 const char *
 ghostty_terminal_get_cwd(GhosttyTerminal *self)
 {

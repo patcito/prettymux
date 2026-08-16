@@ -2650,7 +2650,9 @@ create_terminal_tab(Workspace *ws, GtkNotebook *notebook,
     GtkWidget *tab_label = create_editable_tab_label(
         "Terminal", terminal, ws, FALSE, &inner_label);
 
-    /* Right-click the tab label -> per-tab theme menu. */
+    /* Right-click the tab label -> theme menu (tab / pane / workspace).
+     * Plain bubble phase + no sequence claim, exactly like the working
+     * sidebar row menu, so the popover keeps its autohide grab. */
     {
         GtkGesture *rclick = gtk_gesture_click_new();
         gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(rclick),
@@ -4575,28 +4577,120 @@ on_notebook_pressed(GtkGestureClick *gesture, int n_press,
         workspace_set_active_pane(ws, GTK_NOTEBOOK(widget));
 }
 
-/* ── Tab / pane theme context menus ─────────────────────────────────
+/* ── Tab theme context menu ──────────────────────────────────────────
  *
- * Right-clicking a tab label or a pane notebook shows a small menu whose
- * "Theme…" item opens the per-scope ghostty theme picker (theme_selector.c).
+ * Right-clicking a tab shows a Tab/Pane/Workspace menu; each item opens the
+ * theme picker for that scope. Implemented as a plain GtkPopover of buttons
+ * (not a GtkPopoverMenu): a menu-model popover parented in the notebook tab
+ * strip both mis-renders (the tab-label icon measures at a negative size and
+ * the workspace overlay clips it) and, when reparented to the toplevel to
+ * dodge that, fails to resolve its actions. Plain buttons sidestep both: the
+ * popover is parented to the TOPLEVEL (escaping the overlay clip) and the
+ * "clicked" signals are ordinary callbacks that always fire.
  */
-/* Destroy a dynamically-created context-menu popover once it closes, so
- * repeated right-clicks don't accumulate hidden popovers on the anchor. */
-static void
-on_ctx_menu_popover_closed(GtkPopover *popover, gpointer user_data)
+static gboolean
+ctx_popover_unparent_idle(gpointer popover)
 {
-    (void)user_data;
-    gtk_widget_unparent(GTK_WIDGET(popover));
+    if (gtk_widget_get_parent(GTK_WIDGET(popover)))
+        gtk_widget_unparent(GTK_WIDGET(popover));
+    g_object_unref(popover);
+    return G_SOURCE_REMOVE;
 }
 
 static void
-on_tab_theme_activate(GSimpleAction *action, GVariant *param, gpointer user_data)
+ctx_popover_closed_unparent(GtkPopover *popover, gpointer user_data)
 {
-    (void)action;
-    (void)param;
-    GhosttyTerminal *term = user_data;
-    if (term && GHOSTTY_IS_TERMINAL(term))
+    (void)user_data;
+    /* Defer, and only once: "closed" fires while GtkModelButton/our button is
+     * still dispatching its click, so don't destroy the tree from under it. */
+    if (g_object_get_data(G_OBJECT(popover), "unparent-scheduled"))
+        return;
+    g_object_set_data(G_OBJECT(popover), "unparent-scheduled",
+                      GINT_TO_POINTER(1));
+    g_idle_add(ctx_popover_unparent_idle, g_object_ref(popover));
+}
+
+static GtkNotebook *
+tab_pane_of(GhosttyTerminal *term)
+{
+    GtkWidget *dummy = ghostty_terminal_get_dummy_target(term);
+    GtkWidget *anc = dummy ? gtk_widget_get_ancestor(dummy, GTK_TYPE_NOTEBOOK)
+                           : NULL;
+    return GTK_IS_NOTEBOOK(anc) ? GTK_NOTEBOOK(anc) : NULL;
+}
+
+/* Popover-owned context: the window-parented popover can outlive the tab, so
+ * the terminal is held by weak ref, not a raw pointer. */
+typedef struct {
+    GWeakRef   term_ref;
+    GtkWidget *popover;
+} TabMenuCtx;
+
+static void
+tab_menu_ctx_free(gpointer data)
+{
+    TabMenuCtx *ctx = data;
+    g_weak_ref_clear(&ctx->term_ref);
+    g_free(ctx);
+}
+
+static void
+on_tab_menu_tab_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    TabMenuCtx *ctx = user_data;
+    GhosttyTerminal *term = g_weak_ref_get(&ctx->term_ref);
+    if (ctx->popover)
+        gtk_popover_popdown(GTK_POPOVER(ctx->popover));
+    if (term) {
         theme_selector_popup_tab(GTK_WIDGET(term), term);
+        g_object_unref(term);
+    }
+}
+
+static void
+on_tab_menu_pane_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    TabMenuCtx *ctx = user_data;
+    GhosttyTerminal *term = g_weak_ref_get(&ctx->term_ref);
+    GtkNotebook *nb = term ? tab_pane_of(term) : NULL;
+    if (ctx->popover)
+        gtk_popover_popdown(GTK_POPOVER(ctx->popover));
+    if (nb)
+        theme_selector_popup_pane(GTK_WIDGET(nb), nb);
+    if (term)
+        g_object_unref(term);
+}
+
+static void
+on_tab_menu_ws_clicked(GtkButton *button, gpointer user_data)
+{
+    (void)button;
+    TabMenuCtx *ctx = user_data;
+    GhosttyTerminal *term = g_weak_ref_get(&ctx->term_ref);
+    GtkNotebook *nb = term ? tab_pane_of(term) : NULL;
+    Workspace *ws = nb ? g_object_get_data(G_OBJECT(nb), "workspace-ptr") : NULL;
+    if (ctx->popover)
+        gtk_popover_popdown(GTK_POPOVER(ctx->popover));
+    if (ws)
+        theme_selector_popup_workspace(NULL, ws);
+    if (term)
+        g_object_unref(term);
+}
+
+static void
+tab_menu_add_button(GtkWidget *box, const char *label, GCallback cb,
+                    gpointer user_data)
+{
+    GtkWidget *button = gtk_button_new_with_label(label);
+    GtkWidget *child = gtk_button_get_child(GTK_BUTTON(button));
+
+    gtk_button_set_has_frame(GTK_BUTTON(button), FALSE);
+    if (GTK_IS_LABEL(child))
+        gtk_label_set_xalign(GTK_LABEL(child), 0.0f);
+    g_signal_connect(button, "clicked", cb, user_data);
+    gtk_box_append(GTK_BOX(box), button);
 }
 
 static void
@@ -4611,73 +4705,41 @@ on_tab_right_click(GtkGestureClick *gesture, int n_press,
     if (!term || !GHOSTTY_IS_TERMINAL(term))
         return;
 
-    /* Claim so the notebook's own click gesture doesn't also react. */
-    gtk_gesture_set_state(GTK_GESTURE(gesture), GTK_EVENT_SEQUENCE_CLAIMED);
+    GtkRoot *root = gtk_widget_get_root(widget);
+    GtkWidget *toplevel = (root && GTK_IS_WINDOW(root)) ? GTK_WIDGET(root)
+                                                        : widget;
 
-    GMenu *menu = g_menu_new();
-    g_menu_append(menu, "Theme…", "tabctx.theme");
-
-    GSimpleActionGroup *ag = g_simple_action_group_new();
-    GSimpleAction *act = g_simple_action_new("theme", NULL);
-    g_signal_connect(act, "activate", G_CALLBACK(on_tab_theme_activate), term);
-    g_action_map_add_action(G_ACTION_MAP(ag), G_ACTION(act));
-    gtk_widget_insert_action_group(widget, "tabctx", G_ACTION_GROUP(ag));
-
-    GtkWidget *popover = gtk_popover_menu_new_from_model(G_MENU_MODEL(menu));
-    gtk_widget_set_parent(popover, widget);
+    GtkWidget *popover = gtk_popover_new();
+    gtk_widget_set_parent(popover, toplevel);
     g_signal_connect(popover, "closed",
-                     G_CALLBACK(on_ctx_menu_popover_closed), NULL);
-    GdkRectangle rect = { (int)x, (int)y, 1, 1 };
+                     G_CALLBACK(ctx_popover_closed_unparent), NULL);
+
+    TabMenuCtx *ctx = g_new0(TabMenuCtx, 1);
+    g_weak_ref_init(&ctx->term_ref, term);
+    ctx->popover = popover;
+    g_object_set_data_full(G_OBJECT(popover), "tab-menu-ctx", ctx,
+                           tab_menu_ctx_free);
+
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    gtk_popover_set_child(GTK_POPOVER(popover), box);
+    tab_menu_add_button(box, "Tab theme…",
+                        G_CALLBACK(on_tab_menu_tab_clicked), ctx);
+    tab_menu_add_button(box, "Pane theme…",
+                        G_CALLBACK(on_tab_menu_pane_clicked), ctx);
+    tab_menu_add_button(box, "Workspace theme…",
+                        G_CALLBACK(on_tab_menu_ws_clicked), ctx);
+
+    /* Point at the click location expressed in toplevel coordinates. */
+    double tx = x, ty = y;
+    graphene_point_t p;
+    if (gtk_widget_compute_point(widget, toplevel,
+            &GRAPHENE_POINT_INIT((float)x, (float)y), &p)) {
+        tx = p.x;
+        ty = p.y;
+    }
+    GdkRectangle rect = { (int)tx, (int)ty, 1, 1 };
     gtk_popover_set_pointing_to(GTK_POPOVER(popover), &rect);
     gtk_popover_popup(GTK_POPOVER(popover));
-
-    g_object_unref(menu);
-    g_object_unref(act);
-    g_object_unref(ag);
-}
-
-static void
-on_pane_theme_activate(GSimpleAction *action, GVariant *param, gpointer user_data)
-{
-    (void)action;
-    (void)param;
-    GtkNotebook *nb = user_data;
-    if (nb && GTK_IS_NOTEBOOK(nb))
-        theme_selector_popup_pane(GTK_WIDGET(nb), nb);
-}
-
-static void
-on_pane_right_click(GtkGestureClick *gesture, int n_press,
-                    double x, double y, gpointer user_data)
-{
-    (void)n_press;
-    (void)user_data;
-    GtkWidget *widget = gtk_event_controller_get_widget(
-        GTK_EVENT_CONTROLLER(gesture));
-
-    if (!GTK_IS_NOTEBOOK(widget))
-        return;
-
-    GMenu *menu = g_menu_new();
-    g_menu_append(menu, "Theme…", "panectx.theme");
-
-    GSimpleActionGroup *ag = g_simple_action_group_new();
-    GSimpleAction *act = g_simple_action_new("theme", NULL);
-    g_signal_connect(act, "activate", G_CALLBACK(on_pane_theme_activate), widget);
-    g_action_map_add_action(G_ACTION_MAP(ag), G_ACTION(act));
-    gtk_widget_insert_action_group(widget, "panectx", G_ACTION_GROUP(ag));
-
-    GtkWidget *popover = gtk_popover_menu_new_from_model(G_MENU_MODEL(menu));
-    gtk_widget_set_parent(popover, widget);
-    g_signal_connect(popover, "closed",
-                     G_CALLBACK(on_ctx_menu_popover_closed), NULL);
-    GdkRectangle rect = { (int)x, (int)y, 1, 1 };
-    gtk_popover_set_pointing_to(GTK_POPOVER(popover), &rect);
-    gtk_popover_popup(GTK_POPOVER(popover));
-
-    g_object_unref(menu);
-    g_object_unref(act);
-    g_object_unref(ag);
 }
 
 /* Helper: create a notebook for a new pane and wire up the "+" button. */
@@ -4728,14 +4790,6 @@ create_pane_notebook(Workspace *ws, ghostty_app_t app)
     g_signal_connect(click, "pressed",
                      G_CALLBACK(on_notebook_pressed), ws);
     gtk_widget_add_controller(notebook, GTK_EVENT_CONTROLLER(click));
-
-    /* Right-click the pane chrome (tab strip / borders) -> pane theme menu. */
-    GtkGesture *rclick = gtk_gesture_click_new();
-    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(rclick),
-                                  GDK_BUTTON_SECONDARY);
-    g_signal_connect(rclick, "pressed",
-                     G_CALLBACK(on_pane_right_click), NULL);
-    gtk_widget_add_controller(notebook, GTK_EVENT_CONTROLLER(rclick));
 
     return notebook;
 }

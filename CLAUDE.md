@@ -43,9 +43,50 @@ list in `src/gtk/meson.build`, and new tests registered there with `test(...)`.
 - `socket_server.c` / `socket_commands.c` — Unix-domain-socket IPC server.
 - `prettymux-open.c` — standalone CLI client (`prettymux-open`) that talks to the socket.
 - `prettymux_agent_cli.c` — agent-oriented CLI surface.
+- `theme_selector.c` — per-tab / per-pane / per-workspace ghostty color-theme
+  picker (see "Theming" below).
 - `theme.c`, `notifications.c`, `app_settings.c`, `settings_dialog.c`, `app_state.c`.
 - `prettymux-shell-integration.sh`, `prettymux-bashrc.sh` — injected shell integration
   (registers the terminal's session id, overrides `xdg-open` to forward URLs to the host).
+
+## Theming
+
+There are **two independent theme layers** — don't conflate them:
+
+1. **PrettyMux chrome theme** (`theme.c`): Dark / Light / Monokai / Custom. One
+   global `GtkCssProvider` on the default display, so it is app-wide and
+   *cannot* differ between two panes on screen at once.
+2. **Ghostty terminal color theme** (the `theme = <name>` ghostty config): the
+   terminal surface palette. This *is* per-surface, and is what the per-tab /
+   per-pane / per-workspace overrides set.
+
+Scoped overrides resolve most-specific-first —
+**tab → pane → workspace → global default**:
+
+- tab: `ghostty_terminal_{get,set}_theme_override()`
+- pane: `"pane-theme"` object data on the pane `GtkNotebook`
+- workspace: `Workspace.theme_name`
+
+`app_terminal_apply_scoped_theme()` (`main.c`) resolves a terminal's effective
+theme by walking its dummy target → ancestor notebook → `"workspace-ptr"`, then
+pushes a cached per-theme `ghostty_config_t` via `ghostty_surface_update_config()`.
+All three levels persist in the session JSON *and* in the Move-to-Window payload.
+UI entry points: right-click a tab, the sidebar workspace menu, or `Ctrl+Shift+U`.
+
+Two non-obvious constraints, both learned the hard way:
+
+- **Theme names must be resolved to an absolute path**
+  (`app_settings_resolve_ghostty_theme_path()`). libghostty only searches
+  `$XDG_CONFIG_HOME/ghostty/themes` and `<GHOSTTY_RESOURCES_DIR>/themes`, which
+  are typically empty here while the real theme files live in
+  `/usr/share/ghostty/themes`. Writing a bare `theme = Foo` silently fails to
+  resolve and the colors just never change.
+- **The tab context menu is a plain `GtkPopover` of `GtkButton`s, not a
+  `GtkPopoverMenu`.** A menu-model popover in the notebook tab strip both
+  mis-renders and fails to activate its actions, because `GtkModelButton` calls
+  `gtk_popover_popdown()` *before* activating, and a synchronous
+  `closed → gtk_widget_unparent` destroys the action-muxer ancestry in between.
+  Any dynamically created context popover must defer its teardown to an idle.
 
 ## Conventions
 

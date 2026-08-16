@@ -380,6 +380,13 @@ theme_selector_popup_workspace(GtkWidget *anchor, Workspace *ws)
 }
 
 void
+theme_selector_popup_for_terminal(GtkWidget *anchor, GhosttyTerminal *term)
+{
+    (void)anchor;
+    (void)term;
+}
+
+void
 app_terminal_apply_scoped_theme(GhosttyTerminal *term)
 {
     (void)term;

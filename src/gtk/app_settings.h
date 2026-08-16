@@ -40,3 +40,27 @@ void app_settings_set_custom_theme(const Theme *theme);
 
 char *app_settings_ghostty_override_path(void);
 void app_settings_write_ghostty_override(void);
+
+/*
+ * Ghostty theme discovery.
+ *
+ * app_settings_ghostty_theme_dirs: NULL-terminated list of directories that
+ *   hold ghostty theme files (user config, $GHOSTTY_RESOURCES_DIR, and every
+ *   system data dir). Caller frees with g_strfreev.
+ * app_settings_resolve_ghostty_theme_path: absolute path to the theme file
+ *   named `name`, or NULL if none is found. libghostty's own theme search
+ *   dirs may be empty in a packaged install, so config is written with the
+ *   resolved absolute path (which ghostty loads directly). Caller g_free()s.
+ */
+char **app_settings_ghostty_theme_dirs(void);
+char  *app_settings_resolve_ghostty_theme_path(const char *name);
+
+/*
+ * app_settings_serialize_ghostty_theme: the value to write for `theme = ...`,
+ *   with every component resolved to an absolute path. Handles ghostty's
+ *   light/dark pair syntax ("dark:Foo,light:Bar") by resolving each side.
+ *   Returns NULL when the theme cannot be resolved (caller should not write a
+ *   theme at all rather than emit one ghostty will silently ignore).
+ *   Caller g_free()s.
+ */
+char  *app_settings_serialize_ghostty_theme(const char *name);

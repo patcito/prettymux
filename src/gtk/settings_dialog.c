@@ -3,6 +3,7 @@
 #include "app_settings.h"
 #include "close_confirm.h"
 #include "theme.h"
+#include "theme_selector.h"
 #include "workspace.h"
 
 #include <string.h>
@@ -21,7 +22,7 @@ typedef struct {
     GtkWidget *gtk_renderer_dropdown;
     GtkWidget *font_spin;
     GtkWidget *tab_height_spin;
-    GtkWidget *ghostty_theme_entry;
+    GtkWidget *ghostty_theme_dropdown;
     GtkWidget *confirm_tab;
     GtkWidget *confirm_pane;
     GtkWidget *confirm_workspace;
@@ -74,169 +75,25 @@ static const struct {
     {"Status bar text", "status_bar_fg"},
 };
 
-enum {
-    GHOSTTY_THEME_COLUMN_NAME = 0,
-};
 
-static int
-ghostty_theme_token_start(const char *text, int cursor_pos)
+/* Select `name` in the ghostty-theme dropdown, appending it to the model if
+ * it isn't one of the enumerated themes (e.g. a compound "dark:X,light:Y"
+ * value the user typed previously), so switching selections never loses it. */
+static void
+settings_ghostty_theme_dropdown_select(GtkDropDown *dd, const char *name)
 {
-    int start;
-
-    if (!text)
-        return 0;
-
-    start = CLAMP(cursor_pos, 0, (int)strlen(text));
-    while (start > 0) {
-        char ch = text[start - 1];
-        if (ch == ':' || ch == ',')
-            break;
-        start--;
-    }
-
-    while (text[start] == ' ')
-        start++;
-
-    return start;
-}
-
-static GtkTreeModel *
-ghostty_theme_completion_model(void)
-{
-    static GtkListStore *store = NULL;
-
-    if (!store) {
-        gchar *stdout_data = NULL;
-        gchar *stderr_data = NULL;
-        gchar **lines;
-
-        store = gtk_list_store_new(1, G_TYPE_STRING);
-        if (!g_spawn_command_line_sync("ghostty +list-themes",
-                                       &stdout_data, &stderr_data, NULL, NULL)) {
-            static const char *fallback_themes[] = {
-                "Catppuccin Mocha",
-                "Catppuccin Latte",
-                "Adwaita Dark",
-                "Adwaita",
-                NULL
-            };
-
-            for (int i = 0; fallback_themes[i]; i++) {
-                GtkTreeIter iter;
-                gtk_list_store_append(store, &iter);
-                gtk_list_store_set(store, &iter,
-                                   GHOSTTY_THEME_COLUMN_NAME, fallback_themes[i],
-                                   -1);
-            }
-            return GTK_TREE_MODEL(store);
+    if (!dd || !name || !name[0])
+        return;
+    GtkStringList *model = GTK_STRING_LIST(gtk_drop_down_get_model(dd));
+    guint n = g_list_model_get_n_items(G_LIST_MODEL(model));
+    for (guint i = 0; i < n; i++) {
+        if (g_strcmp0(gtk_string_list_get_string(model, i), name) == 0) {
+            gtk_drop_down_set_selected(dd, i);
+            return;
         }
-
-        lines = g_strsplit(stdout_data ? stdout_data : "", "\n", -1);
-        for (guint i = 0; lines[i] != NULL; i++) {
-            GtkTreeIter iter;
-            char *line = g_strstrip(lines[i]);
-            char *suffix;
-
-            if (!line[0])
-                continue;
-
-            suffix = strstr(line, " (");
-            if (suffix)
-                *suffix = '\0';
-
-            gtk_list_store_append(store, &iter);
-            gtk_list_store_set(store, &iter,
-                               GHOSTTY_THEME_COLUMN_NAME, line,
-                               -1);
-        }
-
-        g_strfreev(lines);
-        g_free(stdout_data);
-        g_free(stderr_data);
     }
-
-    return GTK_TREE_MODEL(store);
-}
-
-static gboolean
-ghostty_theme_match_func(GtkEntryCompletion *completion,
-                         const char *key,
-                         GtkTreeIter *iter,
-                         gpointer user_data)
-{
-    GtkWidget *entry;
-    const char *text;
-    char *candidate = NULL;
-    char *token = NULL;
-    char *candidate_fold = NULL;
-    char *token_fold = NULL;
-    int cursor_pos;
-    int token_start;
-    gboolean match = FALSE;
-
-    (void)key;
-    (void)user_data;
-
-    entry = gtk_entry_completion_get_entry(completion);
-    if (!entry)
-        return FALSE;
-
-    text = gtk_editable_get_text(GTK_EDITABLE(entry));
-    cursor_pos = gtk_editable_get_position(GTK_EDITABLE(entry));
-    token_start = ghostty_theme_token_start(text, cursor_pos);
-    token = g_strndup(text + token_start, cursor_pos - token_start);
-
-    gtk_tree_model_get(gtk_entry_completion_get_model(completion), iter,
-                       GHOSTTY_THEME_COLUMN_NAME, &candidate,
-                       -1);
-
-    candidate_fold = g_utf8_casefold(candidate ? candidate : "", -1);
-    token_fold = g_utf8_casefold(token ? token : "", -1);
-    match = token_fold[0] == '\0' || g_str_has_prefix(candidate_fold, token_fold);
-
-    g_free(candidate);
-    g_free(token);
-    g_free(candidate_fold);
-    g_free(token_fold);
-    return match;
-}
-
-static gboolean
-on_ghostty_theme_match_selected(GtkEntryCompletion *completion,
-                                GtkTreeModel *model,
-                                GtkTreeIter *iter,
-                                gpointer user_data)
-{
-    GtkWidget *entry;
-    const char *text;
-    char *theme_name = NULL;
-    int cursor_pos;
-    int token_start;
-    int insert_pos;
-
-    (void)user_data;
-
-    entry = gtk_entry_completion_get_entry(completion);
-    if (!entry)
-        return FALSE;
-
-    text = gtk_editable_get_text(GTK_EDITABLE(entry));
-    cursor_pos = gtk_editable_get_position(GTK_EDITABLE(entry));
-    token_start = ghostty_theme_token_start(text, cursor_pos);
-
-    gtk_tree_model_get(model, iter,
-                       GHOSTTY_THEME_COLUMN_NAME, &theme_name,
-                       -1);
-    if (!theme_name)
-        return FALSE;
-
-    gtk_editable_delete_text(GTK_EDITABLE(entry), token_start, cursor_pos);
-    insert_pos = token_start;
-    gtk_editable_insert_text(GTK_EDITABLE(entry), theme_name, -1, &insert_pos);
-    gtk_editable_set_position(GTK_EDITABLE(entry), insert_pos);
-
-    g_free(theme_name);
-    return TRUE;
+    gtk_string_list_append(model, name);
+    gtk_drop_down_set_selected(dd, n);
 }
 
 static gboolean
@@ -346,9 +203,22 @@ settings_update_custom_visibility(SettingsDialogState *state)
         gtk_window_set_default_size(state->dialog, 720, 760);
     }
 
-    if (theme && !is_custom) {
-        gtk_editable_set_text(GTK_EDITABLE(state->ghostty_theme_entry),
-                              app_settings_default_ghostty_theme_for_prettymux_theme(theme->name));
+}
+
+/* Point the Ghostty theme at the default that pairs with the selected
+ * PrettyMux chrome theme. Only ever called for a USER-driven chrome-theme
+ * change: doing it while building the dialog would overwrite (and then Apply
+ * would persist) whatever Ghostty theme the user already had saved. */
+static void
+settings_sync_ghostty_theme_to_chrome(SettingsDialogState *state)
+{
+    guint selected = gtk_drop_down_get_selected(GTK_DROP_DOWN(state->theme_dropdown));
+    const Theme *theme = theme_get_at((int)selected);
+
+    if (theme && !theme_name_is_custom(theme->name)) {
+        settings_ghostty_theme_dropdown_select(
+            GTK_DROP_DOWN(state->ghostty_theme_dropdown),
+            app_settings_default_ghostty_theme_for_prettymux_theme(theme->name));
     }
 }
 
@@ -358,6 +228,7 @@ on_theme_selection_changed(GObject *object, GParamSpec *pspec, gpointer user_dat
     (void)object;
     (void)pspec;
     settings_update_custom_visibility(user_data);
+    settings_sync_ghostty_theme_to_chrome(user_data);
 }
 
 static void
@@ -465,8 +336,13 @@ on_apply_clicked(GtkButton *button, gpointer user_data)
         gtk_spin_button_get_value(GTK_SPIN_BUTTON(state->font_spin)));
     app_settings_set_tab_height(
         gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(state->tab_height_spin)));
-    app_settings_set_ghostty_theme(
-        gtk_editable_get_text(GTK_EDITABLE(state->ghostty_theme_entry)));
+    {
+        GObject *sel = gtk_drop_down_get_selected_item(
+            GTK_DROP_DOWN(state->ghostty_theme_dropdown));
+        if (sel)
+            app_settings_set_ghostty_theme(
+                gtk_string_object_get_string(GTK_STRING_OBJECT(sel)));
+    }
     toast_position_selected =
         gtk_drop_down_get_selected(GTK_DROP_DOWN(state->toast_position_dropdown));
     app_settings_set_toast_position(
@@ -641,30 +517,27 @@ settings_dialog_present(GtkWindow *parent,
                    settings_row("Default font size (0 keeps Ghostty default)",
                                 state->font_spin));
 
-    state->ghostty_theme_entry = gtk_entry_new();
-    gtk_editable_set_text(GTK_EDITABLE(state->ghostty_theme_entry),
-                          app_settings_get_ghostty_theme());
-    gtk_entry_set_placeholder_text(GTK_ENTRY(state->ghostty_theme_entry),
-                                   "dark:Catppuccin Mocha,light:Catppuccin Latte");
     {
-        GtkEntryCompletion *completion = gtk_entry_completion_new();
-        gtk_entry_completion_set_model(completion, ghostty_theme_completion_model());
-        gtk_entry_completion_set_text_column(completion, GHOSTTY_THEME_COLUMN_NAME);
-        gtk_entry_completion_set_minimum_key_length(completion, 1);
-        gtk_entry_completion_set_inline_completion(completion, TRUE);
-        gtk_entry_completion_set_popup_completion(completion, TRUE);
-        gtk_entry_completion_set_popup_set_width(completion, TRUE);
-        gtk_entry_completion_set_match_func(completion,
-                                            ghostty_theme_match_func,
-                                            NULL, NULL);
-        g_signal_connect(completion, "match-selected",
-                         G_CALLBACK(on_ghostty_theme_match_selected), NULL);
-        gtk_entry_set_completion(GTK_ENTRY(state->ghostty_theme_entry), completion);
-        g_object_unref(completion);
+        /* Searchable dropdown of the full ghostty theme list (same source as
+         * the right-click scoped pickers), preselecting the current value. */
+        GtkStringList *theme_model = gtk_string_list_new(NULL);
+        char **theme_names = theme_selector_list_themes();
+        for (int i = 0; theme_names[i]; i++)
+            gtk_string_list_append(theme_model, theme_names[i]);
+
+        GtkExpression *expr = gtk_property_expression_new(
+            GTK_TYPE_STRING_OBJECT, NULL, "string");
+        state->ghostty_theme_dropdown =
+            gtk_drop_down_new(G_LIST_MODEL(theme_model), expr);
+        gtk_drop_down_set_enable_search(
+            GTK_DROP_DOWN(state->ghostty_theme_dropdown), TRUE);
+        settings_ghostty_theme_dropdown_select(
+            GTK_DROP_DOWN(state->ghostty_theme_dropdown),
+            app_settings_get_ghostty_theme());
     }
     gtk_box_append(GTK_BOX(content),
-                   settings_row("Default Ghostty theme",
-                                state->ghostty_theme_entry));
+                   settings_row("Default Ghostty theme (terminal colors)",
+                                state->ghostty_theme_dropdown));
 
     state->focus_on_hover_switch = gtk_switch_new();
     gtk_switch_set_active(GTK_SWITCH(state->focus_on_hover_switch),

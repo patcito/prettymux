@@ -304,11 +304,17 @@ build_ghostty_config_for_theme(const char *theme_name, gboolean *out_applied)
      * name can't inject arbitrary config directives into this scope. Use a
      * private per-call temp file (removed immediately) so concurrent
      * prettymux instances can't race on a shared scratch path. */
-    if (theme_name && theme_name[0] && !strpbrk(theme_name, "\r\n=")) {
+    /* Reference the theme by resolved absolute path(s) so ghostty loads it
+     * directly -- its own theme search dirs may be empty in this install.
+     * A theme that does not resolve is NOT applied: writing a bare name that
+     * ghostty cannot find would silently render with the base palette while
+     * we cached it as a success. */
+    char *theme_value = app_settings_serialize_ghostty_theme(theme_name);
+    if (theme_value) {
         char *scratch = NULL;
         int fd = g_file_open_tmp("prettymux-theme-XXXXXX.conf", &scratch, NULL);
         if (fd >= 0) {
-            char *body = g_strdup_printf("theme = %s\n", theme_name);
+            char *body = g_strdup_printf("theme = %s\n", theme_value);
             g_close(fd, NULL);
             if (g_file_set_contents(scratch, body, -1, NULL)) {
                 ghostty_config_load_file(config, scratch);
@@ -318,6 +324,7 @@ build_ghostty_config_for_theme(const char *theme_name, gboolean *out_applied)
             g_remove(scratch);
         }
         g_free(scratch);
+        g_free(theme_value);
     }
 
     ghostty_config_finalize(config);

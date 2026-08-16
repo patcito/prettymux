@@ -6,7 +6,7 @@
 - Meson + Ninja
 - C17 compiler
 - Ghostty fork from `patcito/ghostty` on branch `linux-embedded-platform`
-- Zig `0.15.2+` to build `libghostty`
+- Zig `0.16.0+` to build `libghostty` (upstream's current `minimum_zig_version`)
 
 ### Install deps on Ubuntu or Debian
 
@@ -51,16 +51,36 @@ zig build \
   -Dapp-runtime=none \
   -Doptimize=ReleaseFast \
   -Dtarget=x86_64-linux-gnu
+
+# Upstream installs the embedded library as ghostty-internal.so, but its
+# SONAME is still libghostty.so -- which is the name PrettyMux links and the
+# dynamic loader looks for at runtime. Create that name:
+ln -sfn ghostty-internal.so zig-out/lib/libghostty.so
 ```
 
 That produces:
 
-- `zig-out/lib/libghostty.so`
+- `zig-out/lib/ghostty-internal.so` (the shared library itself)
+- `zig-out/lib/libghostty.so` (the symlink above; what PrettyMux links)
 - `include/ghostty.h`
 
 The Ghostty tree also needs:
 
 - `vendor/glad/`
+
+> **Watch out when updating Ghostty.** Older checkouts installed the library
+> as `zig-out/lib/libghostty.so` directly. After upstream's rename, a stale
+> `libghostty.so` left over from an older build will still satisfy both the
+> link and the loader (identical SONAME), so PrettyMux silently keeps running
+> the *old* terminal code even though the build "succeeded". If terminals
+> behave like a previous version after an update, check that
+> `zig-out/lib/libghostty.so` really resolves to the freshly built
+> `ghostty-internal.so`:
+>
+> ```bash
+> ls -l zig-out/lib/libghostty.so          # should point at ghostty-internal.so
+> ldd builddir/prettymux | grep ghostty    # and prettymux should resolve to it
+> ```
 
 ## Build PrettyMux
 

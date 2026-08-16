@@ -21,6 +21,21 @@
 #include "ghostty_terminal.h"
 #include "workspace.h"
 
+/*
+ * Open the theme picker for a terminal with an in-dialog scope selector
+ * (This tab / This pane / This workspace). Used by the tab right-click.
+ */
+void theme_selector_popup_for_terminal(GtkWidget *anchor, GhosttyTerminal *term);
+
+/* Single-scope pickers (sidebar workspace menu; debug IPC). */
 void theme_selector_popup_tab(GtkWidget *anchor, GhosttyTerminal *term);
 void theme_selector_popup_pane(GtkWidget *anchor, GtkNotebook *pane);
 void theme_selector_popup_workspace(GtkWidget *anchor, Workspace *ws);
+
+/*
+ * Sorted, de-duplicated, NULL-terminated list of available ghostty theme
+ * names (scanned from the theme directories once and cached for the process
+ * lifetime). Borrowed — do not free. Used by both the scoped pickers and the
+ * Settings dialog so they offer the same list.
+ */
+char **theme_selector_list_themes(void);

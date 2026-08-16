@@ -39,6 +39,9 @@ const ShortcutDef default_shortcuts[] = {
     {"settings.show",     GDK_KEY_s,             GDK_CONTROL_MASK | GDK_ALT_MASK,   "Settings"},
     {"about.show",        GDK_KEY_a,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "About"},
     {"theme.cycle",       GDK_KEY_comma,         GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Cycle theme"},
+    /* Not Ctrl+Shift+U: that is GTK/IBus's Unicode-entry prefix
+     * (Ctrl+Shift+U 1f600 Enter) and stealing it breaks Unicode input. */
+    {"theme.select",      GDK_KEY_r,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Color theme (tab/pane/workspace)"},
     {"history.show",      GDK_KEY_h,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Command history"},
     {"split.horizontal",  GDK_KEY_Return,        GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Split horizontal"},
     {"split.vertical",    GDK_KEY_o,             GDK_CONTROL_MASK | GDK_SHIFT_MASK, "Split vertical"},

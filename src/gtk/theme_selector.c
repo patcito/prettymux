@@ -6,6 +6,7 @@
 #include <adwaita.h>
 #include <string.h>
 
+#include "app_settings.h"
 #include "app_state.h"
 #include "app_ui.h"
 #include "session.h"
@@ -50,8 +51,8 @@ theme_names_cmp(gconstpointer a, gconstpointer b)
     return g_ascii_strcasecmp(*(const char *const *)a, *(const char *const *)b);
 }
 
-static char **
-theme_selector_theme_names(void)
+char **
+theme_selector_list_themes(void)
 {
     static char **cached = NULL;
 
@@ -62,25 +63,11 @@ theme_selector_theme_names(void)
                                              g_free, NULL);
     GPtrArray *names = g_ptr_array_new();
 
-    /* User themes, then $GHOSTTY_RESOURCES_DIR, then every system data dir. */
-    char *user_dir = g_build_filename(g_get_user_config_dir(), "ghostty",
-                                      "themes", NULL);
-    theme_names_add_dir(seen, names, user_dir);
-    g_free(user_dir);
-
-    const char *res = g_getenv("GHOSTTY_RESOURCES_DIR");
-    if (res && res[0]) {
-        char *rd = g_build_filename(res, "themes", NULL);
-        theme_names_add_dir(seen, names, rd);
-        g_free(rd);
-    }
-
-    const char *const *sys = g_get_system_data_dirs();
-    for (int i = 0; sys && sys[i]; i++) {
-        char *sd = g_build_filename(sys[i], "ghostty", "themes", NULL);
-        theme_names_add_dir(seen, names, sd);
-        g_free(sd);
-    }
+    /* Scan the same theme directories app_settings resolves paths against. */
+    char **dirs = app_settings_ghostty_theme_dirs();
+    for (int i = 0; dirs[i]; i++)
+        theme_names_add_dir(seen, names, dirs[i]);
+    g_strfreev(dirs);
 
     /* Supplement with the CLI list if available (strip only the trailing
      * " (source)" annotation, so names that themselves contain parentheses
@@ -100,24 +87,26 @@ theme_selector_theme_names(void)
                     *paren = '\0';
             }
             g_strstrip(line);
-            if (line[0] && !g_hash_table_contains(seen, line)) {
-                g_hash_table_add(seen, g_strdup(line));
-                g_ptr_array_add(names, g_strdup(line));
-            }
+            if (!line[0] || g_hash_table_contains(seen, line))
+                continue;
+            /* Only offer a CLI-reported theme we can actually resolve: the
+             * external `ghostty` binary may see themes this build cannot. */
+            char *probe = app_settings_resolve_ghostty_theme_path(line);
+            if (!probe)
+                continue;
+            g_free(probe);
+            g_hash_table_add(seen, g_strdup(line));
+            g_ptr_array_add(names, g_strdup(line));
         }
         g_strfreev(lines);
     }
     g_free(out);
     g_hash_table_destroy(seen);
 
-    if (names->len == 0) {
-        static const char *fallback[] = {
-            "Catppuccin Mocha", "Catppuccin Frappe", "Catppuccin Latte",
-            "Adwaita Dark", "Adwaita", "Light Owl", NULL,
-        };
-        for (int i = 0; fallback[i]; i++)
-            g_ptr_array_add(names, g_strdup(fallback[i]));
-    }
+    /* Deliberately no hardcoded fallback list: in a packaged install with no
+     * ghostty theme files, every such name would fail to resolve and applying
+     * it would silently do nothing. An empty list plus "Inherit (default)" is
+     * the honest state. */
 
     g_ptr_array_sort(names, theme_names_cmp);
     g_ptr_array_add(names, NULL);
@@ -134,11 +123,12 @@ typedef enum {
 } ThemeScope;
 
 typedef struct {
-    ThemeScope   scope;
-    GtkDropDown *dropdown;
-    GWeakRef     term_ref;   /* THEME_SCOPE_TAB */
-    GWeakRef     pane_ref;   /* THEME_SCOPE_PANE */
-    guint64      ws_serial;  /* THEME_SCOPE_WORKSPACE */
+    GtkDropDown *scope_dropdown;   /* NULL when the dialog has a fixed scope */
+    ThemeScope   fixed_scope;      /* used when scope_dropdown == NULL */
+    GtkDropDown *theme_dropdown;
+    GWeakRef     term_ref;         /* tab target   (may be unset) */
+    GWeakRef     pane_ref;         /* pane target  (may be unset) */
+    guint64      ws_serial;        /* workspace target (0 = unset) */
 } ThemeSelCtx;
 
 static void
@@ -163,14 +153,46 @@ theme_sel_find_workspace(guint64 serial)
     return NULL;
 }
 
+/* Current override string for a scope (newly allocated, or NULL to inherit). */
+static char *
+theme_sel_current_for_scope(ThemeSelCtx *ctx, ThemeScope scope)
+{
+    char *out = NULL;
+    switch (scope) {
+    case THEME_SCOPE_TAB: {
+        GhosttyTerminal *t = g_weak_ref_get(&ctx->term_ref);
+        if (t) {
+            out = g_strdup(ghostty_terminal_get_theme_override(t));
+            g_object_unref(t);
+        }
+        break;
+    }
+    case THEME_SCOPE_PANE: {
+        GtkNotebook *p = g_weak_ref_get(&ctx->pane_ref);
+        if (p) {
+            out = g_strdup(g_object_get_data(G_OBJECT(p), "pane-theme"));
+            g_object_unref(p);
+        }
+        break;
+    }
+    case THEME_SCOPE_WORKSPACE: {
+        Workspace *ws = theme_sel_find_workspace(ctx->ws_serial);
+        if (ws)
+            out = g_strdup(ws->theme_name);
+        break;
+    }
+    }
+    return out;
+}
+
 /* Apply the chosen theme (NULL/"" == inherit from the next scope up) to the
- * dialog's target, re-theme affected live surfaces, and persist. */
+ * given scope's target, re-theme affected live surfaces, and persist. */
 static void
-theme_sel_apply(ThemeSelCtx *ctx, const char *name)
+theme_sel_apply(ThemeSelCtx *ctx, ThemeScope scope, const char *name)
 {
     gboolean changed = FALSE;
 
-    switch (ctx->scope) {
+    switch (scope) {
     case THEME_SCOPE_TAB: {
         GhosttyTerminal *term = g_weak_ref_get(&ctx->term_ref);
         if (term) {
@@ -208,6 +230,41 @@ theme_sel_apply(ThemeSelCtx *ctx, const char *name)
     }
 }
 
+/* Select `name` in the theme dropdown (index 0 is "Inherit (default)").
+ * NULL/"" selects Inherit; a value not already present is appended. */
+static void
+theme_sel_select_theme(GtkDropDown *dd, const char *name)
+{
+    if (!name || !name[0]) {
+        gtk_drop_down_set_selected(dd, 0);
+        return;
+    }
+    GtkStringList *model = GTK_STRING_LIST(gtk_drop_down_get_model(dd));
+    guint n = g_list_model_get_n_items(G_LIST_MODEL(model));
+    for (guint i = 1; i < n; i++) {
+        if (g_strcmp0(gtk_string_list_get_string(model, i), name) == 0) {
+            gtk_drop_down_set_selected(dd, i);
+            return;
+        }
+    }
+    gtk_string_list_append(model, name);
+    gtk_drop_down_set_selected(dd, n);
+}
+
+/* When the scope changes, reflect that scope's current override in the theme
+ * dropdown so the dialog always shows what is actually applied there. */
+static void
+on_theme_scope_changed(GObject *obj, GParamSpec *pspec, gpointer user_data)
+{
+    (void)obj;
+    (void)pspec;
+    ThemeSelCtx *ctx = user_data;
+    ThemeScope scope = (ThemeScope)gtk_drop_down_get_selected(ctx->scope_dropdown);
+    char *cur = theme_sel_current_for_scope(ctx, scope);
+    theme_sel_select_theme(ctx->theme_dropdown, cur);
+    g_free(cur);
+}
+
 static void
 on_theme_dialog_response(AdwMessageDialog *dialog, const char *response,
                          gpointer user_data)
@@ -218,26 +275,29 @@ on_theme_dialog_response(AdwMessageDialog *dialog, const char *response,
     if (g_strcmp0(response, "apply") != 0)
         return;
 
+    ThemeScope scope = ctx->scope_dropdown
+        ? (ThemeScope)gtk_drop_down_get_selected(ctx->scope_dropdown)
+        : ctx->fixed_scope;
+
     /* Read the selected string straight from the model. Index 0 is
      * "Inherit (default)" -> NULL (clear the override). Reading the item
      * directly (rather than indexing a parallel array) keeps this correct
      * even for an appended not-in-list current value. */
-    guint sel = gtk_drop_down_get_selected(ctx->dropdown);
+    guint sel = gtk_drop_down_get_selected(ctx->theme_dropdown);
     if (sel == GTK_INVALID_LIST_POSITION || sel == 0) {
-        if (sel == 0)
-            theme_sel_apply(ctx, NULL);
+        theme_sel_apply(ctx, scope, NULL);
         return;
     }
 
     GObject *item = g_list_model_get_item(
-        gtk_drop_down_get_model(ctx->dropdown), sel);
+        gtk_drop_down_get_model(ctx->theme_dropdown), sel);
     if (!item)
         return;
     char *chosen = g_strdup(
         gtk_string_object_get_string(GTK_STRING_OBJECT(item)));
     g_object_unref(item);
 
-    theme_sel_apply(ctx, (chosen && chosen[0]) ? chosen : NULL);
+    theme_sel_apply(ctx, scope, (chosen && chosen[0]) ? chosen : NULL);
     g_free(chosen);
 }
 
@@ -272,18 +332,44 @@ theme_sel_build_dropdown(char **names, const char *current)
 }
 
 static void
-theme_selector_open(GtkWidget *anchor, ThemeScope scope,
-                    GhosttyTerminal *term, GtkNotebook *pane, guint64 ws_serial,
-                    const char *scope_label, const char *current)
+theme_selector_open(GtkWidget *anchor, gboolean with_scope_selector,
+                    ThemeScope initial_scope, GhosttyTerminal *term,
+                    GtkNotebook *pane, guint64 ws_serial,
+                    const char *heading, const char *current)
 {
-    char **names = theme_selector_theme_names();
+    char **names = theme_selector_list_themes();
 
     ThemeSelCtx *ctx = g_new0(ThemeSelCtx, 1);
-    ctx->scope = scope;
+    ctx->fixed_scope = initial_scope;
     ctx->ws_serial = ws_serial;
-    g_weak_ref_init(&ctx->term_ref, scope == THEME_SCOPE_TAB ? term : NULL);
-    g_weak_ref_init(&ctx->pane_ref, scope == THEME_SCOPE_PANE ? pane : NULL);
-    ctx->dropdown = theme_sel_build_dropdown(names, current);
+    g_weak_ref_init(&ctx->term_ref, term);
+    g_weak_ref_init(&ctx->pane_ref, pane);
+    ctx->theme_dropdown = theme_sel_build_dropdown(names, current);
+
+    GtkWidget *extra;
+    if (with_scope_selector) {
+        GtkStringList *scopes = gtk_string_list_new(NULL);
+        gtk_string_list_append(scopes, "This tab");
+        gtk_string_list_append(scopes, "This pane");
+        gtk_string_list_append(scopes, "This workspace");
+        ctx->scope_dropdown =
+            GTK_DROP_DOWN(gtk_drop_down_new(G_LIST_MODEL(scopes), NULL));
+        gtk_drop_down_set_selected(ctx->scope_dropdown, (guint)initial_scope);
+        g_signal_connect(ctx->scope_dropdown, "notify::selected",
+                         G_CALLBACK(on_theme_scope_changed), ctx);
+
+        GtkWidget *scope_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        GtkWidget *scope_label = gtk_label_new("Apply to");
+        gtk_widget_set_halign(GTK_WIDGET(ctx->scope_dropdown), GTK_ALIGN_START);
+        gtk_box_append(GTK_BOX(scope_row), scope_label);
+        gtk_box_append(GTK_BOX(scope_row), GTK_WIDGET(ctx->scope_dropdown));
+
+        extra = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+        gtk_box_append(GTK_BOX(extra), scope_row);
+        gtk_box_append(GTK_BOX(extra), GTK_WIDGET(ctx->theme_dropdown));
+    } else {
+        extra = GTK_WIDGET(ctx->theme_dropdown);
+    }
 
     GtkWindow *parent = NULL;
     if (anchor) {
@@ -294,13 +380,11 @@ theme_selector_open(GtkWidget *anchor, ThemeScope scope,
     if (!parent && g_main_window)
         parent = g_main_window;
 
-    char *heading = g_strdup_printf("Theme for %s", scope_label);
     AdwMessageDialog *dialog =
         ADW_MESSAGE_DIALOG(adw_message_dialog_new(parent, heading, NULL));
-    g_free(heading);
     adw_message_dialog_set_body(
         dialog, "Pick a ghostty color theme, or inherit the default.");
-    adw_message_dialog_set_extra_child(dialog, GTK_WIDGET(ctx->dropdown));
+    adw_message_dialog_set_extra_child(dialog, extra);
     adw_message_dialog_add_response(dialog, "cancel", "Cancel");
     adw_message_dialog_add_response(dialog, "apply", "Apply");
     adw_message_dialog_set_response_appearance(dialog, "apply",
@@ -319,21 +403,42 @@ theme_selector_open(GtkWidget *anchor, ThemeScope scope,
 /* ── Public entry points ───────────────────────────────────────────── */
 
 void
+theme_selector_popup_for_terminal(GtkWidget *anchor, GhosttyTerminal *term)
+{
+    if (!term || !GHOSTTY_IS_TERMINAL(term))
+        return;
+
+    /* Resolve pane + workspace so the dialog's scope selector can target
+     * any of the three levels for this terminal. */
+    GtkWidget *dummy = ghostty_terminal_get_dummy_target(term);
+    GtkWidget *anc = dummy ? gtk_widget_get_ancestor(dummy, GTK_TYPE_NOTEBOOK)
+                           : NULL;
+    GtkNotebook *pane = GTK_IS_NOTEBOOK(anc) ? GTK_NOTEBOOK(anc) : NULL;
+    Workspace *ws = pane ? g_object_get_data(G_OBJECT(pane), "workspace-ptr")
+                         : NULL;
+
+    theme_selector_open(anchor, TRUE, THEME_SCOPE_TAB, term, pane,
+                        ws ? ws->serial : 0, "Terminal theme",
+                        ghostty_terminal_get_theme_override(term));
+}
+
+void
 theme_selector_popup_tab(GtkWidget *anchor, GhosttyTerminal *term)
 {
-    if (!term)
+    if (!term || !GHOSTTY_IS_TERMINAL(term))
         return;
-    theme_selector_open(anchor, THEME_SCOPE_TAB, term, NULL, 0,
-                        "this tab", ghostty_terminal_get_theme_override(term));
+    theme_selector_open(anchor, FALSE, THEME_SCOPE_TAB, term, NULL, 0,
+                        "Theme for this tab",
+                        ghostty_terminal_get_theme_override(term));
 }
 
 void
 theme_selector_popup_pane(GtkWidget *anchor, GtkNotebook *pane)
 {
-    if (!pane)
+    if (!pane || !GTK_IS_NOTEBOOK(pane))
         return;
-    theme_selector_open(anchor, THEME_SCOPE_PANE, NULL, pane, 0,
-                        "this pane",
+    theme_selector_open(anchor, FALSE, THEME_SCOPE_PANE, NULL, pane, 0,
+                        "Theme for this pane",
                         g_object_get_data(G_OBJECT(pane), "pane-theme"));
 }
 
@@ -342,6 +447,6 @@ theme_selector_popup_workspace(GtkWidget *anchor, Workspace *ws)
 {
     if (!ws)
         return;
-    theme_selector_open(anchor, THEME_SCOPE_WORKSPACE, NULL, NULL, ws->serial,
-                        "this workspace", ws->theme_name);
+    theme_selector_open(anchor, FALSE, THEME_SCOPE_WORKSPACE, NULL, NULL,
+                        ws->serial, "Theme for this workspace", ws->theme_name);
 }

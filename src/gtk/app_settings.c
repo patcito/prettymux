@@ -94,6 +94,132 @@ app_settings_ghostty_override_path(void)
                             "ghostty-overrides.conf", NULL);
 }
 
+char **
+app_settings_ghostty_theme_dirs(void)
+{
+    GPtrArray *dirs = g_ptr_array_new();
+
+    /* User themes first, then $GHOSTTY_RESOURCES_DIR/themes, then every
+     * system data dir + /ghostty/themes (covers /usr/share/ghostty/themes). */
+    g_ptr_array_add(dirs, g_build_filename(g_get_user_config_dir(), "ghostty",
+                                           "themes", NULL));
+
+    const char *res = g_getenv("GHOSTTY_RESOURCES_DIR");
+    if (res && res[0])
+        g_ptr_array_add(dirs, g_build_filename(res, "themes", NULL));
+
+    const char *const *sys = g_get_system_data_dirs();
+    for (int i = 0; sys && sys[i]; i++)
+        g_ptr_array_add(dirs, g_build_filename(sys[i], "ghostty", "themes",
+                                               NULL));
+
+    g_ptr_array_add(dirs, NULL);
+    return (char **)g_ptr_array_free(dirs, FALSE);
+}
+
+/* A serialized `theme = ...` value must not contain characters that would end
+ * the value or inject another directive. Spaces are fine: ghostty splits on the
+ * first '=' and keeps the rest of the line verbatim. */
+static gboolean
+theme_value_is_safe(const char *value)
+{
+    return value && value[0] && !strpbrk(value, "\r\n");
+}
+
+char *
+app_settings_resolve_ghostty_theme_path(const char *name)
+{
+    if (!name || !name[0])
+        return NULL;
+
+    char *found = NULL;
+    if (g_path_is_absolute(name)) {
+        found = g_file_test(name, G_FILE_TEST_IS_REGULAR) ? g_strdup(name)
+                                                          : NULL;
+    } else {
+        char **dirs = app_settings_ghostty_theme_dirs();
+        for (int i = 0; dirs[i]; i++) {
+            char *candidate = g_build_filename(dirs[i], name, NULL);
+            if (g_file_test(candidate, G_FILE_TEST_IS_REGULAR)) {
+                found = candidate;
+                break;
+            }
+            g_free(candidate);
+        }
+        g_strfreev(dirs);
+    }
+
+    if (!found)
+        return NULL;
+
+    /* The header promises an absolute path, but a relative
+     * $GHOSTTY_RESOURCES_DIR yields a relative candidate -- and ghostty
+     * rejects relative theme paths that contain separators. Canonicalize. */
+    if (!g_path_is_absolute(found)) {
+        char *cwd = g_get_current_dir();
+        char *abs = g_canonicalize_filename(found, cwd);
+        g_free(cwd);
+        g_free(found);
+        found = abs;
+    }
+
+    if (!theme_value_is_safe(found))
+        g_clear_pointer(&found, g_free);
+    return found;
+}
+
+char *
+app_settings_serialize_ghostty_theme(const char *name)
+{
+    if (!name || !name[0])
+        return NULL;
+
+    /* ghostty also accepts a light/dark pair: "dark:Foo,light:Bar". Resolve
+     * each component separately -- handing the whole compound string to the
+     * single-name resolver finds no such file and would silently fall back to
+     * an unresolvable bare name. */
+    if (strstr(name, "dark:") || strstr(name, "light:")) {
+        char **parts = g_strsplit(name, ",", -1);
+        GString *out = g_string_new(NULL);
+        gboolean ok = TRUE;
+
+        for (int i = 0; parts[i]; i++) {
+            char *part = g_strstrip(parts[i]);
+            const char *prefix = NULL;
+            if (g_str_has_prefix(part, "dark:"))
+                prefix = "dark:";
+            else if (g_str_has_prefix(part, "light:"))
+                prefix = "light:";
+
+            if (!prefix) {
+                ok = FALSE;
+                break;
+            }
+
+            char *resolved = app_settings_resolve_ghostty_theme_path(
+                g_strstrip(part + strlen(prefix)));
+            if (!resolved) {
+                ok = FALSE;
+                g_free(resolved);
+                break;
+            }
+            if (out->len > 0)
+                g_string_append_c(out, ',');
+            g_string_append(out, prefix);
+            g_string_append(out, resolved);
+            g_free(resolved);
+        }
+        g_strfreev(parts);
+
+        if (ok && out->len > 0 && theme_value_is_safe(out->str))
+            return g_string_free(out, FALSE);
+        g_string_free(out, TRUE);
+        return NULL;
+    }
+
+    return app_settings_resolve_ghostty_theme_path(name);
+}
+
 static void
 app_settings_store_theme_string(const char **slot, const char *value)
 {
@@ -180,9 +306,17 @@ app_settings_write_ghostty_override(void)
     if (app_settings.ghostty_font_size > 0.0)
         g_string_append_printf(contents, "font-size = %.1f\n",
                                app_settings.ghostty_font_size);
-    if (theme_name && theme_name[0])
-        g_string_append_printf(contents, "theme = %s\n",
-                               theme_name);
+    if (theme_name && theme_name[0]) {
+        /* Write resolved absolute path(s) so ghostty loads the theme even when
+         * its own theme search dirs are empty in this install. If nothing
+         * resolves, fall back to the bare name: ghostty may still find it via
+         * its own search path, and writing it keeps the setting visible. */
+        char *theme_value = app_settings_serialize_ghostty_theme(theme_name);
+        const char *value = theme_value ? theme_value : theme_name;
+        if (!strpbrk(value, "\r\n"))
+            g_string_append_printf(contents, "theme = %s\n", value);
+        g_free(theme_value);
+    }
 
     /* prettymux implements copy-on-select itself (see ghostty_terminal.c's
      * button-release handler): it honours the Settings toggle and raises a
