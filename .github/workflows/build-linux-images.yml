@@ -12,7 +12,7 @@ env:
   REGISTRY: ghcr.io
   IMAGE_OWNER: ${{ github.repository_owner }}
   NFPM_VERSION: '2.43.1'
-  ZIG_VERSION: '0.15.2'
+  ZIG_VERSION: '0.16.0'
 
 jobs:
   build-debian-bookworm:

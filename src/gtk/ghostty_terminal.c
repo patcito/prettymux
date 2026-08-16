@@ -425,11 +425,21 @@ on_gl_realize(GtkGLArea *area, gpointer user_data)
         return;
     }
 
-    /* If we already have a surface, the widget was reparented (e.g. DnD).
-     * Don't create a new surface (which kills the process).
-     * Just re-init OpenGL for the new context. */
+    /* If we already have a surface, the widget was reparented (e.g. DnD) and
+     * GTK gave us a BRAND NEW GL context. Don't create a new surface (that
+     * would kill the process). Load GLAD for the new context, then have the
+     * renderer rebuild its context-local objects (swapchain, shaders, FBOs).
+     *
+     * on_gl_unrealize tore those down against the old context, which is what
+     * makes display_realized valid here -- it asserts the swapchain is
+     * defunct. Skipping the rebuild would reuse objects belonging to the
+     * destroyed context: a blank terminal, GL errors, or a driver crash. */
     if (self->surface) {
         ghostty_surface_init_opengl(self->surface);
+        ghostty_surface_display_realized(self->surface);
+        /* The surface's colors are context-independent, but re-resolve here
+         * so a tab dropped into a differently-themed pane repaints correctly. */
+        app_terminal_apply_scoped_theme(self);
         gtk_gl_area_queue_render(area);
         return;
     }
@@ -622,6 +632,32 @@ on_gl_realize(GtkGLArea *area, gpointer user_data)
         /* Queue first render */
         gtk_gl_area_queue_render(area);
     }
+}
+
+/*
+ * The GL context is going away (widget reparented, e.g. a tab dragged to
+ * another pane/window, or the widget being destroyed). GTK makes the OLD
+ * context current before emitting this, which is exactly when ghostty must
+ * release its context-local GPU objects. A later "realize" then rebuilds them
+ * against the new context (see on_gl_realize).
+ */
+static void
+on_gl_unrealize(GtkGLArea *area, gpointer user_data)
+{
+    GhosttyTerminal *self = GHOSTTY_TERMINAL(user_data);
+
+    if (!self->surface)
+        return;
+
+    /* If the context failed to come up we have nothing valid to tear down. */
+    if (gtk_gl_area_get_error(area) != NULL)
+        return;
+
+    gtk_gl_area_make_current(area);
+    if (gtk_gl_area_get_error(area) != NULL)
+        return;
+
+    ghostty_surface_display_unrealized(self->surface);
 }
 
 static gboolean
@@ -1150,6 +1186,16 @@ ghostty_terminal_dispose(GObject *object)
     ghostty_terminal_clipboard_abort(self);
 
     if (self->surface) {
+        /* Release context-local GPU objects while a context is still current.
+         * Normally "unrealize" already did this; it is idempotent (the
+         * swapchain is marked defunct), so this only covers teardown orders
+         * where we are disposed while still realized. */
+        if (self->gl_area && gtk_widget_get_realized(GTK_WIDGET(self->gl_area)) &&
+            gtk_gl_area_get_error(self->gl_area) == NULL) {
+            gtk_gl_area_make_current(self->gl_area);
+            if (gtk_gl_area_get_error(self->gl_area) == NULL)
+                ghostty_surface_display_unrealized(self->surface);
+        }
         ghostty_surface_free(self->surface);
         self->surface = NULL;
     }
@@ -1338,6 +1384,8 @@ ghostty_terminal_init(GhosttyTerminal *self)
     gtk_box_append(GTK_BOX(self->vbox), self->status_bar);
 
     g_signal_connect(self->gl_area, "realize", G_CALLBACK(on_gl_realize), self);
+    g_signal_connect(self->gl_area, "unrealize",
+                     G_CALLBACK(on_gl_unrealize), self);
     g_signal_connect(self->gl_area, "render", G_CALLBACK(on_gl_render), self);
     g_signal_connect(self->gl_area, "resize", G_CALLBACK(on_gl_resize), self);
 

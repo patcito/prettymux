@@ -23,7 +23,7 @@ env:
   GHOSTTY_REPO: patcito/ghostty
   GHOSTTY_BRANCH: linux-embedded-platform
   GHOSTTY_RELEASE: linux-embedded-v0.1.0
-  ZIG_VERSION: '0.15.2'
+  ZIG_VERSION: '0.16.0'
 
 jobs:
   build-windows:

@@ -28,7 +28,7 @@ parts:
       - xz-utils
     override-build: |
       cd $CRAFT_PART_SRC
-      export ZIG_VERSION=0.15.2
+      export ZIG_VERSION=0.16.0
       export ZIG_DIR="$CRAFT_PART_BUILD/zig"
       mkdir -p "$ZIG_DIR"
       curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz" \
@@ -46,6 +46,9 @@ parts:
       cp -a zig-out/lib $CRAFT_PART_INSTALL/ghostty/zig-out/
       mkdir -p $CRAFT_PART_INSTALL/usr/lib/prettymux
       cp $CRAFT_PART_INSTALL/ghostty/zig-out/lib/libghostty.so $CRAFT_PART_INSTALL/usr/lib/prettymux/
+      # Ghostty color themes, so the terminal theme picker can resolve them.
+      mkdir -p $CRAFT_PART_INSTALL/usr/share/ghostty
+      cp -a zig-out/share/ghostty/themes $CRAFT_PART_INSTALL/usr/share/ghostty/ 2>/dev/null || true
 
   prettymux:
     after: [ghostty]

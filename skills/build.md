@@ -51,34 +51,31 @@ zig build \
   -Dapp-runtime=none \
   -Doptimize=ReleaseFast \
   -Dtarget=x86_64-linux-gnu
-
-# Upstream installs the embedded library as ghostty-internal.so, but its
-# SONAME is still libghostty.so -- which is the name PrettyMux links and the
-# dynamic loader looks for at runtime. Create that name:
-ln -sfn ghostty-internal.so zig-out/lib/libghostty.so
 ```
 
 That produces:
 
-- `zig-out/lib/ghostty-internal.so` (the shared library itself)
-- `zig-out/lib/libghostty.so` (the symlink above; what PrettyMux links)
+- `zig-out/lib/ghostty-internal.so` (upstream's name for the shared library)
+- `zig-out/lib/libghostty.so` (same library under its SONAME; what PrettyMux
+  links and what the dynamic loader resolves at runtime)
+- `zig-out/share/ghostty/themes/` (the bundled color themes the terminal theme
+  picker resolves against)
 - `include/ghostty.h`
 
-The Ghostty tree also needs:
+GLAD lives in the Ghostty tree under `vendor/glad/` and is compiled **into
+libghostty**. PrettyMux deliberately does not compile it: it makes no GL calls
+of its own, and a second copy in the executable would preempt libghostty's via
+ELF symbol interposition.
 
-- `vendor/glad/`
-
-> **Watch out when updating Ghostty.** Older checkouts installed the library
-> as `zig-out/lib/libghostty.so` directly. After upstream's rename, a stale
-> `libghostty.so` left over from an older build will still satisfy both the
-> link and the loader (identical SONAME), so PrettyMux silently keeps running
-> the *old* terminal code even though the build "succeeded". If terminals
-> behave like a previous version after an update, check that
-> `zig-out/lib/libghostty.so` really resolves to the freshly built
-> `ghostty-internal.so`:
+> **Watch out when updating Ghostty.** Both files carry the SONAME
+> `libghostty.so`, so a stale `zig-out/lib/libghostty.so` left over from an
+> older build satisfies both the link and the loader — PrettyMux then silently
+> keeps running the *old* terminal code even though the build "succeeded". If
+> terminals behave like a previous version after an update, check the
+> timestamps:
 >
 > ```bash
-> ls -l zig-out/lib/libghostty.so          # should point at ghostty-internal.so
+> ls -l zig-out/lib/libghostty.so          # should be from the build you just ran
 > ldd builddir/prettymux | grep ghostty    # and prettymux should resolve to it
 > ```
 

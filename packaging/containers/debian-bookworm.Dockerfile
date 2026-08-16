@@ -2,7 +2,7 @@ FROM debian:12
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG NFPM_VERSION=2.43.1
-ARG ZIG_VERSION=0.15.2
+ARG ZIG_VERSION=0.16.0
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \

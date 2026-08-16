@@ -17,7 +17,7 @@ permissions:
 env:
   GHOSTTY_REPO: patcito/ghostty
   GHOSTTY_BRANCH: linux-embedded-platform
-  ZIG_VERSION: '0.15.2'
+  ZIG_VERSION: '0.16.0'
 
 jobs:
   fetch-libghostty:

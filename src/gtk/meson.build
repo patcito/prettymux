@@ -17,11 +17,14 @@ adw = dependency('libadwaita-1', version: '>=1.2')
 json_glib = dependency('json-glib-1.0')
 
 ghostty_dir = get_option('ghostty_dir')
-glad_dir = ghostty_dir / 'vendor' / 'glad'
 
+# NOTE: PrettyMux deliberately does NOT compile vendor/glad. It makes no GL
+# calls of its own -- libghostty owns the GL context and ships its own GLAD.
+# Compiling it here too exported gladLoader* from the executable, where ELF
+# interposition let it preempt the copy inside libghostty.so: a GLAD/ghostty
+# update that changed GladGLContext's layout would then corrupt state.
 ghostty_inc = include_directories(
   ghostty_dir / 'include',
-  glad_dir / 'include',
 )
 
 ghostty_lib_dir = ghostty_dir / 'zig-out' / 'lib'
@@ -57,7 +60,6 @@ sources = files(
   'shortcuts_overlay.c',
   'pane_move_overlay.c',
   'resize_overlay.c',
-  glad_dir / 'src' / 'gl.c',
 )
 
 platform_sources = []
