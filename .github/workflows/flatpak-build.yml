@@ -25,6 +25,9 @@ jobs:
     container:
       image: ghcr.io/patcito/prettymux-build-debian:bookworm
     steps:
+      - name: Checkout prettymux
+        uses: actions/checkout@v5
+
       - name: Checkout ghostty fork
         uses: actions/checkout@v5
         with:
@@ -36,6 +39,9 @@ jobs:
         uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
+
+      - name: Apply PrettyMux Ghostty compatibility patch
+        run: git -C ghostty apply "$GITHUB_WORKSPACE/packaging/ghostty-linux-stable.patch"
 
       - name: Resolve ghostty revision
         id: ghostty_rev

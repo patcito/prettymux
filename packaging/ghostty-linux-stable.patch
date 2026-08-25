@@ -1,0 +1,24 @@
+diff --git a/include/ghostty.h b/include/ghostty.h
+index 646f32fe8..4f316576c 100644
+--- a/include/ghostty.h
++++ b/include/ghostty.h
+@@ -1089,6 +1089,7 @@ bool ghostty_surface_process_exited(ghostty_surface_t);
+ void ghostty_surface_refresh(ghostty_surface_t);
+ void ghostty_surface_draw(ghostty_surface_t);
+ void ghostty_surface_display_realized(ghostty_surface_t);
++void ghostty_surface_display_unrealized(ghostty_surface_t);
+ void ghostty_surface_init_opengl(ghostty_surface_t);
+ void ghostty_surface_draw_frame(ghostty_surface_t);
+ void ghostty_surface_set_content_scale(ghostty_surface_t, double, double);
+diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
+index e8df465d9..107634ca1 100644
+--- a/src/apprt/embedded.zig
++++ b/src/apprt/embedded.zig
+@@ -1728,2 +1728,7 @@ pub const CAPI = struct {
+         };
+     }
++
++    export fn ghostty_surface_display_unrealized(surface: *Surface) void {
++        surface.core_surface.renderer.displayUnrealized();
++    }
++

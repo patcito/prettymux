@@ -28,6 +28,9 @@ jobs:
     container:
       image: ghcr.io/patcito/prettymux-build-debian:bookworm
     steps:
+      - name: Checkout prettymux
+        uses: actions/checkout@v5
+
       - name: Checkout ghostty fork
         uses: actions/checkout@v5
         with:
@@ -39,6 +42,9 @@ jobs:
         uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
+
+      - name: Apply PrettyMux Ghostty compatibility patch
+        run: git -C ghostty apply "$GITHUB_WORKSPACE/packaging/ghostty-linux-stable.patch"
 
       - name: Resolve ghostty revision
         id: ghostty_rev
@@ -258,6 +264,9 @@ jobs:
         with:
           version: ${{ env.ZIG_VERSION }}
 
+      - name: Apply PrettyMux Ghostty compatibility patch
+        run: git -C ghostty apply "$GITHUB_WORKSPACE/packaging/ghostty-linux-stable.patch"
+
       - name: Resolve ghostty revision
         id: ghostty_rev
         run: |
@@ -355,6 +364,9 @@ jobs:
           repository: ${{ env.GHOSTTY_REPO }}
           ref: ${{ env.GHOSTTY_REF }}
           path: ghostty
+
+      - name: Apply PrettyMux Ghostty compatibility patch
+        run: git -C ghostty apply "$GITHUB_WORKSPACE/packaging/ghostty-linux-stable.patch"
 
       - name: Build snap
         uses: snapcore/action-build@v1
