@@ -132,11 +132,14 @@ jobs:
 
       - name: Smoke test package
         run: |
+          apt-get update
+          apt-get install -y xvfb xauth dbus-x11 libgl1-mesa-dri
           rm -rf smoke-root
           mkdir -p smoke-root
           tar xzf prettymux-ubuntu-24.04-amd64.tar.gz -C smoke-root
-          bash packaging/ci-smoke-test.sh ubuntu \
-            sh -lc 'LD_LIBRARY_PATH="$PWD/smoke-root/usr/lib/prettymux" "$PWD/smoke-root/usr/bin/prettymux"'
+          bash packaging/ci-gui-smoke-test.sh ubuntu \
+            env LD_LIBRARY_PATH="$PWD/smoke-root/usr/lib/prettymux" \
+            "$PWD/smoke-root/usr/bin/prettymux"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -215,8 +218,8 @@ jobs:
 
       - name: Smoke test package
         run: |
-          dnf install -y ./*.rpm
-          bash packaging/ci-smoke-test.sh fedora prettymux
+          dnf install -y xorg-x11-server-Xvfb xorg-x11-xauth dbus-daemon mesa-dri-drivers ./*.rpm
+          bash packaging/ci-gui-smoke-test.sh fedora prettymux
 
       - name: Upload RPM
         uses: actions/upload-artifact@v6
@@ -307,11 +310,15 @@ jobs:
           ! grep -q './usr/share/ghostty/' deb-contents.txt
           grep -q './usr/share/prettymux/themes/0x96f' deb-contents.txt
 
-      - name: Smoke test package
+      - name: Test upgrade, Ghostty coexistence, and GUI startup
         run: |
           apt-get update
-          apt-get install -y ./*.deb
-          bash packaging/ci-smoke-test.sh debian prettymux
+          apt-get install -y curl xvfb xauth dbus-x11 libgl1-mesa-dri
+          xvfb-run -a meson test -C src/gtk/builddir --print-errorlogs
+          bash packaging/ci-deb-upgrade-test.sh ./*.deb
+          bash packaging/ci-gui-smoke-test.sh debian prettymux
+          bash packaging/ci-gui-smoke-test.sh debian-missing-identity-env \
+            env -u HOME -u USER -u LOGNAME -u SHELL prettymux
 
       - name: Upload .deb
         uses: actions/upload-artifact@v6
@@ -359,11 +366,12 @@ jobs:
       - name: Smoke test package
         run: |
           sudo apt-get update
-          sudo apt-get install -y squashfs-tools
+          sudo apt-get install -y squashfs-tools xvfb xauth dbus-x11 libgl1-mesa-dri
           rm -rf snap-root
           unsquashfs -f -d snap-root "${{ steps.snapcraft.outputs.snap }}"
-          bash packaging/ci-smoke-test.sh snap \
-            sh -lc 'LD_LIBRARY_PATH="$PWD/snap-root/usr/lib/prettymux:$PWD/snap-root/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}" "$PWD/snap-root/usr/bin/prettymux"'
+          bash packaging/ci-gui-smoke-test.sh snap \
+            env LD_LIBRARY_PATH="$PWD/snap-root/usr/lib/prettymux:$PWD/snap-root/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}" \
+            "$PWD/snap-root/usr/bin/prettymux"
 
       - name: Upload snap
         uses: actions/upload-artifact@v6
@@ -403,7 +411,7 @@ jobs:
         run: |
           export DEBIAN_FRONTEND=noninteractive
           sudo apt-get update -qq
-          sudo apt-get install -y flatpak flatpak-builder ca-certificates
+          sudo apt-get install -y flatpak flatpak-builder ca-certificates xvfb xauth dbus-x11 libgl1-mesa-dri
           sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
           sudo flatpak install -y flathub org.gnome.Platform//46 org.gnome.Sdk//46
 
@@ -416,7 +424,7 @@ jobs:
       - name: Smoke test package
         run: |
           flatpak install -y --user ./prettymux.flatpak
-          bash packaging/ci-smoke-test.sh flatpak flatpak run dev.prettymux.app
+          bash packaging/ci-gui-smoke-test.sh flatpak flatpak run dev.prettymux.app
 
       - name: Upload Flatpak bundle
         uses: actions/upload-artifact@v6
@@ -501,8 +509,9 @@ jobs:
 
       - name: Smoke test package
         run: |
+          pacman -Sy --noconfirm xorg-server-xvfb xorg-xauth dbus mesa
           pacman -U --noconfirm ./*.pkg.tar.zst
-          bash packaging/ci-smoke-test.sh arch prettymux
+          bash packaging/ci-gui-smoke-test.sh arch prettymux
 
       - name: Upload package
         uses: actions/upload-artifact@v6
@@ -653,7 +662,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev libadwaita-1-dev libjson-glib-dev meson ninja-build
+          sudo apt-get install -y libgtk-4-dev libadwaita-1-dev libjson-glib-dev meson ninja-build xvfb xauth dbus-x11 libgl1-mesa-dri
 
       - name: Build prettymux
         run: |
@@ -695,7 +704,7 @@ jobs:
         run: |
           test -x ./*.AppImage || true
           APPIMAGE_EXTRACT_AND_RUN=1 \
-            bash packaging/ci-smoke-test.sh appimage ./*.AppImage
+            bash packaging/ci-gui-smoke-test.sh appimage ./*.AppImage
 
       - name: Upload AppImage
         uses: actions/upload-artifact@v6

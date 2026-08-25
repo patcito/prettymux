@@ -14,6 +14,7 @@
 #ifdef G_OS_WIN32
 #include <windows.h>
 #else
+#include <pwd.h>
 #include <unistd.h>
 #include <signal.h>
 #include <glib-unix.h>
@@ -1047,8 +1048,47 @@ on_navigate_to_terminal(GSimpleAction *action_obj, GVariant *parameter,
 }
 
 static void
+ensure_shell_identity_env(void)
+{
+#ifndef G_OS_WIN32
+    struct passwd *passwd_entry = getpwuid(getuid());
+    const char *home = g_getenv("HOME");
+    const char *user = g_getenv("USER");
+    const char *logname = g_getenv("LOGNAME");
+    const char *shell = g_getenv("SHELL");
+
+    if (!home || !home[0]) {
+        const char *fallback = passwd_entry && passwd_entry->pw_dir &&
+                                       passwd_entry->pw_dir[0]
+                                   ? passwd_entry->pw_dir
+                                   : g_get_home_dir();
+        if (fallback && fallback[0])
+            g_setenv("HOME", fallback, TRUE);
+    }
+
+    const char *fallback_user =
+        passwd_entry && passwd_entry->pw_name && passwd_entry->pw_name[0]
+            ? passwd_entry->pw_name
+            : g_get_user_name();
+    if ((!user || !user[0]) && fallback_user && fallback_user[0])
+        g_setenv("USER", fallback_user, TRUE);
+    if ((!logname || !logname[0]) && fallback_user && fallback_user[0])
+        g_setenv("LOGNAME", fallback_user, TRUE);
+
+    if ((!shell || !shell[0]) && passwd_entry && passwd_entry->pw_shell &&
+        passwd_entry->pw_shell[0])
+        g_setenv("SHELL", passwd_entry->pw_shell, TRUE);
+#endif
+}
+
+static void
 setup_shell_integration_env(void)
 {
+    /* libghostty snapshots the process environment during ghostty_init().
+     * Fill identity variables here instead of adding duplicate per-surface
+     * entries, which also keeps interactive shells pointed at the real home. */
+    ensure_shell_identity_env();
+
 #ifdef G_OS_WIN32
     wchar_t exe_path_w[PATH_MAX];
     DWORD exe_len = GetModuleFileNameW(NULL, exe_path_w, G_N_ELEMENTS(exe_path_w));
