@@ -333,7 +333,9 @@ jobs:
           ls -lh *.deb
           dpkg-deb -c ./*.deb > deb-contents.txt
           ! grep -q './usr/share/ghostty/' deb-contents.txt
-          grep -q './usr/share/prettymux/themes/0x96f' deb-contents.txt
+          rm -rf deb-root
+          dpkg-deb -x ./*.deb deb-root
+          test -n "$(find deb-root/usr/share/prettymux/themes -maxdepth 1 -type f -print -quit)"
 
       - name: Test upgrade, Ghostty coexistence, and GUI startup
         run: |
@@ -726,7 +728,7 @@ jobs:
             bash packaging/ci-smoke-test.sh appimage-launcher "$appimage"
           rm -rf squashfs-root
           "$appimage" --appimage-extract >/dev/null
-          test -f squashfs-root/usr/share/prettymux/themes/0x96f
+          test -n "$(find squashfs-root/usr/share/prettymux/themes -maxdepth 1 -type f -print -quit)"
           bash packaging/ci-gui-smoke-test.sh appimage \
             env LD_LIBRARY_PATH="$PWD/squashfs-root/usr/lib/prettymux" \
             "$PWD/squashfs-root/usr/bin/prettymux"

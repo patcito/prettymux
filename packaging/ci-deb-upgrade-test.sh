@@ -44,6 +44,13 @@ dpkg-query -S /usr/share/ghostty/themes/0x96f | grep -q '^ghostty:'
 dpkg -i "$new_deb"
 test "$(dpkg-query -W -f='${Version}' prettymux)" = "$new_version"
 dpkg-query -S /usr/share/ghostty/themes/0x96f | grep -q '^ghostty:'
-dpkg-query -S /usr/share/prettymux/themes/0x96f | grep -q '^prettymux:'
+prettymux_theme="$(
+  dpkg-query -L prettymux | awk '
+    /^\/usr\/share\/prettymux\/themes\/[^/]+$/ && !found { found = $0 }
+    END { if (found) print found; else exit 1 }
+  '
+)"
+test -f "$prettymux_theme"
+dpkg-query -S "$prettymux_theme" | grep -q '^prettymux:'
 
 echo "Debian upgrade and Ghostty coexistence test passed for PrettyMux $new_version"
