@@ -35,6 +35,7 @@ parts:
         | tar -xJ -C "$ZIG_DIR" --strip-components=1
       "$ZIG_DIR/zig" build \
         -Dapp-runtime=none \
+        -Demit-themes=true \
         -Doptimize=ReleaseFast \
         -Dtarget=x86_64-linux-gnu
       mkdir -p $CRAFT_PART_INSTALL/ghostty

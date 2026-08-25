@@ -67,6 +67,7 @@ jobs:
           export ZIG_GLOBAL_CACHE_DIR="${GITHUB_WORKSPACE}/.zig-global-cache"
           zig build \
             -Dapp-runtime=none \
+            -Demit-themes=true \
             -Doptimize=ReleaseFast \
             -Dtarget=x86_64-linux-gnu
           echo "Layout:"
@@ -290,6 +291,7 @@ jobs:
           export ZIG_GLOBAL_CACHE_DIR="${GITHUB_WORKSPACE}/.zig-global-cache"
           zig build \
             -Dapp-runtime=none \
+            -Demit-themes=true \
             -Doptimize=ReleaseFast \
             -Dtarget=x86_64-linux-gnu
 
