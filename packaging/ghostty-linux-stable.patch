@@ -10,6 +10,16 @@ index 646f32fe8..4f316576c 100644
  void ghostty_surface_init_opengl(ghostty_surface_t);
  void ghostty_surface_draw_frame(ghostty_surface_t);
  void ghostty_surface_set_content_scale(ghostty_surface_t, double, double);
+diff --git a/build.zig b/build.zig
+--- a/build.zig
++++ b/build.zig
+@@ -141,5 +141,6 @@ pub fn build(b: *std.Build) !void {
+         if (!config.target.result.os.tag.isDarwin()) {
+             libghostty_shared.installHeader(); // Only need one header
+             libghostty_shared.install("libghostty.so");
+             libghostty_static.install("libghostty.a");
++            resources.install();
+         }
 diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
 index e8df465d9..107634ca1 100644
 --- a/src/apprt/embedded.zig
