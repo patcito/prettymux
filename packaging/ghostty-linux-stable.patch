@@ -14,14 +14,18 @@ diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
 index e8df465d9..107634ca1 100644
 --- a/src/apprt/embedded.zig
 +++ b/src/apprt/embedded.zig
-@@ -1724,5 +1724,10 @@ pub const CAPI = struct {
+@@ -1724,9 +1724,13 @@ pub const CAPI = struct {
      export fn ghostty_surface_display_realized(surface: *Surface) void {
          surface.core_surface.renderer.displayRealized() catch |err| {
              log.warn("failed to reinitialize display err={}", .{err});
          };
      }
+-
 +
 +    export fn ghostty_surface_display_unrealized(surface: *Surface) void {
 +        surface.core_surface.renderer.displayUnrealized();
 +    }
 +
+     /// Initialize OpenGL function pointers for the surface.
+     /// Call this from a GtkGLArea "realize" callback when the GL context
+     /// is current for the first time. This loads GLAD so the renderer
