@@ -314,7 +314,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y curl xvfb xauth dbus-x11 libgl1-mesa-dri
-          xvfb-run -a meson test -C src/gtk/builddir --print-errorlogs
+          GTK_A11Y=none xvfb-run -a meson test -C src/gtk/builddir --print-errorlogs
           bash packaging/ci-deb-upgrade-test.sh ./*.deb
           bash packaging/ci-gui-smoke-test.sh debian prettymux
           bash packaging/ci-gui-smoke-test.sh debian-missing-identity-env \
@@ -423,7 +423,7 @@ jobs:
 
       - name: Smoke test package
         run: |
-          flatpak install -y --user ./prettymux.flatpak
+          sudo flatpak install -y ./prettymux.flatpak
           bash packaging/ci-gui-smoke-test.sh flatpak flatpak run dev.prettymux.app
 
       - name: Upload Flatpak bundle
@@ -681,6 +681,8 @@ jobs:
           cp src/gtk/builddir/prettymux AppDir/usr/bin/
           cp src/gtk/builddir/prettymux-open AppDir/usr/bin/ || true
           cp ghostty/zig-out/lib/libghostty.so AppDir/usr/lib/prettymux/ || true
+          mkdir -p AppDir/usr/share/prettymux/themes
+          cp -a ghostty/zig-out/share/ghostty/themes/. AppDir/usr/share/prettymux/themes/ 2>/dev/null || true
           cp src/gtk/prettymux-shell-integration.sh AppDir/usr/share/prettymux/shell-integration.sh || true
           cp src/gtk/prettymux-bashrc.sh AppDir/usr/share/prettymux/prettymux-bashrc.sh || true
           cp ghostty/src/shell-integration/bash/ghostty.bash AppDir/usr/share/prettymux/ghostty.bash || true
@@ -702,9 +704,16 @@ jobs:
 
       - name: Smoke test package
         run: |
-          test -x ./*.AppImage || true
+          appimage="$(realpath ./*.AppImage)"
+          test -x "$appimage"
           APPIMAGE_EXTRACT_AND_RUN=1 \
-            bash packaging/ci-gui-smoke-test.sh appimage ./*.AppImage
+            bash packaging/ci-smoke-test.sh appimage-launcher "$appimage"
+          rm -rf squashfs-root
+          "$appimage" --appimage-extract >/dev/null
+          test -f squashfs-root/usr/share/prettymux/themes/0x96f
+          bash packaging/ci-gui-smoke-test.sh appimage \
+            env LD_LIBRARY_PATH="$PWD/squashfs-root/usr/lib/prettymux" \
+            "$PWD/squashfs-root/usr/bin/prettymux"
 
       - name: Upload AppImage
         uses: actions/upload-artifact@v6

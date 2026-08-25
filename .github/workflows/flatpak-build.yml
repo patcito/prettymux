@@ -108,9 +108,8 @@ jobs:
 
       - name: Smoke test package
         run: |
-          dnf install -y xorg-x11-server-Xvfb xorg-x11-xauth dbus-daemon mesa-dri-drivers
           flatpak install -y --user ./prettymux.flatpak
-          bash packaging/ci-gui-smoke-test.sh flatpak flatpak run dev.prettymux.app
+          bash packaging/ci-smoke-test.sh flatpak flatpak run dev.prettymux.app
 
       - name: Upload release asset
         env:

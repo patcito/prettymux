@@ -28,6 +28,9 @@ timeout --signal=TERM --kill-after=5s 20s \
     XDG_STATE_HOME="$test_root/state" \
     XDG_RUNTIME_DIR="$test_root/runtime" \
     GDK_BACKEND=x11 \
+    GDK_DISABLE=gles-api,vulkan \
+    GSK_RENDERER=opengl \
+    GTK_A11Y=none \
     LIBGL_ALWAYS_SOFTWARE=1 \
     GSETTINGS_BACKEND=memory \
     NO_AT_BRIDGE=1 \
