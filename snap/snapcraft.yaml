@@ -28,14 +28,11 @@ parts:
       - xz-utils
     override-build: |
       cd $CRAFT_PART_SRC
-      export ZIG_VERSION=0.16.0
+      export ZIG_VERSION=0.15.2
       export ZIG_DIR="$CRAFT_PART_BUILD/zig"
       mkdir -p "$ZIG_DIR"
       curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz" \
         | tar -xJ -C "$ZIG_DIR" --strip-components=1
-      # Dependencies are prefetched on the Actions host because Zig 0.16
-      # cannot parse the managed LXD resolver configuration.
-      test -d "$CRAFT_PART_SRC/zig-pkg"
       "$ZIG_DIR/zig" build \
         -Dapp-runtime=none \
         -Doptimize=ReleaseFast \

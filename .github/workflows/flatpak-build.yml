@@ -16,8 +16,8 @@ permissions:
 
 env:
   GHOSTTY_REPO: patcito/ghostty
-  GHOSTTY_BRANCH: linux-embedded-platform
-  ZIG_VERSION: '0.16.0'
+  GHOSTTY_REF: 318afb82281e79b03acb6a6ca88dc08e8cb87d2f
+  ZIG_VERSION: '0.15.2'
 
 jobs:
   fetch-libghostty:
@@ -29,8 +29,13 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: ${{ env.GHOSTTY_REPO }}
-          ref: ${{ env.GHOSTTY_BRANCH }}
+          ref: ${{ env.GHOSTTY_REF }}
           path: ghostty
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
 
       - name: Resolve ghostty revision
         id: ghostty_rev
